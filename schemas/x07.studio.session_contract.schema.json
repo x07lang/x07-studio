@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "$id": "https://x07.io/spec/x07.studio.session_contract.schema.json",
+  "title": "x07.studio.session_contract@0.1.0",
+  "properties": {
+    "schema_version": {
+      "const": "x07.studio.session_contract@0.1.0"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "workspace_root": {
+      "type": "string"
+    },
+    "global_doctrine": {
+      "type": "object"
+    },
+    "project_doctrine": {
+      "type": "object"
+    },
+    "task_doctrine": {
+      "type": "object"
+    },
+    "allowed_verbs": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "workspace_root",
+    "global_doctrine",
+    "project_doctrine",
+    "task_doctrine",
+    "allowed_verbs"
+  ]
+}

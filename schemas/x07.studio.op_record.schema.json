@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "$id": "https://x07.io/spec/x07.studio.op_record.schema.json",
+  "title": "x07.studio.op_record@0.1.0",
+  "properties": {
+    "schema_version": {
+      "const": "x07.studio.op_record@0.1.0"
+    },
+    "id": {
+      "type": "string"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "op": {
+      "type": "string"
+    },
+    "backend": {
+      "type": "string"
+    },
+    "command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string"
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stdout": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stderr": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "session_id",
+    "op",
+    "backend",
+    "command",
+    "status",
+    "artifacts"
+  ]
+}

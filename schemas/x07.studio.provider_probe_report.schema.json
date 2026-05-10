@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "$id": "https://x07.io/spec/x07.studio.provider_probe_report.schema.json",
+  "title": "x07.studio.provider_probe_report@0.1.0",
+  "properties": {
+    "schema_version": {
+      "const": "x07.studio.provider_probe_report@0.1.0"
+    },
+    "profile_id": {
+      "type": "string"
+    },
+    "base_url": {
+      "type": "string"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "http_status": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "capabilities": {
+      "type": "object"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "raw": {}
+  },
+  "required": [
+    "schema_version",
+    "profile_id",
+    "base_url",
+    "ok",
+    "models",
+    "capabilities",
+    "notes"
+  ]
+}

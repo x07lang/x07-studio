@@ -1,0 +1,454 @@
+use std::collections::BTreeMap;
+
+use clap::Parser;
+use eframe::egui;
+use serde_json::Value;
+use tokio::runtime::Runtime;
+use uuid::Uuid;
+
+use loom_client::DaemonClient;
+use loom_types::api::{
+    ConnectMcpRequest, CreateSessionRequest, DispatchEventRequest, RunBindingRequest,
+};
+use loom_types::artifacts::{IntentPacket, ProviderProfile, TaskType};
+use loom_types::mcp::{McpEndpoint, McpHttpEndpoint};
+use loom_types::ops::SessionEvent;
+use loom_types::session::{SessionPhase, SessionSnapshot};
+
+#[derive(Debug, Parser)]
+#[command(name = "x07-studio")]
+#[command(version)]
+#[command(about = "GUI shell for x07 Studio.")]
+struct Cli {
+    #[arg(long, default_value = "http://127.0.0.1:7719")]
+    daemon_url: String,
+}
+
+fn main() -> eframe::Result<()> {
+    let cli = Cli::parse();
+    let options = eframe::NativeOptions::default();
+    let daemon_url = cli.daemon_url.clone();
+
+    eframe::run_native(
+        "x07 Studio",
+        options,
+        Box::new(move |_| Ok(Box::new(StudioApp::new(daemon_url.clone())?))),
+    )
+}
+
+struct StudioApp {
+    rt: Runtime,
+    client: DaemonClient,
+    sessions: Vec<SessionSnapshot>,
+    selected_session: Option<Uuid>,
+    new_session_title: String,
+    binding_id: String,
+    binding_vars_text: String,
+    provider_profile: ProviderProfile,
+    last_provider_report: Option<Value>,
+    mcp_endpoint: McpHttpEndpoint,
+    mcp_connection_id: Option<String>,
+    mcp_tools: Vec<String>,
+    mcp_tool_name: String,
+    mcp_tool_args_text: String,
+    mcp_last_result: Option<Value>,
+    error: Option<String>,
+}
+
+impl StudioApp {
+    fn new(daemon_url: String) -> anyhow::Result<Self> {
+        let rt = Runtime::new()?;
+        let client = DaemonClient::new(daemon_url);
+        let mut app = Self {
+            rt,
+            client,
+            sessions: Vec::new(),
+            selected_session: None,
+            new_session_title: "New session".to_string(),
+            binding_id: "xtal.verify".to_string(),
+            binding_vars_text: "{}".to_string(),
+            provider_profile: ProviderProfile::local_ollama(),
+            last_provider_report: None,
+            mcp_endpoint: McpHttpEndpoint::default(),
+            mcp_connection_id: None,
+            mcp_tools: Vec::new(),
+            mcp_tool_name: "x07.search_v1".to_string(),
+            mcp_tool_args_text: r#"{"query":"xtal verify"}"#.to_string(),
+            mcp_last_result: None,
+            error: None,
+        };
+        app.refresh();
+        Ok(app)
+    }
+
+    fn set_error<E: ToString>(&mut self, error: E) {
+        self.error = Some(error.to_string());
+    }
+
+    fn refresh(&mut self) {
+        match self.rt.block_on(self.client.list_sessions()) {
+            Ok(sessions) => {
+                self.sessions = sessions;
+                if self.selected_session.is_none() {
+                    self.selected_session = self.sessions.first().map(|session| session.session_id);
+                }
+            }
+            Err(error) => self.set_error(error),
+        }
+    }
+
+    fn selected_session(&self) -> Option<&SessionSnapshot> {
+        let id = self.selected_session?;
+        self.sessions
+            .iter()
+            .find(|session| session.session_id == id)
+    }
+
+    fn mutate_selected_with<F>(&mut self, f: F)
+    where
+        F: FnOnce(Uuid, &Runtime, &DaemonClient) -> anyhow::Result<SessionSnapshot>,
+    {
+        if let Some(session_id) = self.selected_session {
+            match f(session_id, &self.rt, &self.client) {
+                Ok(snapshot) => {
+                    if let Some(slot) = self
+                        .sessions
+                        .iter_mut()
+                        .find(|session| session.session_id == snapshot.session_id)
+                    {
+                        *slot = snapshot;
+                    } else {
+                        self.sessions.push(snapshot);
+                    }
+                }
+                Err(error) => self.set_error(error),
+            }
+        } else {
+            self.set_error("no session selected");
+        }
+    }
+
+    fn dispatch_selected(&mut self, event: SessionEvent) {
+        self.mutate_selected_with(|session_id, rt, client| {
+            rt.block_on(client.dispatch_event(session_id, &DispatchEventRequest { event }))
+        });
+    }
+
+    fn run_selected_binding(&mut self) {
+        let vars = match parse_vars_map(&self.binding_vars_text) {
+            Ok(vars) => vars,
+            Err(error) => {
+                self.set_error(error);
+                return;
+            }
+        };
+
+        let binding_id = self.binding_id.clone();
+        self.mutate_selected_with(move |session_id, rt, client| {
+            rt.block_on(client.run_binding(session_id, &RunBindingRequest { binding_id, vars }))
+        });
+    }
+
+    fn phase_buttons(&mut self, ui: &mut egui::Ui, phase: SessionPhase) {
+        match phase {
+            SessionPhase::IntentDrafting | SessionPhase::IntentReady => {
+                if ui.button("Formalize sample intent").clicked() {
+                    if let Some(session_id) = self.selected_session {
+                        self.dispatch_selected(SessionEvent::FormalizeIntent(Box::new(
+                            IntentPacket::demo(
+                                session_id,
+                                self.selected_session()
+                                    .map(|session| session.root.clone())
+                                    .unwrap_or_else(|| ".".to_string()),
+                            ),
+                        )));
+                    }
+                }
+                if ui.button("Draft spec").clicked() {
+                    self.dispatch_selected(SessionEvent::DraftSpec);
+                }
+            }
+            SessionPhase::SpecDraft | SessionPhase::SpecReview => {
+                if ui.button("Approve spec").clicked() {
+                    self.dispatch_selected(SessionEvent::ApproveSpec);
+                }
+            }
+            SessionPhase::SpecApproved => {
+                if ui.button("Propose realization").clicked() {
+                    self.dispatch_selected(SessionEvent::ProposeRealization);
+                }
+            }
+            SessionPhase::RealizationProposed => {
+                if ui.button("Accept realization").clicked() {
+                    self.dispatch_selected(SessionEvent::AcceptRealization);
+                }
+            }
+            SessionPhase::VerifyRunning => {
+                if ui.button("Mark verify passed").clicked() {
+                    self.dispatch_selected(SessionEvent::VerificationPassed);
+                }
+                if ui.button("Mark verify failed").clicked() {
+                    self.dispatch_selected(SessionEvent::VerificationFailed);
+                }
+            }
+            SessionPhase::RepairEligible => {
+                if ui.button("Repair spec-preserving").clicked() {
+                    self.dispatch_selected(SessionEvent::RepairSpecPreserving);
+                }
+                if ui.button("Repair spec-changing").clicked() {
+                    self.dispatch_selected(SessionEvent::RepairSpecChanging);
+                }
+            }
+            SessionPhase::TrustReview => {
+                if ui.button("Approve trust").clicked() {
+                    self.dispatch_selected(SessionEvent::ApproveTrust);
+                }
+            }
+            SessionPhase::CertifyRunning => {
+                if ui.button("Mark certification passed").clicked() {
+                    self.dispatch_selected(SessionEvent::CertificationPassed);
+                }
+            }
+            SessionPhase::Certified => {
+                if ui.button("Ingest incident").clicked() {
+                    self.dispatch_selected(SessionEvent::IngestIncident);
+                }
+            }
+            SessionPhase::IncidentIngesting | SessionPhase::HumanInterventionRequired => {}
+        }
+    }
+
+    fn probe_provider(&mut self) {
+        match self
+            .rt
+            .block_on(self.client.probe_provider(&self.provider_profile))
+        {
+            Ok(response) => {
+                self.last_provider_report = serde_json::to_value(response.report).ok();
+            }
+            Err(error) => self.set_error(error),
+        }
+    }
+
+    fn connect_mcp(&mut self) {
+        let request = ConnectMcpRequest {
+            endpoint: McpEndpoint::Http(self.mcp_endpoint.clone()),
+            alias: None,
+        };
+        match self.rt.block_on(self.client.connect_mcp(&request)) {
+            Ok(response) => {
+                self.mcp_connection_id = Some(response.connection.connection_id.clone());
+                self.mcp_tools = response.tools.into_iter().map(|tool| tool.name).collect();
+                if let Some(first) = self.mcp_tools.first() {
+                    self.mcp_tool_name = first.clone();
+                }
+            }
+            Err(error) => self.set_error(error),
+        }
+    }
+
+    fn call_mcp_tool(&mut self) {
+        let Some(connection_id) = self.mcp_connection_id.clone() else {
+            self.set_error("connect MCP first");
+            return;
+        };
+        let arguments = match serde_json::from_str::<Value>(&self.mcp_tool_args_text) {
+            Ok(value) => value,
+            Err(error) => {
+                self.set_error(format!("invalid tool args JSON: {error}"));
+                return;
+            }
+        };
+
+        match self.rt.block_on(self.client.call_mcp_tool(
+            &connection_id,
+            &self.mcp_tool_name,
+            arguments,
+        )) {
+            Ok(response) => self.mcp_last_result = serde_json::to_value(response.result).ok(),
+            Err(error) => self.set_error(error),
+        }
+    }
+}
+
+impl eframe::App for StudioApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::Panel::top("header").show_inside(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("x07 Studio");
+                if ui.button("Refresh").clicked() {
+                    self.refresh();
+                }
+                if ui.button("New session").clicked() {
+                    match self
+                        .rt
+                        .block_on(self.client.create_session(&CreateSessionRequest {
+                            title: self.new_session_title.clone(),
+                            task_type: TaskType::NewBehavior,
+                        })) {
+                        Ok(snapshot) => {
+                            self.selected_session = Some(snapshot.session_id);
+                            self.sessions.push(snapshot);
+                        }
+                        Err(error) => self.set_error(error),
+                    }
+                }
+                ui.text_edit_singleline(&mut self.new_session_title);
+            });
+            if let Some(error) = &self.error {
+                ui.colored_label(egui::Color32::RED, error);
+            }
+        });
+
+        egui::Panel::left("sessions")
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                ui.heading("Sessions");
+                for session in &self.sessions {
+                    let selected = self.selected_session == Some(session.session_id);
+                    if ui
+                        .selectable_label(
+                            selected,
+                            format!("{} · {:?}", session.title, session.phase),
+                        )
+                        .clicked()
+                    {
+                        self.selected_session = Some(session.session_id);
+                    }
+                }
+            });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            if let Some(session) = self.selected_session().cloned() {
+                ui.heading(format!("{} · {:?}", session.title, session.phase));
+                ui.label(format!("Room: {:?}", session.room));
+                ui.separator();
+
+                self.phase_buttons(ui, session.phase.clone());
+
+                ui.separator();
+                ui.heading("Run canonical binding");
+                ui.horizontal(|ui| {
+                    ui.label("Binding");
+                    ui.text_edit_singleline(&mut self.binding_id);
+                    if ui.button("Run").clicked() {
+                        self.run_selected_binding();
+                    }
+                });
+                ui.label("Binding vars (JSON object)");
+                ui.text_edit_multiline(&mut self.binding_vars_text);
+
+                if let Some(intent) = &session.intent {
+                    ui.separator();
+                    ui.heading("Intent packet");
+                    ui.monospace(serde_json::to_string_pretty(intent).unwrap_or_default());
+                }
+
+                if let Some(contract) = &session.contract {
+                    ui.separator();
+                    ui.heading("Session contract");
+                    ui.monospace(serde_json::to_string_pretty(contract).unwrap_or_default());
+                }
+
+                ui.separator();
+                ui.heading("Operation log");
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for record in session.op_log.iter().rev() {
+                        ui.group(|ui| {
+                            ui.label(format!("{} · {:?}", record.op, record.status));
+                            ui.monospace(record.command.join(" "));
+                            if let Some(report_json) = &record.report_json {
+                                ui.collapsing("report", |ui| {
+                                    ui.monospace(
+                                        serde_json::to_string_pretty(report_json)
+                                            .unwrap_or_default(),
+                                    );
+                                });
+                            }
+                            if let Some(stderr) = &record.stderr {
+                                if !stderr.trim().is_empty() {
+                                    ui.collapsing("stderr", |ui| {
+                                        ui.monospace(stderr);
+                                    });
+                                }
+                            }
+                        });
+                    }
+                });
+            } else {
+                ui.label("No session selected.");
+            }
+        });
+
+        egui::Panel::right("providers_mcp")
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                ui.heading("Provider probe");
+                ui.text_edit_singleline(&mut self.provider_profile.label);
+                ui.text_edit_singleline(&mut self.provider_profile.base_url);
+                ui.text_edit_singleline(self.provider_profile.model.get_or_insert(String::new()));
+                if ui.button("Probe provider").clicked() {
+                    self.probe_provider();
+                }
+                if let Some(report) = &self.last_provider_report {
+                    ui.collapsing("Last provider report", |ui| {
+                        ui.monospace(serde_json::to_string_pretty(report).unwrap_or_default());
+                    });
+                }
+
+                ui.separator();
+                ui.heading("MCP");
+                ui.text_edit_singleline(&mut self.mcp_endpoint.base_url);
+                ui.text_edit_singleline(&mut self.mcp_endpoint.mcp_path);
+                if ui.button("Connect MCP").clicked() {
+                    self.connect_mcp();
+                }
+                if let Some(connection_id) = &self.mcp_connection_id {
+                    ui.label(format!("Connection: {connection_id}"));
+                    if !self.mcp_tools.is_empty() {
+                        egui::ComboBox::from_label("Tool")
+                            .selected_text(self.mcp_tool_name.clone())
+                            .show_ui(ui, |ui| {
+                                for tool in &self.mcp_tools {
+                                    ui.selectable_value(
+                                        &mut self.mcp_tool_name,
+                                        tool.clone(),
+                                        tool,
+                                    );
+                                }
+                            });
+                    }
+                    ui.text_edit_multiline(&mut self.mcp_tool_args_text);
+                    if ui.button("Call tool").clicked() {
+                        self.call_mcp_tool();
+                    }
+                    if let Some(result) = &self.mcp_last_result {
+                        ui.collapsing("Last MCP result", |ui| {
+                            ui.monospace(serde_json::to_string_pretty(result).unwrap_or_default());
+                        });
+                    }
+                }
+            });
+    }
+}
+
+fn parse_vars_map(input: &str) -> anyhow::Result<BTreeMap<String, String>> {
+    if input.trim().is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let value: Value = serde_json::from_str(input)?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("binding vars must be a JSON object"))?;
+    let mut out = BTreeMap::new();
+    for (key, value) in object {
+        out.insert(
+            key.clone(),
+            value
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| value.to_string()),
+        );
+    }
+    Ok(out)
+}

@@ -1,0 +1,18 @@
+[package]
+name = "loom-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+camino.workspace = true
+indexmap.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+loom-adapters = { path = "../loom-adapters" }
+loom-store = { path = "../loom-store" }
+loom-types = { path = "../loom-types" }

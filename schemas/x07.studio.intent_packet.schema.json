@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "$id": "https://x07.io/spec/x07.studio.intent_packet.schema.json",
+  "title": "x07.studio.intent_packet@0.1.0",
+  "properties": {
+    "schema_version": {
+      "const": "x07.studio.intent_packet@0.1.0"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "workspace_root": {
+      "type": "string"
+    },
+    "task_type": {
+      "type": "string"
+    },
+    "targets": {
+      "type": "array"
+    },
+    "examples": {
+      "type": "array"
+    },
+    "constraints": {
+      "type": "array"
+    },
+    "policy_implications": {
+      "type": "array"
+    },
+    "ambiguities": {
+      "type": "array"
+    },
+    "assumptions": {
+      "type": "array"
+    },
+    "witnesses": {
+      "type": "array"
+    },
+    "source": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "workspace_root",
+    "task_type",
+    "targets",
+    "source"
+  ]
+}

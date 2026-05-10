@@ -1,0 +1,6 @@
+target/
+.x07/
+dist/
+build/
+*.log
+.DS_Store

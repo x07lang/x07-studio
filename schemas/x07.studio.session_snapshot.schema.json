@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "$id": "https://x07.io/spec/x07.studio.session_snapshot.schema.json",
+  "title": "x07.studio.session_snapshot@0.1.0",
+  "properties": {
+    "schema_version": {
+      "const": "x07.studio.session_snapshot@0.1.0"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "task_type": {
+      "type": "string"
+    },
+    "room": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "allowed_verbs": {
+      "type": "array"
+    },
+    "intent": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "contract": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "op_log": {
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "session_id",
+    "title",
+    "root",
+    "task_type",
+    "room",
+    "phase",
+    "allowed_verbs",
+    "op_log"
+  ]
+}

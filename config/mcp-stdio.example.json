@@ -1,0 +1,11 @@
+{
+  "endpoint": {
+    "transport": "stdio",
+    "label": "x07lang-mcp-stdio",
+    "command": "uvx",
+    "args": ["x07lang-mcp"],
+    "cwd": null,
+    "env": {}
+  },
+  "alias": "local-x07-mcp-stdio"
+}

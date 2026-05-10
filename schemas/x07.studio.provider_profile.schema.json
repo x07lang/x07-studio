@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "$id": "https://x07.io/spec/x07.studio.provider_profile.schema.json",
+  "title": "x07.studio.provider_profile@0.1.0",
+  "properties": {
+    "schema_version": {
+      "const": "x07.studio.provider_profile@0.1.0"
+    },
+    "id": {
+      "type": "string"
+    },
+    "label": {
+      "type": "string"
+    },
+    "base_url": {
+      "type": "string"
+    },
+    "api_kind": {
+      "type": "string"
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "default_headers": {
+      "type": "object"
+    },
+    "local": {
+      "type": "boolean"
+    },
+    "trust_tier": {
+      "type": "string"
+    },
+    "probe_mode": {
+      "type": "string"
+    },
+    "disabled": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "label",
+    "base_url",
+    "api_kind",
+    "default_headers",
+    "local",
+    "trust_tier",
+    "probe_mode",
+    "disabled"
+  ]
+}

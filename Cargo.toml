@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/loom-types",
+  "crates/loom-core",
+  "crates/loom-store",
+  "crates/loom-adapters",
+  "crates/loom-client",
+  "crates/loom-daemon",
+  "crates/x07-studio",
+  "crates/x07-studio-forge",
+]
+default-members = [
+  "crates/loom-daemon",
+  "crates/x07-studio",
+  "crates/x07-studio-forge",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+rust-version = "1.92"
+authors = ["x07 Studio authors"]
+repository = "https://github.com/x07lang/x07-studio"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8.9"
+camino = { version = "1", features = ["serde1"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+crossterm = "0.29"
+dirs = "6"
+eframe = "0.34.1"
+egui = "0.34.1"
+indexmap = { version = "2", features = ["serde"] }
+ratatui = "0.30.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,16 @@
+[package]
+name = "loom-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+camino.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+loom-types = { path = "../loom-types" }
+
+[dev-dependencies]
+uuid.workspace = true

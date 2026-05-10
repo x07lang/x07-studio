@@ -1,0 +1,86 @@
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use uuid::Uuid;
+
+use crate::artifacts::{ProviderProbeReport, ProviderProfile, TaskType};
+use crate::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
+use crate::ops::SessionEvent;
+use crate::session::SessionSnapshot;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthResponse {
+    pub ok: bool,
+    pub workspace_root: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSessionRequest {
+    pub title: String,
+    pub task_type: TaskType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DispatchEventRequest {
+    pub event: SessionEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunBindingRequest {
+    pub binding_id: String,
+    pub vars: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveProviderProfileRequest {
+    pub profile: ProviderProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProbeProviderRequest {
+    pub profile: ProviderProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectMcpRequest {
+    pub endpoint: McpEndpoint,
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallMcpToolRequest {
+    pub name: String,
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindingDescriptor {
+    pub id: String,
+    pub category: String,
+    pub program: String,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectMcpResponse {
+    pub connection: McpConnectionInfo,
+    pub tools: Vec<McpToolDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionOpResponse {
+    pub session: SessionSnapshot,
+    pub last_op_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderProbeResponse {
+    pub profile: ProviderProfile,
+    pub report: ProviderProbeReport,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpCallResponse {
+    pub result: McpToolCallResult,
+}

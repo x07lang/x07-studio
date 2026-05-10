@@ -1,0 +1,12 @@
+{
+  "endpoint": {
+    "transport": "http",
+    "label": "x07lang-mcp-http",
+    "base_url": "http://127.0.0.1:8314",
+    "mcp_path": "/mcp",
+    "bearer_env": null,
+    "bearer_token": null,
+    "default_headers": {}
+  },
+  "alias": "local-x07-mcp"
+}

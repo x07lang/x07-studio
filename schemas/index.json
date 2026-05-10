@@ -1,0 +1,12 @@
+{
+  "schema_version": "x07.studio.schema_index@0.1.0",
+  "schemas": [
+    "x07.studio.intent_packet.schema.json",
+    "x07.studio.lineage_graph.schema.json",
+    "x07.studio.op_record.schema.json",
+    "x07.studio.provider_profile.schema.json",
+    "x07.studio.provider_probe_report.schema.json",
+    "x07.studio.session_contract.schema.json",
+    "x07.studio.session_snapshot.schema.json"
+  ]
+}
