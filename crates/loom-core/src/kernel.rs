@@ -175,7 +175,20 @@ impl WorkspaceKernel {
             }
         }
 
-        for binding_id in ["spec.scaffold", "spec.check", "tests.gen.write"] {
+        if should_scaffold_spec(self.root.as_path(), &vars) {
+            let snapshot = self.run_binding(session_id, "spec.scaffold", &vars).await?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        } else {
+            let input = vars
+                .get("input")
+                .cloned()
+                .unwrap_or_else(|| "spec/app.main.x07spec.json".to_string());
+            self.append_op(session_id, existing_spec_op(session_id, &input))?;
+        }
+
+        for binding_id in ["spec.check", "tests.gen.write"] {
             let snapshot = self.run_binding(session_id, binding_id, &vars).await?;
             if last_op_failed(&snapshot) {
                 return Ok(snapshot);
@@ -579,6 +592,50 @@ fn last_op_failed(snapshot: &SessionSnapshot) -> bool {
         .is_some_and(|op| op.status == OperationStatus::Failed)
 }
 
+fn should_scaffold_spec(root: &Utf8Path, vars: &BTreeMap<String, String>) -> bool {
+    let Some(input) = vars.get("input") else {
+        return true;
+    };
+    !root.join(input).exists()
+}
+
+fn existing_spec_op(session_id: Uuid, input: &str) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "spec.scaffold".to_string(),
+        backend: "studio".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "skip".to_string(),
+            "spec.scaffold".to_string(),
+            input.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![input.to_string()],
+        notes: Some(
+            "Existing spec detected; scaffold skipped to preserve template alignment.".to_string(),
+        ),
+        stdout: Some(format!("Using existing spec `{input}`.")),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.scaffold_skip@0.1.0",
+            "ok": true,
+            "skipped": true,
+            "reason": "existing_spec",
+            "input": input,
+        })),
+        report_path: None,
+    }
+}
+
 fn default_agent_profiles() -> Vec<AgentProfile> {
     let mut codex = AgentProfile::codex();
     codex.status = status_for_command(&codex.command);
@@ -947,7 +1004,7 @@ mod tests {
         TaskType, Witness, WitnessKind,
     };
 
-    use super::{xtal_workflow_vars_from_intent, WorkspaceKernel};
+    use super::{should_scaffold_spec, xtal_workflow_vars_from_intent, WorkspaceKernel};
 
     #[test]
     fn xtal_workflow_vars_use_safe_payload_param() {
@@ -1115,6 +1172,22 @@ mod tests {
         assert_eq!(blocked_again.op.op, "agent.approval.echo-agent");
         assert_eq!(blocked_again.op.status, OperationStatus::Pending);
         assert!(blocked_again.command.is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn xtal_workflow_skips_scaffold_when_template_spec_exists() {
+        let root = temp_root();
+        let spec_dir = root.join("spec");
+        std::fs::create_dir_all(&spec_dir).expect("create spec dir");
+        std::fs::write(spec_dir.join("toy.sorter.x07spec.json"), "{}").expect("write spec");
+        let vars = std::collections::BTreeMap::from([(
+            "input".to_string(),
+            "spec/toy.sorter.x07spec.json".to_string(),
+        )]);
+
+        assert!(!should_scaffold_spec(root.as_path(), &vars));
 
         std::fs::remove_dir_all(root).ok();
     }

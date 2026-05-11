@@ -445,7 +445,7 @@ export function createIntentPacket(
 								? 'workflow.graph'
 								: 'workflow.graph';
 	const entry = isSorter
-		? 'sort_ascending'
+		? 'sort_u8_asc'
 		: isDbGuard
 			? 'verify_drift'
 			: isGateway

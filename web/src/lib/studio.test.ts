@@ -21,6 +21,7 @@ describe('x07 Studio XTAL web model', () => {
 
 		expect(intent.schema_version).toBe('x07.studio.intent_packet@0.1.0');
 		expect(intent.targets[0].module_id).toBe('toy.sorter');
+		expect(intent.targets[0].entry).toBe('sort_u8_asc');
 		expect(intent.witnesses.map((witness) => witness.kind)).toContain('policy_requirement');
 		expect(intent.constraints).toContain('Use spec-first XTAL flow.');
 	});

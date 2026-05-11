@@ -94,7 +94,7 @@ This document records friction found while implementing the Studio web surface.
    verify a project end to end, but the generic `spec.scaffold` step may rewrite
    the starter's existing `toy.sorter` operation with Studio-derived names. The
    project still verifies, but `xtal impl check` reports warnings such as
-   `WXTAL_IMPL_PARAM_NAME_MISMATCH` and extra contract clauses. Studio should
-   detect template-provided specs before scaffolding the same module/op, and the
-   x07 CLI could expose a machine-readable "operation already exists" or
+   `WXTAL_IMPL_PARAM_NAME_MISMATCH` and extra contract clauses. Studio now skips
+   scaffold when the template-provided spec path already exists. The x07 CLI
+   could still expose a machine-readable "operation already exists" or
    "merge/update scaffold" mode for agentic workflows.
