@@ -15,6 +15,48 @@ Response:
 }
 ```
 
+## Workspace Radar
+
+- `GET /workspace/radar`
+
+Response:
+
+```json
+{
+  "schema_version": "x07.studio.workspace_radar@0.1.0",
+  "workspace_root": "/path/to/workspace",
+  "xtal_manifest": {
+    "path": "arch/xtal/xtal.json",
+    "exists": true,
+    "modified_unix_ms": 1778500750188
+  },
+  "spec_count": 1,
+  "generated_tests": {
+    "path": "gen/xtal/tests.json",
+    "exists": true,
+    "modified_unix_ms": 1778500750188
+  },
+  "latest_verify": {
+    "path": "target/xtal/verify/summary.json",
+    "exists": true,
+    "modified_unix_ms": 1778500750188
+  },
+  "latest_certify": {
+    "path": "target/xtal/cert/bundle.json",
+    "exists": true,
+    "modified_unix_ms": 1778500750188
+  },
+  "incident_count": 1
+}
+```
+
+The daemon scans bounded canonical XTAL surfaces from the workspace root:
+`arch/xtal/xtal.json`, `spec/**`, `gen/xtal/tests.json`,
+`target/xtal/verify/**`, `target/xtal/cert/**`, `target/xtal/violations/**`,
+`target/xtal/ingest/**`, and `.x07/studio/**` session state. Browser clients
+use this endpoint to render workspace-level readiness instead of inferring all
+radar signals from the selected session.
+
 ## Bindings
 
 - `GET /bindings`
