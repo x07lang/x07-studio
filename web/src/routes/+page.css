@@ -1050,6 +1050,104 @@ textarea {
 	background: rgba(255, 255, 255, 0.035);
 }
 
+.patch-review {
+	border: 1px solid rgba(85, 214, 231, 0.18);
+	border-radius: var(--radius);
+	background: rgba(255, 255, 255, 0.035);
+	padding: 10px;
+	display: grid;
+	gap: 9px;
+}
+
+.patch-review-head {
+	display: flex;
+	align-items: start;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.patch-review-head div {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+}
+
+.patch-review-head span,
+.patch-command span {
+	color: var(--muted);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0;
+}
+
+.patch-review-head strong,
+.patch-command code {
+	overflow-wrap: anywhere;
+}
+
+.patch-review-head em,
+.patch-file em {
+	color: var(--muted);
+	font-style: normal;
+	font-size: 12px;
+}
+
+.patch-file-list {
+	display: grid;
+	gap: 7px;
+}
+
+.patch-file {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 4px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 8px;
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.patch-file.medium {
+	border-color: rgba(255, 195, 91, 0.3);
+}
+
+.patch-file.high {
+	border-color: rgba(243, 111, 141, 0.36);
+	background: rgba(243, 111, 141, 0.055);
+}
+
+.patch-file strong,
+.patch-file small,
+.patch-command code {
+	overflow-wrap: anywhere;
+}
+
+.patch-file strong {
+	color: var(--text);
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.patch-file span {
+	color: var(--cyan);
+	font-size: 12px;
+}
+
+.patch-file small {
+	grid-column: 1 / -1;
+	color: var(--muted);
+}
+
+.patch-command {
+	display: grid;
+	gap: 4px;
+}
+
+.patch-command code {
+	color: var(--cyan);
+	font-size: 11px;
+}
+
 .diagnostic-list div {
 	border: 1px solid rgba(255, 195, 91, 0.24);
 	border-radius: var(--radius);

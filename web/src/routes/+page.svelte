@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import './+page.css';
 	import { StudioApi } from '$lib/api';
+	import { buildPatchReview, buildReviewSignals, type ReviewSignal } from '$lib/review';
 	import {
 		agentLanes,
 		canonicalDocRefs,
@@ -27,15 +28,6 @@
 
 	const api = new StudioApi();
 	const initialProject = projectTemplates[0];
-
-	type ReviewSignal = {
-		opId: string;
-		op: string;
-		label: string;
-		detail: string;
-		tone: 'info' | 'warn' | 'ok';
-		artifact?: string;
-	};
 
 	let health: HealthResponse = { ok: true, workspace_root: '/workspace/x07-project' };
 	let sessions: SessionSnapshot[] = [];
@@ -170,6 +162,7 @@
 		allOps.at(-1) ??
 		null;
 	$: reviewSignals = buildReviewSignals(allOps);
+	$: selectedPatchReview = buildPatchReview(selectedOp);
 	$: selectedOpDiagnostics = collectDiagnostics(selectedOp);
 	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
@@ -313,94 +306,6 @@
 		if (signal.op.startsWith('impl.')) selectedRoom = 'realization';
 		if (signal.op.startsWith('agent.')) selectedRoom = 'providers';
 		statusLine = `Reviewing ${signal.label.toLowerCase()}: ${signal.op}`;
-	}
-
-	function buildReviewSignals(ops: OpRecord[]): ReviewSignal[] {
-		const seen = new Set<string>();
-		const signals: ReviewSignal[] = [];
-		for (const op of [...ops].reverse()) {
-			const signal = reviewSignalFromOp(op);
-			if (!signal) continue;
-			const key = `${signal.label}|${signal.detail}|${signal.artifact ?? ''}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			signals.push(signal);
-			if (signals.length >= 8) break;
-		}
-		return signals;
-	}
-
-	function reviewSignalFromOp(op: OpRecord): ReviewSignal | null {
-		const artifact = primaryArtifact(op);
-		const detail = shortReviewText(op, artifact);
-		if (op.op.startsWith('agent.event.')) {
-			if (op.op.endsWith('.approval')) {
-				return reviewSignal(op, 'Approval request', detail, 'warn', artifact);
-			}
-			if (op.op.endsWith('.diagnostic')) {
-				return reviewSignal(op, 'Diagnostic classified', detail, 'warn', artifact);
-			}
-			if (op.op.endsWith('.write')) {
-				return reviewSignal(op, 'Write activity', detail, 'info', artifact);
-			}
-			if (op.op.endsWith('.artifact')) {
-				return reviewSignal(op, 'Artifact surfaced', detail, 'info', artifact);
-			}
-		}
-		if (op.op === 'impl.sync.patchset') {
-			return reviewSignal(op, 'Patchset review', detail, 'warn', artifact);
-		}
-		if (op.op === 'impl.sync.write') {
-			return reviewSignal(op, 'Implementation write', detail, 'info', artifact);
-		}
-		if (op.artifacts.some((item) => item.includes('patchset'))) {
-			return reviewSignal(op, 'Patchset review', detail, 'warn', artifact);
-		}
-		if (op.op.startsWith('xtal.verify')) {
-			return reviewSignal(
-				op,
-				'Verify evidence',
-				op.status === 'succeeded' ? 'Verification succeeded' : detail,
-				op.status === 'succeeded' ? 'ok' : 'warn',
-				artifact
-			);
-		}
-		if (op.op.startsWith('xtal.certify')) {
-			return reviewSignal(
-				op,
-				'Trust evidence',
-				op.status === 'succeeded' ? 'Certification evidence ready' : detail,
-				op.status === 'succeeded' ? 'ok' : 'warn',
-				artifact
-			);
-		}
-		return null;
-	}
-
-	function reviewSignal(
-		op: OpRecord,
-		label: ReviewSignal['label'],
-		detail: string,
-		tone: ReviewSignal['tone'],
-		artifact?: string
-	): ReviewSignal {
-		return { opId: op.id, op: op.op, label, detail, tone, artifact };
-	}
-
-	function primaryArtifact(op: OpRecord): string | undefined {
-		return (
-			op.artifacts.find((artifact) => !artifact.includes('.x07/studio/handoffs/')) ??
-			op.artifacts[0]
-		);
-	}
-
-	function shortReviewText(op: OpRecord, artifact?: string): string {
-		const notes = op.notes === 'visible agent operation record' ? '' : op.notes;
-		const value =
-			[op.stdout, op.stderr, notes, op.command.join(' '), artifact, op.op].find(
-				(item) => item?.trim()
-			) ?? op.op;
-		return value.length > 118 ? `${value.slice(0, 115)}...` : value;
 	}
 
 	function collectDiagnostics(op: OpRecord | null): Array<{ code: string; severity: string; message: string }> {
@@ -1108,6 +1013,31 @@
 							<code>{artifact}</code>
 						{/each}
 					</div>
+					{#if selectedPatchReview}
+						<div class="patch-review" aria-label="Visual patch review">
+							<div class="patch-review-head">
+								<div>
+									<span>Patch review</span>
+									<strong>{selectedPatchReview.gate}</strong>
+								</div>
+								<em>{selectedPatchReview.status}</em>
+							</div>
+							<div class="patch-file-list">
+								{#each selectedPatchReview.files as file}
+									<div class={`patch-file ${file.risk}`}>
+										<strong>{file.path}</strong>
+										<span>{file.action}</span>
+										<small>{file.note}</small>
+										<em>{file.operations ? `${file.operations} ops` : file.source}</em>
+									</div>
+								{/each}
+							</div>
+							<div class="patch-command">
+								<span>Command</span>
+								<code>{selectedPatchReview.command}</code>
+							</div>
+						</div>
+					{/if}
 					<div class="diagnostic-list" aria-label="Operation diagnostics">
 						<span>Diagnostics</span>
 						{#if selectedOpDiagnostics.length}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { StudioApi } from './api';
+import { buildPatchReview, buildReviewSignals } from './review';
 import {
 	appendDemoOp,
 	canonicalDocRefs,
@@ -88,6 +89,50 @@ describe('x07 Studio XTAL web model', () => {
 		expect(session.op_log).toHaveLength(1);
 		expect(session.op_log[0].command.join(' ')).toContain('x07 xtal verify');
 		expect(session.op_log[0].artifacts[0]).toBe('target/xtal/verify/summary.json');
+	});
+
+	it('derives trust review signals from canonical operation records', () => {
+		let session = appendDemoOp(demoSession(), 'impl.sync.write', 'succeeded');
+		session = appendDemoOp(session, 'xtal.verify', 'succeeded');
+
+		const signals = buildReviewSignals(session.op_log);
+		expect(signals.map((signal) => signal.label)).toEqual([
+			'Verify evidence',
+			'Implementation write'
+		]);
+		expect(signals[0].artifact).toBe('target/xtal/verify/summary.json');
+	});
+
+	it('derives visual patch review files from artifacts and patchset JSON', () => {
+		const session = appendDemoOp(demoSession(), 'impl.sync.write', 'succeeded');
+		const op = {
+			...session.op_log[0],
+			report_json: {
+				result: {
+					patchset: {
+						schema_version: 'x07.patchset@0.1.0',
+						patches: [
+							{
+								path: 'src/main.x07.json',
+								patch: [
+									{ op: 'add', path: '/decls/0', value: { kind: 'export', names: ['main.run'] } },
+									{ op: 'replace', path: '/solve', value: ['bytes.lit', 'ok'] }
+								],
+								note: 'Realize approved operation'
+							}
+						]
+					}
+				}
+			}
+		};
+
+		const review = buildPatchReview(op);
+		expect(review?.gate).toBe('Write gate: implementation paths');
+		expect(review?.files.map((file) => file.path)).toContain('src/main.x07.json');
+		expect(review?.files.find((file) => file.path === 'src/main.x07.json')?.action).toBe(
+			'add 1, replace 1'
+		);
+		expect(review?.files.map((file) => file.path)).toContain('target/xtal/impl-sync.patchset.json');
 	});
 
 	it('models supervised agent launch records', () => {

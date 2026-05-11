@@ -142,6 +142,11 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
 	await expect(page.getByLabel('Trust review signals')).toContainText('Verify evidence');
 	await expect(page.getByLabel('Trust review signals')).toContainText('Implementation write');
+	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Implementation write/ }).click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('impl.sync.write');
+	await expect(page.getByLabel('Visual patch review')).toContainText('Write gate: implementation paths');
+	await expect(page.getByLabel('Visual patch review')).toContainText('src/');
+	await expect(page.getByLabel('Visual patch review')).toContainText('target/xtal/impl-sync.patchset.json');
 	await expect(page.getByText('Agent Visible Worklog')).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.event.claude-code.artifact' })).toBeVisible();

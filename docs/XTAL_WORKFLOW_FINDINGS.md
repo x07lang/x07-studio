@@ -149,5 +149,14 @@ This document records friction found while implementing the Studio web surface.
    records accumulate. The browser now derives a review queue from `OpRecord`s:
    agent artifacts, diagnostics, writes, approval requests, patchsets, verify
    evidence, and certify evidence become clickable signals that select the
-   original operation in the inspector. The remaining gap is a visual patch diff
-   for patchset contents instead of path-level surfacing only.
+   original operation in the inspector.
+
+16. Patchsets need a file-level inspector before full diffs.
+
+   `x07.patchset@0.1.0` is the canonical deterministic edit vehicle, but the
+   browser previously only showed the artifact path. The operation inspector now
+   recognizes embedded x07 patchset payloads, patchset artifact paths, and write
+   roots, then renders affected files, JSON Patch operation counts, notes,
+   review gates, and path risk. The remaining gap is reading artifact file
+   contents from the daemon so Studio can show full before/after JSON Patch
+   diffs when the patchset exists only as a file path.
