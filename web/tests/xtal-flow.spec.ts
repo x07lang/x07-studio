@@ -164,6 +164,10 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(
 		page.getByLabel('Configured coding agents').getByText('Claude Code', { exact: true })
 	).toBeVisible();
+	await expect(page.getByLabel('OpenAI Codex readiness')).toContainText('Ready');
+	await expect(page.getByLabel('OpenAI Codex readiness')).toContainText('Human checkpoint before execute');
+	await expect(page.getByLabel('Claude Code readiness')).toContainText('Ready');
+	await expect(page.getByLabel('Claude Code readiness')).toContainText('Human checkpoint before execute');
 	await page.getByRole('tab', { name: 'Intent' }).click();
 
 	await page.getByLabel('Active coding agent').selectOption({ label: 'Claude Code' });

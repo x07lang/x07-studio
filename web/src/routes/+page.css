@@ -82,6 +82,9 @@
 .spec-grid span,
 .spec-grid small,
 .handoff-status,
+.agent-readiness span,
+.agent-readiness small,
+.agent-readiness em,
 .budget-row span,
 .flow-list span,
 .terminal-log small,
@@ -1226,6 +1229,60 @@ textarea {
 
 .agent-actions {
 	margin-top: 5px;
+}
+
+.agent-readiness {
+	display: grid;
+	grid-template-columns: minmax(76px, 0.42fr) minmax(0, 1fr);
+	gap: 4px 8px;
+	align-items: center;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 7px 8px;
+	margin: 7px 0;
+	background: rgba(255, 255, 255, 0.03);
+	min-width: 0;
+}
+
+.agent-readiness.available {
+	border-color: rgba(114, 228, 180, 0.28);
+	background: rgba(114, 228, 180, 0.055);
+}
+
+.agent-readiness.needs_install {
+	border-color: rgba(255, 195, 91, 0.34);
+	background: rgba(255, 195, 91, 0.06);
+}
+
+.agent-readiness.disabled {
+	border-color: rgba(255, 105, 105, 0.32);
+	background: rgba(255, 105, 105, 0.055);
+}
+
+.agent-readiness span {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	text-transform: uppercase;
+}
+
+.agent-readiness strong,
+.agent-readiness small,
+.agent-readiness em {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-readiness strong {
+	font-size: 12px;
+}
+
+.agent-readiness small,
+.agent-readiness em {
+	grid-column: 2;
+	font-size: 11px;
+	font-style: normal;
 }
 
 .segmented-button {

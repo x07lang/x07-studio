@@ -10,6 +10,7 @@
 	} from '$lib/review';
 	import {
 		agentLanes,
+		agentReadiness,
 		buildApprovalLedger,
 		buildAutomationPlan,
 		buildWorldBudgetGuard,
@@ -1255,9 +1256,16 @@
 				</div>
 				<div class="agent-profiles" aria-label="Configured coding agents">
 					{#each agentProfiles as agent}
+						{@const readiness = agentReadiness(agent, setupComponents)}
 						<div>
 							<strong>{agent.label}</strong>
-							<span>{agent.command} / {agent.status.replaceAll('_', ' ')}</span>
+							<span>{agent.command} / {readiness.state.replaceAll('_', ' ')}</span>
+							<div class={`agent-readiness ${readiness.state}`} aria-label={`${agent.label} readiness`}>
+								<span>{readiness.state === 'available' ? 'Ready' : readiness.state === 'disabled' ? 'Disabled' : 'Install needed'}</span>
+								<strong>{readiness.source}</strong>
+								<small>{readiness.detail}</small>
+								<em>{readiness.gate}</em>
+							</div>
 							<small>{agent.allowed_verbs.join(' -> ')}</small>
 							<em>{agent.approval_required ? 'Approval gated' : 'Autonomous'} / {agent.write_roots.join(', ')}</em>
 							<div class="agent-actions">
@@ -1265,7 +1273,7 @@
 									class="segmented-button"
 									type="button"
 									on:click={() => generateAgentHandoff(agent.id)}
-									disabled={busy || !selected}
+									disabled={busy || !selected || readiness.state === 'disabled'}
 								>
 									Generate {agent.label} Handoff
 								</button>
@@ -1273,7 +1281,7 @@
 									class="segmented-button"
 									type="button"
 									on:click={() => runAgentHandoff(agent.id, 'plan')}
-									disabled={busy || !selected}
+									disabled={busy || !selected || readiness.state === 'disabled'}
 								>
 									Plan {agent.label} Run
 								</button>
@@ -1281,7 +1289,7 @@
 									class="segmented-button"
 									type="button"
 									on:click={() => runAgentHandoff(agent.id, 'execute')}
-									disabled={busy || !selected}
+									disabled={busy || !selected || !readiness.canRun}
 								>
 									Run {agent.label} Command
 								</button>

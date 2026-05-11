@@ -322,6 +322,14 @@ export interface ApprovalLedgerItem {
 	state: 'done' | 'active' | 'blocked';
 }
 
+export interface AgentReadiness {
+	state: AgentStatus;
+	source: string;
+	detail: string;
+	gate: string;
+	canRun: boolean;
+}
+
 export type AutomationPlanState = 'blocked' | 'ready' | 'running' | 'done' | 'failed';
 
 export interface AutomationPlanStep {
@@ -775,6 +783,46 @@ export function buildApprovalLedger(
 	];
 }
 
+export function agentReadiness(
+	agent: AgentProfile,
+	components: RuntimeComponentStatus[]
+): AgentReadiness {
+	const component = components.find((item) => item.id === componentIdForAgent(agent.id));
+	let state: AgentStatus = 'needs_install';
+	if (agent.status === 'disabled') {
+		state = 'disabled';
+	} else if (agent.status === 'available' || component?.status === 'available') {
+		state = 'available';
+	}
+	let source = component?.source ?? 'not found on PATH';
+	if (state === 'available') {
+		source = component?.source ?? agent.command;
+	} else if (state === 'disabled') {
+		source = 'disabled by profile';
+	}
+	const installHint = component?.install_hint ?? `Install ${agent.label} or update the agent profile command.`;
+	const detail =
+		state === 'available'
+			? `${agent.label} is available for supervised ${agent.approval_required ? 'approval-gated' : 'autonomous'} runs.`
+			: state === 'disabled'
+				? `${agent.label} is disabled for this workspace.`
+				: installHint;
+	return {
+		state,
+		source,
+		detail,
+		gate: agent.approval_required
+			? 'Human checkpoint before execute'
+			: 'Plan and execute allowed by profile',
+		canRun: state === 'available'
+	};
+}
+
+function componentIdForAgent(agentId: string): string {
+	if (agentId === 'openai-codex') return 'codex';
+	return agentId;
+}
+
 export function buildAutomationPlan(
 	session: SessionSnapshot | null | undefined,
 	template: ProjectTemplate,
@@ -1136,6 +1184,24 @@ export function demoHealth(): HealthResponse {
 				status: 'available',
 				source: 'demo projection',
 				install_hint: 'Install x07lp or set X07_STUDIO_X07LP_EXE.'
+			},
+			{
+				id: 'codex',
+				label: 'OpenAI Codex',
+				command: 'codex',
+				required: false,
+				status: 'available',
+				source: 'demo projection',
+				install_hint: 'Install Codex CLI when supervised Codex handoffs should execute locally.'
+			},
+			{
+				id: 'claude-code',
+				label: 'Claude Code',
+				command: 'claude',
+				required: false,
+				status: 'available',
+				source: 'demo projection',
+				install_hint: 'Install Claude Code when supervised Claude handoffs should execute locally.'
 			}
 		]
 	};

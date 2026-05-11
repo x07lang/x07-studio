@@ -4,6 +4,7 @@ import { StudioApi } from './api';
 import { buildCounterexampleTheater, buildPatchReview, buildReviewSignals } from './review';
 import {
 	appendDemoOp,
+	agentReadiness,
 	buildApprovalLedger,
 	buildAutomationPlan,
 	buildWorldBudgetGuard,
@@ -42,6 +43,46 @@ describe('x07 Studio XTAL web model', () => {
 		expect(health.defaults.platform_state_dir).toBe('.x07/platform');
 		expect(required).toEqual(['x07', 'x07-wasm', 'x07lp']);
 		expect(health.components.every((component) => component.install_hint.length > 0)).toBe(true);
+	});
+
+	it('derives coding-agent readiness from runtime components and profile policy', () => {
+		const codex = defaultAgentProfiles[0];
+		const ready = agentReadiness(codex, [
+			{
+				id: 'codex',
+				label: 'OpenAI Codex',
+				command: 'codex',
+				required: false,
+				status: 'available',
+				source: '/usr/local/bin/codex',
+				install_hint: 'Install Codex CLI.'
+			}
+		]);
+
+		expect(ready.state).toBe('available');
+		expect(ready.canRun).toBe(true);
+		expect(ready.source).toBe('/usr/local/bin/codex');
+		expect(ready.gate).toBe('Human checkpoint before execute');
+
+		const missing = agentReadiness(defaultAgentProfiles[1], []);
+		expect(missing.state).toBe('needs_install');
+		expect(missing.canRun).toBe(false);
+		expect(missing.source).toBe('not found on PATH');
+
+		const disabled = agentReadiness({ ...codex, status: 'disabled' }, [
+			{
+				id: 'codex',
+				label: 'OpenAI Codex',
+				command: 'codex',
+				required: false,
+				status: 'available',
+				source: '/usr/local/bin/codex',
+				install_hint: 'Install Codex CLI.'
+			}
+		]);
+		expect(disabled.state).toBe('disabled');
+		expect(disabled.canRun).toBe(false);
+		expect(disabled.source).toBe('disabled by profile');
 	});
 
 	it('preserves spoken, spec, and incident inputs as auditable intent sources', () => {
