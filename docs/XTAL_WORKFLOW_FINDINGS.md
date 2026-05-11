@@ -18,9 +18,9 @@ This document records friction found while implementing the Studio web surface.
    raw written text, voice transcripts, or incident notes plus revision history.
    The kernel creates the `x07.studio.intent_packet@0.1.0`, performs the legal
    lifecycle transition, and appends a visible `intent.formalize` `OpRecord`
-   containing the generated packet. The next backend improvement is wiring this
-   endpoint to configured model providers or coding-agent runners while keeping
-   the same auditable operation boundary.
+   containing the generated packet. Provider-backed polish is now an opt-in
+   enrichment lane that records model suggestions as bounded review evidence
+   without bypassing the deterministic packet or human approval gate.
 
 3. Agent providers and coding-agent runners are different concepts.
 
@@ -80,8 +80,9 @@ This document records friction found while implementing the Studio web surface.
    OpenAI-compatible provider profiles are about model HTTP transport. Codex
    and Claude Code are coding-agent command lanes with write roots, MCP tools,
    approval gates, and allowed verbs. Studio now exposes them through
-   `x07.studio.agent_profile@0.1.0`, but still needs a future execution bridge
-   that can launch those agents under the session contract.
+   `x07.studio.agent_profile@0.1.0`, generates session-contract handoffs, and
+   runs approval-gated supervised commands through the daemon so API callers
+   cannot bypass readiness policy.
 
 10. Coding agents need portable handoff artifacts.
 
@@ -382,3 +383,14 @@ This document records friction found while implementing the Studio web surface.
    manifest, static web app, zip contents, first-run workspace/daemon/web
    defaults, and the bundled `x07-wasm` status reported by the copied bootstrap
    script.
+
+37. Browser E2E needs one real daemon path beside the hermetic demo path.
+
+   The default Playwright test intentionally points the web proxy at a closed
+   port so live local daemons cannot make demo-mode assertions flaky. That left
+   the browser-to-daemon path covered by unit and Rust tests, but not by a
+   rendered connected UI flow. Studio now has `npm run e2e:connected`, which
+   starts a real Loom daemon against a temp workspace, supplies deterministic
+   local `x07`, `x07-wasm`, and `x07lp` shims, and verifies a simple XTAL
+   session can be created, polished, approved, run, and extended through the
+   canonical binding selector without entering demo mode.

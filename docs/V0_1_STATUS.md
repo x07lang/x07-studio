@@ -26,6 +26,7 @@
 - daemon-side coding-agent readiness checks reject disabled profiles and missing execute commands even when clients bypass the browser controls
 - standalone packaging scripts assemble the daemon, native desktop shell, Forge shell, and static Svelte web app into a portable bundle
 - standalone CI validates bundle manifest, static web app, launcher scripts, first-run defaults, and bundled `x07-wasm` wiring
+- connected browser E2E starts a real Loom daemon and runs the web app through a simple XTAL session without falling back to demo mode
 - OpenAI-compatible provider probing through `/models`, `/responses`, and `/chat/completions`
 - Axum daemon routes for sessions, bindings, providers, and MCP connections
 - egui GUI shell and ratatui Forge shell over the daemon API

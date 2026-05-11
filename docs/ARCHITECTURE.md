@@ -100,11 +100,6 @@ the intent packet, and records the provider report under the formalize
 operation. If the provider cannot run or returns non-JSON text, Studio keeps the
 deterministic packet and records the failure as review evidence.
 
-OpenAI Codex and Claude Code are shown as coding-agent lanes with guarded verbs,
-write scopes, and review gates. The current backend provider profile is
-model-transport oriented, so command-capable agent profiles are tracked as a
-follow-up in `docs/XTAL_WORKFLOW_FINDINGS.md`.
-
 Approved sessions carry a compiled doctrine surface: canonical x07 doc refs,
 MCP tools, allowed verbs, write roots, focus paths, and baseline evidence refs.
 The browser renders that doctrine in the right rail so humans can see the same

@@ -121,15 +121,16 @@ optional until supervised handoffs need to execute locally.
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cd web && npm run check && npm test && npm run build
+cd web && npm run check && npm test && npm run build && npm run e2e && npm run e2e:connected
 ```
 
 GitHub Actions builds the Rust workspace, the Svelte web app, Playwright E2E,
-and standalone desktop bundles for Linux, macOS, and Windows 2022. The desktop
-bundle job also builds `x07-wasm` from `x07lang/x07-wasm-backend` and wires it
-into the packaged defaults so Atlas app workflows have a ready WASM component.
-CI validates each bundle's manifest, web app, launcher scripts, first-run
-defaults, zip archive, and bundled `x07-wasm` bootstrap status.
+the connected web-to-daemon XTAL smoke path, and standalone desktop bundles for
+Linux, macOS, and Windows 2022. The desktop bundle job also builds `x07-wasm`
+from `x07lang/x07-wasm-backend` and wires it into the packaged defaults so
+Atlas app workflows have a ready WASM component. CI validates each bundle's
+manifest, web app, launcher scripts, first-run defaults, zip archive, and
+bundled `x07-wasm` bootstrap status.
 
 ## Notes
 

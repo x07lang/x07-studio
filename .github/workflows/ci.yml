@@ -86,6 +86,10 @@ jobs:
         working-directory: web
         run: npm run e2e
 
+      - name: Web connected E2E
+        working-directory: web
+        run: npm run e2e:connected
+
       - name: Component bootstrap doctor
         run: python3 scripts/bootstrap_components.py --json --allow-missing
 
