@@ -315,7 +315,7 @@ dd {
 
 .radar-grid {
 	display: grid;
-	grid-template-columns: repeat(6, minmax(0, 1fr));
+	grid-template-columns: repeat(8, minmax(0, 1fr));
 	gap: 8px;
 	min-width: 0;
 }
@@ -1507,7 +1507,7 @@ textarea {
 	}
 
 	.radar-grid {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(4, minmax(0, 1fr));
 	}
 
 	.radar-actions {

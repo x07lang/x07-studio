@@ -143,6 +143,23 @@ export interface HealthResponse {
 	workspace_root: string;
 }
 
+export interface WorkspaceRadarResponse {
+	schema_version: 'x07.studio.workspace_radar@0.1.0';
+	workspace_root: string;
+	xtal_manifest: WorkspacePathState;
+	spec_count: number;
+	generated_tests: WorkspacePathState;
+	latest_verify: WorkspacePathState | null;
+	latest_certify: WorkspacePathState | null;
+	incident_count: number;
+}
+
+export interface WorkspacePathState {
+	path: string;
+	exists: boolean;
+	modified_unix_ms: number | null;
+}
+
 export interface ProviderCard {
 	id: string;
 	label: string;

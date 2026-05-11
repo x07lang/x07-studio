@@ -18,7 +18,8 @@ import {
 	type IntentInputMode,
 	type IntentPacket,
 	type SessionSnapshot,
-	type TaskType
+	type TaskType,
+	type WorkspaceRadarResponse
 } from './studio';
 
 export class StudioApi {
@@ -37,6 +38,15 @@ export class StudioApi {
 		} catch {
 			this.demoMode = true;
 			return { ok: true, workspace_root: this.demoSessions[0]?.root ?? '/workspace/x07-project' };
+		}
+	}
+
+	async workspaceRadar(): Promise<WorkspaceRadarResponse | null> {
+		if (this.demoMode) return null;
+		try {
+			return await request<WorkspaceRadarResponse>('/v1/workspace/radar');
+		} catch {
+			return null;
 		}
 	}
 

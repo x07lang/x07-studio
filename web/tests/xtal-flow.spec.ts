@@ -73,6 +73,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Trust review signals')).toContainText('No review signals recorded');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('XTAL readiness');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Active sessions');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Generated tests');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Last verify');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Provider');
 

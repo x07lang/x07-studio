@@ -203,6 +203,8 @@ This document records friction found while implementing the Studio web surface.
    has a compact radar band backed by the live session/op state, with direct
    Intent, Brownfield Extract, and Incident Improve actions that prepare the
    correct task type, input mode, prompt, and approval lane before session
-   creation. The remaining gap is deriving manifest/test-drift counts directly
-   from `arch/xtal/xtal.json`, `gen/xtal/**`, and `target/xtal/**` instead of
-   projecting readiness mostly from the selected Studio session.
+   creation. Studio now also exposes `/v1/workspace/radar`, so connected
+   browsers derive manifest presence, spec count, generated-test manifest state,
+   latest verify/certify artifacts, and incident count directly from
+   `arch/xtal/xtal.json`, `spec/**`, `gen/xtal/**`, `target/xtal/**`, and
+   `.x07/studio/**` session state.

@@ -16,7 +16,7 @@ use loom_types::api::{
     CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest,
     DispatchEventRequest, FormalizeIntentRequest, FormalizeIntentResponse, HealthResponse,
     McpCallResponse, ProbeProviderRequest, ProviderProbeResponse, ResolveApprovalRequest,
-    RunBindingRequest, SaveAgentProfileRequest, SaveProviderProfileRequest,
+    RunBindingRequest, SaveAgentProfileRequest, SaveProviderProfileRequest, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -30,6 +30,7 @@ pub struct ApiState {
 pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/workspace/radar", get(workspace_radar))
         .route("/v1/bindings", get(bindings))
         .route("/v1/sessions", get(list_sessions).post(create_session))
         .route("/v1/sessions/{session_id}", get(get_session))
@@ -93,6 +94,11 @@ async fn health(State(state): State<ApiState>) -> Json<HealthResponse> {
         ok: true,
         workspace_root: kernel.workspace_root().to_string(),
     })
+}
+
+async fn workspace_radar(State(state): State<ApiState>) -> Json<WorkspaceRadarResponse> {
+    let kernel = state.kernel.lock().await;
+    Json(kernel.workspace_radar())
 }
 
 async fn bindings(State(state): State<ApiState>) -> Json<Vec<BindingDescriptor>> {

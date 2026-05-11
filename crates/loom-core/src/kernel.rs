@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
+use std::time::UNIX_EPOCH;
 
 use anyhow::{anyhow, Context};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -14,7 +15,10 @@ use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
 use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
-use loom_types::api::{ArtifactPreviewResponse, PatchsetPreview, PatchsetTargetPreview};
+use loom_types::api::{
+    ArtifactPreviewResponse, PatchsetPreview, PatchsetTargetPreview, WorkspacePathState,
+    WorkspaceRadarResponse,
+};
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
     OperationStatus, ProviderProbeReport, ProviderProfile, TaskType, Witness, WitnessKind,
@@ -85,6 +89,30 @@ impl WorkspaceKernel {
 
     pub fn workspace_root(&self) -> &Utf8Path {
         self.root.as_path()
+    }
+
+    pub fn workspace_radar(&self) -> WorkspaceRadarResponse {
+        WorkspaceRadarResponse {
+            schema_version: "x07.studio.workspace_radar@0.1.0".to_string(),
+            workspace_root: self.root.to_string(),
+            xtal_manifest: workspace_path_state(self.root.as_path(), "arch/xtal/xtal.json"),
+            spec_count: count_files_matching(self.root.join("spec").as_path(), |path| {
+                path.extension() == Some("json") && path.as_str().contains(".x07spec")
+            }),
+            generated_tests: workspace_path_state(self.root.as_path(), "gen/xtal/tests.json"),
+            latest_verify: newest_workspace_file(self.root.as_path(), "target/xtal/verify"),
+            latest_certify: newest_workspace_file(self.root.as_path(), "target/xtal/cert"),
+            incident_count: self
+                .model
+                .session_list()
+                .into_iter()
+                .filter(|session| session.task_type == TaskType::IncidentRepair)
+                .count()
+                + count_files_matching(self.root.join("target/xtal/violations").as_path(), |_| {
+                    true
+                })
+                + count_files_matching(self.root.join("target/xtal/ingest").as_path(), |_| true),
+        }
     }
 
     pub fn list_bindings(&self) -> Vec<loom_types::api::BindingDescriptor> {
@@ -2393,6 +2421,68 @@ fn op_record_from_binding(
     }
 }
 
+fn workspace_path_state(root: &Utf8Path, relative: &str) -> WorkspacePathState {
+    let path = root.join(relative);
+    WorkspacePathState {
+        path: relative.to_string(),
+        exists: path.exists(),
+        modified_unix_ms: modified_unix_ms(path.as_path()),
+    }
+}
+
+fn newest_workspace_file(root: &Utf8Path, relative_dir: &str) -> Option<WorkspacePathState> {
+    let mut newest: Option<WorkspacePathState> = None;
+    visit_workspace_files(root.join(relative_dir).as_path(), &mut |path| {
+        let Some(relative) = path.strip_prefix(root).ok() else {
+            return;
+        };
+        let state = WorkspacePathState {
+            path: relative.to_string(),
+            exists: true,
+            modified_unix_ms: modified_unix_ms(path),
+        };
+        if state.modified_unix_ms >= newest.as_ref().and_then(|item| item.modified_unix_ms) {
+            newest = Some(state);
+        }
+    });
+    newest
+}
+
+fn count_files_matching<F>(dir: &Utf8Path, mut predicate: F) -> usize
+where
+    F: FnMut(&Utf8Path) -> bool,
+{
+    let mut count = 0;
+    visit_workspace_files(dir, &mut |path| {
+        if predicate(path) {
+            count += 1;
+        }
+    });
+    count
+}
+
+fn visit_workspace_files(dir: &Utf8Path, visitor: &mut dyn FnMut(&Utf8Path)) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) else {
+            continue;
+        };
+        if path.is_dir() {
+            visit_workspace_files(path.as_path(), visitor);
+        } else if path.is_file() {
+            visitor(path.as_path());
+        }
+    }
+}
+
+fn modified_unix_ms(path: &Utf8Path) -> Option<u64> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    let millis = modified.duration_since(UNIX_EPOCH).ok()?.as_millis();
+    u64::try_from(millis).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
@@ -3103,6 +3193,56 @@ mod tests {
         assert!(!WorkflowTemplate::WorkflowGraph.source_exists(source.as_path()));
 
         std::fs::remove_dir_all(source).ok();
+    }
+
+    #[test]
+    fn workspace_radar_reports_xtal_artifact_readiness() {
+        let root = temp_root();
+        std::fs::create_dir_all(root.join("arch/xtal")).expect("create xtal dir");
+        std::fs::create_dir_all(root.join("spec")).expect("create spec dir");
+        std::fs::create_dir_all(root.join("gen/xtal")).expect("create gen dir");
+        std::fs::create_dir_all(root.join("target/xtal/verify/nested")).expect("create verify dir");
+        std::fs::create_dir_all(root.join("target/xtal/cert")).expect("create cert dir");
+        std::fs::create_dir_all(root.join("target/xtal/violations"))
+            .expect("create violations dir");
+        std::fs::write(root.join("arch/xtal/xtal.json"), "{}").expect("write manifest");
+        std::fs::write(root.join("spec/app.x07spec.json"), "{}").expect("write spec");
+        std::fs::write(root.join("spec/not-a-spec.json"), "{}").expect("write non spec");
+        std::fs::write(root.join("gen/xtal/tests.json"), "{}").expect("write tests");
+        std::fs::write(root.join("target/xtal/verify/nested/summary.json"), "{}")
+            .expect("write verify summary");
+        std::fs::write(root.join("target/xtal/cert/bundle.json"), "{}").expect("write cert bundle");
+        std::fs::write(root.join("target/xtal/violations/incident.json"), "{}")
+            .expect("write incident");
+
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        kernel
+            .create_session("incident", TaskType::IncidentRepair)
+            .expect("create incident session");
+
+        let radar = kernel.workspace_radar();
+
+        assert_eq!(radar.schema_version, "x07.studio.workspace_radar@0.1.0");
+        assert!(radar.xtal_manifest.exists);
+        assert_eq!(radar.spec_count, 1);
+        assert!(radar.generated_tests.exists);
+        assert_eq!(
+            radar
+                .latest_verify
+                .as_ref()
+                .map(|state| state.path.as_str()),
+            Some("target/xtal/verify/nested/summary.json")
+        );
+        assert_eq!(
+            radar
+                .latest_certify
+                .as_ref()
+                .map(|state| state.path.as_str()),
+            Some("target/xtal/cert/bundle.json")
+        );
+        assert_eq!(radar.incident_count, 2);
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     fn temp_root() -> camino::Utf8PathBuf {

@@ -24,7 +24,8 @@
 		type ProjectDifficulty,
 		type Room,
 		type SessionSnapshot,
-		type TaskType
+		type TaskType,
+		type WorkspaceRadarResponse
 	} from '$lib/studio';
 
 	const api = new StudioApi();
@@ -56,6 +57,7 @@
 	let artifactPreviewKey = '';
 	let artifactPreviewStatus = 'No artifact preview loaded';
 	let selectedArtifactPreview: ArtifactPreviewResponse | null = null;
+	let workspaceRadar: WorkspaceRadarResponse | null = null;
 
 	const placeholderOp: OpRecord = {
 		id: 'op-seed',
@@ -188,14 +190,16 @@
 	$: readinessPercent = Math.round((progress / Math.max(lifecycle.length - 1, 1)) * 100);
 	$: latestVerifyOp = latestOperation(allOps, ['xtal.verify', '.verify', 'test.']);
 	$: latestCertifyOp = latestOperation(allOps, ['xtal.certify', 'certify', 'provenance.verify']);
-	$: activeIncidentCount = sessions.filter((session) => session.task_type === 'incident_repair').length;
+	$: activeIncidentCount =
+		workspaceRadar?.incident_count ??
+		sessions.filter((session) => session.task_type === 'incident_repair').length;
 	$: availableAgentCount = agentProfiles.filter((profile) => profile.status === 'available').length;
 	$: providerSummary = api.isDemoMode ? 'demo projection' : 'Loom daemon';
 	$: radarMetrics = [
 		{
 			label: 'XTAL readiness',
 			value: `${readinessPercent}%`,
-			detail: currentLifecycle.label
+			detail: workspaceRadar?.xtal_manifest.exists ? currentLifecycle.label : 'manifest missing'
 		},
 		{
 			label: 'Active sessions',
@@ -203,14 +207,24 @@
 			detail: selected?.phase.replaceAll('_', ' ') ?? 'none'
 		},
 		{
+			label: 'Specs',
+			value: String(workspaceRadar?.spec_count ?? (selected?.intent ? specOps.length : 0)),
+			detail: 'workspace specs'
+		},
+		{
+			label: 'Generated tests',
+			value: workspaceRadar?.generated_tests.exists ? 'ready' : 'missing',
+			detail: workspaceRadar?.generated_tests.path ?? 'gen/xtal/tests.json'
+		},
+		{
 			label: 'Last verify',
-			value: statusLabel(latestVerifyOp),
-			detail: latestVerifyOp?.op ?? 'not run'
+			value: workspaceRadar?.latest_verify ? 'artifact' : statusLabel(latestVerifyOp),
+			detail: workspaceRadar?.latest_verify?.path ?? latestVerifyOp?.op ?? 'not run'
 		},
 		{
 			label: 'Last certify',
-			value: statusLabel(latestCertifyOp),
-			detail: latestCertifyOp?.op ?? 'not run'
+			value: workspaceRadar?.latest_certify ? 'artifact' : statusLabel(latestCertifyOp),
+			detail: workspaceRadar?.latest_certify?.path ?? latestCertifyOp?.op ?? 'not run'
 		},
 		{
 			label: 'Runtime incidents',
@@ -262,6 +276,7 @@
 		sessions = await api.listSessions();
 		bindings = await api.listBindings();
 		agentProfiles = await api.listAgents();
+		workspaceRadar = await api.workspaceRadar();
 		selectedId = selectedId || sessions[0]?.session_id || '';
 		statusLine = api.isDemoMode ? 'Demo projection active' : 'Connected to Loom daemon';
 	}

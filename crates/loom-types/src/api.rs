@@ -19,6 +19,25 @@ pub struct HealthResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceRadarResponse {
+    pub schema_version: String,
+    pub workspace_root: String,
+    pub xtal_manifest: WorkspacePathState,
+    pub spec_count: usize,
+    pub generated_tests: WorkspacePathState,
+    pub latest_verify: Option<WorkspacePathState>,
+    pub latest_certify: Option<WorkspacePathState>,
+    pub incident_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspacePathState {
+    pub path: String,
+    pub exists: bool,
+    pub modified_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
     pub title: String,
     pub task_type: TaskType,
