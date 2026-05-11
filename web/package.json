@@ -11,7 +11,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "env -u NO_COLOR playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
