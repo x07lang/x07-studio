@@ -119,6 +119,13 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await expect(page.getByLabel('XTAL automation plan')).toContainText('done');
 	await expect(page.getByLabel('Trust review signals')).toContainText('Local platform delivery');
 	await expect(page.getByLabel('Trust review signals')).toContainText('SLO evidence');
+	await expect(page.getByLabel('x07 platform bridge')).toContainText('Platform delivery covered');
+	await expect(page.getByLabel('Platform delivery lanes')).toContainText('lp.deploy.status.local');
+	await page
+		.getByLabel('x07 platform bridge')
+		.getByRole('button', { name: /Inspect platform Platform delivery/ })
+		.click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('lp.deploy.status.local');
 	await page.getByLabel('Worklog filter').selectOption('claude');
 	await expect(inspectOperation(page, 'agent.run.claude-code')).toBeVisible();
 	await page.getByLabel('Worklog filter').selectOption('all');

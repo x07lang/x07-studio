@@ -368,6 +368,26 @@ export interface EvidenceCoverageItem {
 	opId?: string | null;
 }
 
+export type PlatformBridgeState = EvidenceCoverageState | 'optional';
+
+export interface PlatformBridgeItem {
+	id: string;
+	label: string;
+	command: string;
+	requirement: string;
+	evidence: string;
+	artifact: string;
+	state: PlatformBridgeState;
+	opId?: string | null;
+}
+
+export interface PlatformBridge {
+	posture: string;
+	summary: string;
+	nextAction: string;
+	items: PlatformBridgeItem[];
+}
+
 export const rooms: Array<{ id: Room; label: string }> = [
 	{ id: 'intent', label: 'Intent' },
 	{ id: 'spec', label: 'Spec' },
@@ -1159,6 +1179,181 @@ function coverageItem(input: {
 		state: input.state,
 		opId: input.op?.id ?? null
 	};
+}
+
+export function buildPlatformBridge(
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate
+): PlatformBridge {
+	const ops = session?.op_log ?? [];
+	const approved = Boolean(session?.contract) || (session ? phaseIndex(session.phase) >= phaseIndex('spec_approved') : false);
+	const releaseExpected = platformExpected(template, ops);
+	const appOp = latestMatchingOp(ops, [
+		'wasm.app.pack',
+		'wasm.app.verify',
+		'wasm.app.build.atlas_release',
+		'wasm.app.build.atlas_dev'
+	]);
+	const provenanceOp = latestMatchingOp(ops, ['wasm.provenance.verify', 'wasm.provenance.attest']);
+	const deployPlanOp = latestMatchingOp(ops, ['wasm.deploy.plan', 'lp.deploy.accept.local']);
+	const platformOp = latestMatchingOp(ops, [
+		'lp.deploy.status.local',
+		'lp.deploy.query.local',
+		'lp.deploy.run.local',
+		'lp.deploy.accept.local'
+	]);
+	const sloOp = latestMatchingOp(ops, ['wasm.slo.eval', 'wasm.slo.validate']);
+	const feedbackOp = latestMatchingOp(ops, [
+		'xtal.improve',
+		'xtal.ingest',
+		'wasm.app.test.regress',
+		'lp.incident'
+	]);
+	const items = [
+		platformBridgeItem({
+			id: 'app-pack',
+			label: 'App package',
+			command: 'x07-wasm app build / pack / verify',
+			requirement: 'Build and verify the user-facing app artifact before platform delivery.',
+			evidence: appOp?.op ?? (releaseExpected ? 'waiting for x07-wasm app package evidence' : 'not required for solve-pure local work'),
+			artifact: appOp?.artifacts[0] ?? 'dist/showcase_fullstack/pack.atlas_release/app.pack.json',
+			state: platformState(appOp, approved, releaseExpected),
+			op: appOp
+		}),
+		platformBridgeItem({
+			id: 'provenance',
+			label: 'Provenance',
+			command: 'x07-wasm provenance attest / verify',
+			requirement: 'Keep release provenance separate from app build evidence.',
+			evidence: provenanceOp?.op ?? (releaseExpected ? 'waiting for provenance evidence' : 'optional before release'),
+			artifact: provenanceOp?.artifacts[0] ?? 'dist/showcase_fullstack/pack.atlas_release/app.provenance.dsse.json',
+			state: platformState(provenanceOp, approved, releaseExpected),
+			op: provenanceOp
+		}),
+		platformBridgeItem({
+			id: 'deploy-plan',
+			label: 'Deploy plan',
+			command: 'x07-wasm deploy plan / x07lp accept',
+			requirement: 'Materialize the release plan before running local platform delivery.',
+			evidence: deployPlanOp?.op ?? (releaseExpected ? 'waiting for deploy plan evidence' : 'optional before release'),
+			artifact: deployPlanOp?.artifacts[0] ?? 'dist/showcase_fullstack/deploy.atlas_release',
+			state: platformState(deployPlanOp, approved, releaseExpected),
+			op: deployPlanOp
+		}),
+		platformBridgeItem({
+			id: 'platform-delivery',
+			label: 'Platform delivery',
+			command: 'x07lp deploy run / query / status',
+			requirement: 'Use the x07 platform lane for visible local delivery state.',
+			evidence: platformOp?.op ?? (releaseExpected ? 'waiting for local platform status evidence' : 'optional before release'),
+			artifact: platformOp?.artifacts[0] ?? '.x07/platform',
+			state: platformState(platformOp, approved, releaseExpected),
+			op: platformOp
+		}),
+		platformBridgeItem({
+			id: 'slo-budget',
+			label: 'SLO and budget',
+			command: 'x07-wasm slo eval',
+			requirement: 'Preserve budget and SLO evidence before trust review.',
+			evidence: sloOp?.op ?? (releaseExpected ? 'waiting for SLO budget evidence' : 'optional before release'),
+			artifact: sloOp?.artifacts[0] ?? 'tests/fixtures/metrics/atlas_canary_ok.json',
+			state: platformState(sloOp, approved, releaseExpected),
+			op: sloOp
+		}),
+		platformBridgeItem({
+			id: 'feedback',
+			label: 'Runtime feedback',
+			command: 'xtal.ingest / xtal.improve / app regress',
+			requirement: 'Feed incidents or regression traces back into the XTAL repair loop.',
+			evidence: feedbackOp?.op ?? (session?.task_type === 'incident_repair' ? 'waiting for incident improve evidence' : 'optional unless an incident is linked'),
+			artifact: feedbackOp?.artifacts[0] ?? 'target/xtal/improve/summary.json',
+			state: feedbackOp
+				? platformState(feedbackOp, approved, true)
+				: session?.task_type === 'incident_repair'
+					? platformState(null, approved, true)
+					: 'optional',
+			op: feedbackOp
+		})
+	];
+	const requiredItems = items.filter((item) => item.state !== 'optional');
+	const failed = items.find((item) => item.state === 'failed');
+	const doneRequired = requiredItems.filter((item) => item.state === 'done').length;
+	const posture = failed
+		? 'Platform blocked'
+		: requiredItems.length && doneRequired === requiredItems.length
+			? 'Platform delivery covered'
+			: releaseExpected
+				? approved
+					? 'Platform delivery in progress'
+					: 'Platform gated by approval'
+				: 'Platform optional';
+	const nextItem =
+		items.find((item) => item.state === 'failed') ??
+		items.find((item) => item.state === 'active' || item.state === 'blocked') ??
+		items.find((item) => item.state === 'optional') ??
+		items[0];
+
+	return {
+		posture,
+		summary: requiredItems.length
+			? `${doneRequired} / ${requiredItems.length} required platform gates covered`
+			: 'No platform delivery gate is required for this solve-pure session yet',
+		nextAction:
+			requiredItems.length && doneRequired === requiredItems.length && !failed
+				? 'Platform evidence is complete; review trust and certification gates'
+				: nextItem
+					? `${nextItem.label}: ${nextItem.evidence}`
+					: 'No platform action pending',
+		items
+	};
+}
+
+function platformExpected(template: ProjectTemplate, ops: OpRecord[]): boolean {
+	const haystack = [
+		template.id,
+		template.riskProfile,
+		template.sourcePath,
+		...template.canonicalCommands,
+		...template.artifacts,
+		...ops.flatMap((op) => [op.op, ...op.command, ...op.artifacts])
+	]
+		.join(' ')
+		.toLowerCase();
+	return ['x07-wasm', 'wasm', 'platform', 'deploy', 'release', 'provenance', 'slo'].some((needle) =>
+		haystack.includes(needle)
+	);
+}
+
+function platformBridgeItem(input: {
+	id: string;
+	label: string;
+	command: string;
+	requirement: string;
+	evidence: string;
+	artifact: string;
+	state: PlatformBridgeState;
+	op?: OpRecord | null;
+}): PlatformBridgeItem {
+	return {
+		id: input.id,
+		label: input.label,
+		command: input.command,
+		requirement: input.requirement,
+		evidence: input.evidence,
+		artifact: input.artifact,
+		state: input.state,
+		opId: input.op?.id ?? null
+	};
+}
+
+function platformState(
+	op: OpRecord | null,
+	approved: boolean,
+	required: boolean
+): PlatformBridgeState {
+	if (op) return opStatusToCoverageState(op.status);
+	if (!required) return 'optional';
+	return approved ? 'active' : 'blocked';
 }
 
 function latestMatchingOp(ops: OpRecord[], needles: string[]): OpRecord | null {

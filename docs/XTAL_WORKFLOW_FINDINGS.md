@@ -469,3 +469,16 @@ This document records friction found while implementing the Studio web surface.
    trust/platform evidence to concrete artifacts and operation records. Each
    audit row can select its source operation, so the summary remains grounded in
    the canonical log instead of becoming a second source of truth.
+
+45. Platform integration needs an Ops bridge, not scattered release rows.
+
+   Studio already had the canonical `x07-wasm` and `x07lp` bindings needed for
+   Atlas-shaped projects, and trust review could surface deploy and SLO signals.
+   That still forced non-expert users to assemble the platform story from the
+   worklog, audit panel, and review queue. The browser now derives an x07
+   Platform bridge from the same `OpRecord`s: app package verification,
+   provenance, deploy plan, local platform delivery, SLO/budget evidence, and
+   incident feedback are separate clickable gates. This keeps the best
+   integration path explicit: `x07-wasm app` evidence feeds provenance and
+   deploy planning, `x07lp` owns local delivery state, and incidents return to
+   `xtal.ingest` / `xtal.improve` instead of becoming ad hoc follow-up work.

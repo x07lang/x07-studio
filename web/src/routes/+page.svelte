@@ -15,6 +15,7 @@
 		buildAutomationPlan,
 		buildEvidenceCoverage,
 		buildOnboardingPlan,
+		buildPlatformBridge,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
@@ -37,6 +38,7 @@
 		type HealthResponse,
 		type IntentInputMode,
 		type OpRecord,
+		type PlatformBridgeItem,
 		type ProjectDifficulty,
 		type Room,
 		type RuntimeComponentStatus,
@@ -244,6 +246,7 @@
 	$: automationPlan = buildAutomationPlan(selected, selectedProjectTemplate, approvalState);
 	$: evidenceCoverage = buildEvidenceCoverage(selected, selectedProjectTemplate, approvalState);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
+	$: platformBridge = buildPlatformBridge(selected, selectedProjectTemplate);
 	$: draftWitnessPreview = previewIntentWitnesses(promptText, inputMode);
 	$: canApproveSpec =
 		approvalState !== 'changes' && (selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft');
@@ -683,6 +686,25 @@
 		if (op.op.includes('repair') || op.op.includes('incident') || op.op.includes('ingest')) selectedRoom = 'repair';
 		if (op.op.includes('cert') || op.op.includes('deploy') || op.op.includes('provenance')) selectedRoom = 'trust';
 		if (op.op.includes('agent.')) selectedRoom = 'providers';
+	}
+
+	function selectPlatformItem(item: PlatformBridgeItem) {
+		if (!item.opId) {
+			selectedRoom = 'ops';
+			statusLine = `${item.label}: ${item.evidence}`;
+			return;
+		}
+		const op = allOps.find((candidate) => candidate.id === item.opId);
+		if (!op) {
+			selectedRoom = 'ops';
+			statusLine = `${item.label}: ${item.evidence}`;
+			return;
+		}
+		selectOperation(op);
+		selectedRoom = op.op.includes('ingest') || op.op.includes('improve') || op.op.includes('regress')
+			? 'repair'
+			: 'ops';
+		statusLine = `Inspecting platform bridge evidence: ${op.op}`;
 	}
 
 	function inspectCounterexample() {
@@ -1603,6 +1625,40 @@
 							<small>{lane.verbs.join(' -> ')}</small>
 							<em>{lane.reviewGate}</em>
 						</div>
+					{/each}
+				</div>
+			</section>
+
+			<section id="room-ops" class="ops-panel panel" class:focused={selectedRoom === 'ops'} aria-label="x07 platform bridge">
+				<div class="panel-head">
+					<div>
+						<p class="eyebrow">Ops / Platform</p>
+						<h2>{platformBridge.posture}</h2>
+					</div>
+					<span class="badge">{platformBridge.summary}</span>
+				</div>
+				<div class="platform-summary">
+					<div>
+						<span>Next action</span>
+						<strong>{platformBridge.nextAction}</strong>
+					</div>
+					<code>x07-wasm app -> provenance -> deploy plan -> x07lp -> SLO -> XTAL improve</code>
+				</div>
+				<div class="platform-lanes" aria-label="Platform delivery lanes">
+					{#each platformBridge.items as item}
+						<button
+							type="button"
+							class={`platform-lane ${item.state}`}
+							aria-label={`Inspect platform ${item.label}`}
+							on:click={() => selectPlatformItem(item)}
+						>
+							<span>{item.state}</span>
+							<strong>{item.label}</strong>
+							<small>{item.requirement}</small>
+							<code>{item.command}</code>
+							<em>{item.artifact}</em>
+							<b>{item.evidence}</b>
+						</button>
 					{/each}
 				</div>
 			</section>

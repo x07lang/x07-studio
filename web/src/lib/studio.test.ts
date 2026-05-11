@@ -9,6 +9,7 @@ import {
 	buildAutomationPlan,
 	buildEvidenceCoverage,
 	buildOnboardingPlan,
+	buildPlatformBridge,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
 	canonicalMcpTools,
@@ -310,6 +311,37 @@ describe('x07 Studio XTAL web model', () => {
 		expect(coverage.find((item) => item.id === 'trust-platform')?.artifact).toBe(
 			'dist/showcase_fullstack/pack.atlas_release/app.pack.json'
 		);
+	});
+
+	it('maps x07 platform bridge gates from Atlas operations', () => {
+		let session = demoSession();
+		let bridge = buildPlatformBridge(session, projectTemplates[0]);
+		expect(bridge.posture).toBe('Platform optional');
+		expect(bridge.items.find((item) => item.id === 'platform-delivery')?.state).toBe('optional');
+
+		session = reduceDemoEvent(
+			session,
+			'formalize_intent',
+			createIntentPacket(session, projectTemplates[5].prompt)
+		);
+		session = reduceDemoEvent(session, 'draft_spec');
+		session = reduceDemoEvent(session, 'approve_spec');
+		session = appendDemoOp(session, 'wasm.app.pack.atlas_release', 'succeeded');
+		session = appendDemoOp(session, 'wasm.provenance.verify.atlas_release', 'succeeded');
+		session = appendDemoOp(session, 'wasm.deploy.plan.atlas_release', 'succeeded');
+		session = appendDemoOp(session, 'lp.deploy.status.local', 'succeeded');
+		session = appendDemoOp(session, 'wasm.slo.eval.atlas_canary_ok', 'succeeded');
+
+		bridge = buildPlatformBridge(session, projectTemplates[5]);
+		expect(bridge.posture).toBe('Platform delivery covered');
+		expect(bridge.summary).toBe('5 / 5 required platform gates covered');
+		expect(bridge.nextAction).toBe(
+			'Platform evidence is complete; review trust and certification gates'
+		);
+		expect(bridge.items.find((item) => item.id === 'platform-delivery')?.evidence).toBe(
+			'lp.deploy.status.local'
+		);
+		expect(bridge.items.find((item) => item.id === 'feedback')?.state).toBe('optional');
 	});
 
 	it('models visible canonical operation records', () => {
