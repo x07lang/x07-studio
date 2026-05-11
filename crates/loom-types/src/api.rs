@@ -5,7 +5,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::artifacts::{
-    AgentHandoff, AgentProfile, ProviderProbeReport, ProviderProfile, TaskType,
+    AgentHandoff, AgentProfile, IntentPacket, OpRecord, ProviderProbeReport, ProviderProfile,
+    TaskType,
 };
 use crate::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use crate::ops::SessionEvent;
@@ -26,6 +27,28 @@ pub struct CreateSessionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispatchEventRequest {
     pub event: SessionEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IntentInputMode {
+    Text,
+    Voice,
+    Incident,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormalizeIntentRequest {
+    pub raw: String,
+    pub input_mode: IntentInputMode,
+    pub revision_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormalizeIntentResponse {
+    pub intent: IntentPacket,
+    pub op: OpRecord,
+    pub session: SessionSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,12 +155,12 @@ pub struct AgentHandoffResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunResponse {
     pub handoff: AgentHandoff,
-    pub op: crate::artifacts::OpRecord,
+    pub op: OpRecord,
     pub session: SessionSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentApprovalResponse {
-    pub op: crate::artifacts::OpRecord,
+    pub op: OpRecord,
     pub session: SessionSnapshot,
 }

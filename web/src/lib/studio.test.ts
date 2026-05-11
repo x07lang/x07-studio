@@ -41,6 +41,24 @@ describe('x07 Studio XTAL web model', () => {
 		);
 	});
 
+	it('formalizes intent through an auditable Studio operation', async () => {
+		const api = new StudioApi();
+		await api.health();
+		const session = demoSession();
+		const response = await api.formalizeIntent(
+			session,
+			'Transcript: build a workflow graph and reject cycles.',
+			'voice',
+			['Keep the witness visible before spec approval.']
+		);
+
+		expect(response.intent.source.kind).toBe('voice');
+		expect(response.intent.targets[0].module_id).toBe('workflow.graph');
+		expect(response.op.op).toBe('intent.formalize');
+		expect(response.session.phase).toBe('intent_ready');
+		expect(response.session.op_log.at(-1)?.op).toBe('intent.formalize');
+	});
+
 	it('keeps the approval gate before realization', () => {
 		const session = demoSession();
 		const intentReady = reduceDemoEvent(

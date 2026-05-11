@@ -27,6 +27,7 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions`
 - `GET /sessions/{session_id}`
 - `POST /sessions/{session_id}/events`
+- `POST /sessions/{session_id}/intent/formalize`
 - `POST /sessions/{session_id}/bindings/run`
 - `POST /sessions/{session_id}/xtal/run`
 
@@ -62,6 +63,22 @@ Dispatch event request:
   }
 }
 ```
+
+Formalize intent request:
+
+```json
+{
+  "raw": "Transcript: build a workflow graph and reject cycles.",
+  "input_mode": "voice",
+  "revision_notes": ["Keep cycle rejection explicit before spec approval."]
+}
+```
+
+The daemon compiles written plans, voice transcripts, and incident notes into a
+`x07.studio.intent_packet@0.1.0`, applies the legal `formalize_intent`
+lifecycle transition, and appends a visible `intent.formalize` operation record
+with the generated packet in `report_json`. Browser clients should use this
+endpoint instead of inventing their own connected-mode intent packet.
 
 Run binding request:
 

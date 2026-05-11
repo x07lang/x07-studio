@@ -9,6 +9,7 @@
 - binding coverage for XTAL authoring, test generation, implementation sync, verify/repair/certify/ingest/improve, core checks, web-ui, device, workload, topology, deploy-plan, and selected platform query/control reads
 - MCP HTTP transport with initialize + session header handling
 - MCP stdio transport with newline-delimited JSON-RPC
+- daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, incident notes, revision notes, and visible intent operation records
 - OpenAI-compatible provider probing through `/models`, `/responses`, and `/chat/completions`
 - Axum daemon routes for sessions, bindings, providers, and MCP connections
 - egui GUI shell and ratatui Forge shell over the daemon API

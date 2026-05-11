@@ -12,6 +12,7 @@ import {
 	type AgentRunResponse,
 	type ApprovalDecision,
 	type BindingDescriptor,
+	type FormalizeIntentResponse,
 	type HealthResponse,
 	type IntentInputMode,
 	type IntentPacket,
@@ -122,6 +123,43 @@ export class StudioApi {
 		const next = reduceDemoEvent(session, event, payload);
 		this.replaceDemo(next);
 		return next;
+	}
+
+	async formalizeIntent(
+		session: SessionSnapshot,
+		raw: string,
+		inputMode: IntentInputMode,
+		revisionNotes: string[]
+	): Promise<FormalizeIntentResponse> {
+		if (!this.demoMode) {
+			try {
+				const response = await request<FormalizeIntentResponse>(
+					`/v1/sessions/${session.session_id}/intent/formalize`,
+					{
+						method: 'POST',
+						body: JSON.stringify({
+							raw,
+							input_mode: inputMode,
+							revision_notes: revisionNotes
+						})
+					}
+				);
+				this.replaceDemo(response.session);
+				return response;
+			} catch {
+				this.demoMode = true;
+			}
+		}
+
+		let next = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, raw, inputMode, revisionNotes));
+		next = appendDemoOp(next, 'intent.formalize', 'succeeded', [
+			'studio',
+			'intent',
+			'formalize',
+			inputMode
+		]);
+		this.replaceDemo(next);
+		return { intent: next.intent!, op: next.op_log.at(-1)!, session: next };
 	}
 
 	async runBinding(session: SessionSnapshot, binding_id: string): Promise<SessionSnapshot> {
@@ -326,15 +364,6 @@ export class StudioApi {
 		}
 		this.replaceDemo(next);
 		return { op: op ?? next.op_log.at(-1)!, session: next };
-	}
-
-	formalizeLocal(
-		session: SessionSnapshot,
-		raw: string,
-		inputMode: IntentInputMode,
-		revisionNotes: string[]
-	): IntentPacket {
-		return createIntentPacket(session, raw, inputMode, revisionNotes);
 	}
 
 	private replaceDemo(session: SessionSnapshot) {

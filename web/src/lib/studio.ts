@@ -167,6 +167,12 @@ export interface AgentHandoffResponse {
 	session: SessionSnapshot;
 }
 
+export interface FormalizeIntentResponse {
+	intent: IntentPacket;
+	op: OpRecord;
+	session: SessionSnapshot;
+}
+
 export type AgentRunMode = 'plan' | 'execute';
 
 export interface AgentRunRequest {
@@ -660,6 +666,8 @@ export function appendDemoOp(
 
 function demoArtifactsFor(bindingId: string): string[] {
 	switch (bindingId) {
+		case 'intent.formalize':
+			return ['.x07/studio/sessions/intent.json'];
 		case 'project.init.xtal-pure':
 			return ['x07.json', 'spec/', 'src/', 'gen/xtal/'];
 		case 'spec.scaffold':

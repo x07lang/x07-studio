@@ -11,14 +11,16 @@ This document records friction found while implementing the Studio web surface.
    new `web/` client keeps the daemon as source of truth and avoids creating a
    second lifecycle kernel.
 
-2. The daemon has lifecycle events, but no text-to-intent endpoint.
+2. Intent polishing belongs in the daemon, not only the browser client.
 
-   The web client can submit a complete `x07.studio.intent_packet@0.1.0`, but
-   the daemon does not yet expose a first-class `intent.formalize` operation
-   that accepts raw human text plus agent/provider choice. That makes polished
-   intent generation a client concern for now. The next backend improvement is
-   a daemon endpoint that records the raw plan, chosen agent, generated packet,
-   revision history, and approval status as one auditable artifact.
+   The web client can still fall back to a deterministic demo projection, but
+   connected Studio now calls `/v1/sessions/{session_id}/intent/formalize` with
+   raw written text, voice transcripts, or incident notes plus revision history.
+   The kernel creates the `x07.studio.intent_packet@0.1.0`, performs the legal
+   lifecycle transition, and appends a visible `intent.formalize` `OpRecord`
+   containing the generated packet. The next backend improvement is wiring this
+   endpoint to configured model providers or coding-agent runners while keeping
+   the same auditable operation boundary.
 
 3. Agent providers and coding-agent runners are different concepts.
 

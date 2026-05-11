@@ -57,7 +57,10 @@ phase names, event names, and artifact concepts so browser tests can still cover
 the user-facing XTAL flow.
 
 The browser surface accepts written plans, voice transcripts, and incident notes
-as intent sources. It makes the human approval loop explicit:
+as intent sources. In connected mode, `Polish Intent` calls the daemon's
+`intent.formalize` endpoint, so the kernel owns the generated intent packet,
+records revision notes, and appends a visible `intent.formalize` operation
+before the human approval gate. It makes the approval loop explicit:
 
 ```text
 initial plan -> polished intent packet -> approve/change -> spec draft

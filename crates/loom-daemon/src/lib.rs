@@ -13,9 +13,9 @@ use loom_core::WorkspaceKernel;
 use loom_types::api::{
     AgentApprovalRequest, AgentApprovalResponse, AgentHandoffResponse, AgentRunRequest,
     AgentRunResponse, BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse,
-    CreateSessionRequest, DispatchEventRequest, HealthResponse, McpCallResponse,
-    ProbeProviderRequest, ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest,
-    SaveAgentProfileRequest, SaveProviderProfileRequest,
+    CreateSessionRequest, DispatchEventRequest, FormalizeIntentRequest, FormalizeIntentResponse,
+    HealthResponse, McpCallResponse, ProbeProviderRequest, ProviderProbeResponse,
+    ResolveApprovalRequest, RunBindingRequest, SaveAgentProfileRequest, SaveProviderProfileRequest,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -33,6 +33,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/sessions", get(list_sessions).post(create_session))
         .route("/v1/sessions/{session_id}", get(get_session))
         .route("/v1/sessions/{session_id}/events", post(dispatch_event))
+        .route(
+            "/v1/sessions/{session_id}/intent/formalize",
+            post(formalize_intent),
+        )
         .route("/v1/sessions/{session_id}/bindings/run", post(run_binding))
         .route(
             "/v1/sessions/{session_id}/xtal/run",
@@ -126,6 +130,27 @@ async fn dispatch_event(
         .dispatch_event(session_id, request.event)
         .map_err(conflict_error)?;
     Ok(Json(snapshot))
+}
+
+async fn formalize_intent(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<FormalizeIntentRequest>,
+) -> Result<Json<FormalizeIntentResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let (intent, op, session) = kernel
+        .formalize_intent(
+            session_id,
+            &request.raw,
+            request.input_mode,
+            &request.revision_notes,
+        )
+        .map_err(conflict_error)?;
+    Ok(Json(FormalizeIntentResponse {
+        intent,
+        op,
+        session,
+    }))
 }
 
 async fn run_binding(

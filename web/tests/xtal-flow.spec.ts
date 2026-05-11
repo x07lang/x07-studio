@@ -106,6 +106,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await expect(page.getByText('incident report:', { exact: false })).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'intent.formalize' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeEnabled();
 
 	await page.getByLabel('Revision').fill('Add a deterministic repair witness before implementation.');

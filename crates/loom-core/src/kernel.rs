@@ -12,10 +12,10 @@ use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
-use loom_types::api::{AgentRunMode, ApprovalDecision};
+use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
 use loom_types::artifacts::{
-    AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, OpRecord, OperationStatus,
-    ProviderProbeReport, ProviderProfile, TaskType,
+    AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
+    OperationStatus, ProviderProbeReport, ProviderProfile, TaskType, Witness, WitnessKind,
 };
 use loom_types::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use loom_types::ops::SessionEvent;
@@ -131,6 +131,34 @@ impl WorkspaceKernel {
             .map_err(|error| anyhow!(error.to_string()))?;
         self.store.save_session(&snapshot)?;
         Ok(snapshot)
+    }
+
+    pub fn formalize_intent(
+        &mut self,
+        session_id: Uuid,
+        raw: &str,
+        input_mode: IntentInputMode,
+        revision_notes: &[String],
+    ) -> anyhow::Result<(IntentPacket, OpRecord, SessionSnapshot)> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let intent = intent_packet_from_raw(&session, raw, input_mode.clone(), revision_notes);
+        self.model
+            .dispatch(
+                session_id,
+                SessionEvent::FormalizeIntent(Box::new(intent.clone())),
+            )
+            .map_err(|error| anyhow!(error.to_string()))?;
+        let op = intent_formalize_op(session_id, &intent, input_mode, revision_notes);
+        let snapshot = self
+            .model
+            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op.clone())))
+            .map_err(|error| anyhow!(error.to_string()))?;
+        self.store.save_session(&snapshot)?;
+        Ok((intent, op, snapshot))
     }
 
     pub async fn run_binding(
@@ -897,6 +925,178 @@ fn should_skip_seed_path(name: &str) -> bool {
     matches!(name, ".git" | "target" | "dist" | "node_modules")
 }
 
+fn intent_packet_from_raw(
+    session: &SessionSnapshot,
+    raw: &str,
+    input_mode: IntentInputMode,
+    revision_notes: &[String],
+) -> IntentPacket {
+    let normalized = raw.trim();
+    let normalized = if normalized.is_empty() {
+        "Build a certifiable workflow graph optimizer. A human gives task durations and dependency edges. The project must compute a deterministic makespan, reject cycles, prove the pure core, and keep all agent actions visible before implementation."
+    } else {
+        normalized
+    };
+    let lowered = normalized.to_ascii_lowercase();
+    let is_sorter = lowered.contains("sort");
+    let is_incident = lowered.contains("incident") || lowered.contains("repair");
+    let is_state_machine = lowered.contains("state machine") || lowered.contains("x07 sm");
+    let is_gateway = lowered.contains("api gateway") || lowered.contains("x07-api-gateway");
+    let is_crawler = lowered.contains("crawler") || lowered.contains("x07crawl");
+    let is_db_guard = lowered.contains("db migration")
+        || lowered.contains("x07dbguard")
+        || lowered.contains("drift guard");
+    let (module_id, entry) = if is_sorter {
+        ("toy.sorter", "sort_u8_asc")
+    } else if is_db_guard {
+        ("db.guard", "verify_drift")
+    } else if is_gateway {
+        ("gateway.core", "route_request_v1")
+    } else if is_crawler {
+        ("crawl.plan", "plan_crawl_v1")
+    } else if is_state_machine {
+        ("workflow.lifecycle", "step_v1")
+    } else if is_incident {
+        ("ops.incident_repair", "classify_and_repair")
+    } else {
+        ("workflow.graph", "makespan_u32")
+    };
+
+    let mut witnesses = vec![
+        Witness {
+            kind: WitnessKind::DesiredBehavior,
+            text: normalized.to_string(),
+        },
+        Witness {
+            kind: WitnessKind::PolicyRequirement,
+            text: "All agent work must flow through canonical x07/XTAL bindings.".to_string(),
+        },
+        Witness {
+            kind: WitnessKind::ForbiddenBehavior,
+            text: "Do not turn the prompt directly into unchecked source code.".to_string(),
+        },
+    ];
+    if input_mode == IntentInputMode::Incident {
+        witnesses.push(Witness {
+            kind: WitnessKind::IncidentReport,
+            text: normalized.to_string(),
+        });
+    }
+
+    let mut policy_implications =
+        vec!["OS worlds, network, budget, and trust widening require explicit review.".to_string()];
+    if is_gateway || is_crawler || is_db_guard {
+        policy_implications.push(
+            "RR fixtures, sandbox policy, and OS/network/db capability widening require explicit review."
+                .to_string(),
+        );
+    } else if is_state_machine {
+        policy_implications.push(
+            "Generated outputs, arch contracts, and budget profiles require drift evidence before certify."
+                .to_string(),
+        );
+    }
+
+    let mut constraints = vec![
+        "Use spec-first XTAL flow.".to_string(),
+        "Keep solve worlds deterministic by default.".to_string(),
+        "Route spec-changing repairs back to human approval.".to_string(),
+    ];
+    constraints.extend(
+        revision_notes
+            .iter()
+            .filter(|note| !note.trim().is_empty())
+            .map(|note| format!("Revision request: {}", note.trim())),
+    );
+
+    IntentPacket {
+        schema_version: "x07.studio.intent_packet@0.1.0".to_string(),
+        session_id: session.session_id,
+        workspace_root: session.root.clone(),
+        task_type: session.task_type.clone(),
+        targets: vec![IntentTarget {
+            module_id: module_id.to_string(),
+            entry: Some(entry.to_string()),
+        }],
+        examples: vec![
+            "Input examples become spec examples before implementation.".to_string(),
+            "Generated tests must be reviewable before verify.".to_string(),
+        ],
+        constraints,
+        policy_implications,
+        ambiguities: vec![
+            "Acceptance examples need final human approval.".to_string(),
+            "Proof strictness should be selected before certify.".to_string(),
+        ],
+        assumptions: vec![
+            "Agent may edit implementation paths after spec approval.".to_string(),
+            "Agent may not widen specs or architecture policy without approval.".to_string(),
+        ],
+        witnesses,
+        source: match input_mode {
+            IntentInputMode::Text => IntentSource::Text {
+                raw: normalized.to_string(),
+            },
+            IntentInputMode::Voice => IntentSource::Voice {
+                transcript: normalized.to_string(),
+            },
+            IntentInputMode::Incident => IntentSource::Incident {
+                path: ".x07/studio/incidents/manual-note.jsonl".to_string(),
+            },
+        },
+    }
+}
+
+fn intent_formalize_op(
+    session_id: Uuid,
+    intent: &IntentPacket,
+    input_mode: IntentInputMode,
+    revision_notes: &[String],
+) -> OpRecord {
+    let now = now_string();
+    let source = match input_mode {
+        IntentInputMode::Text => "text",
+        IntentInputMode::Voice => "voice",
+        IntentInputMode::Incident => "incident",
+    };
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "intent.formalize".to_string(),
+        backend: "studio-kernel".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "intent".to_string(),
+            "formalize".to_string(),
+            source.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![format!(".x07/studio/sessions/{session_id}.json")],
+        notes: Some("Formalized human input into a reviewable XTAL intent packet.".to_string()),
+        stdout: Some(format!(
+            "Intent formalized from {source}; {} witnesses, {} constraints, {} revision notes.",
+            intent.witnesses.len(),
+            intent.constraints.len(),
+            revision_notes.len()
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.intent_formalize_report@0.1.0",
+            "input_mode": source,
+            "target": intent.targets.first(),
+            "revision_notes": revision_notes,
+            "intent": intent,
+        })),
+        report_path: None,
+    }
+}
+
 fn seeded_example_op(session_id: Uuid, template: WorkflowTemplate, source: &Utf8Path) -> OpRecord {
     let now = now_string();
     OpRecord {
@@ -1524,7 +1724,7 @@ fn op_record_from_binding(
 mod tests {
     use uuid::Uuid;
 
-    use loom_types::api::{AgentRunMode, ApprovalDecision};
+    use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
     use loom_types::artifacts::{
         AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OperationStatus,
         TaskType, Witness, WitnessKind,
@@ -1588,6 +1788,38 @@ mod tests {
             Some("classify_and_repair")
         );
         assert_eq!(vars.get("result").map(String::as_str), Some("bytes"));
+    }
+
+    #[test]
+    fn formalize_intent_creates_packet_and_visible_op() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root).expect("open kernel");
+        let session = kernel
+            .create_session("voice workflow", TaskType::NewBehavior)
+            .expect("create session");
+
+        let (intent, op, snapshot) = kernel
+            .formalize_intent(
+                session.session_id,
+                "Transcript: follow docs/examples/agent-gate/xtal/workflow-graph and reject cycles.",
+                IntentInputMode::Voice,
+                &["Make cycle rejection explicit.".to_string()],
+            )
+            .expect("formalize intent");
+
+        assert_eq!(intent.targets[0].module_id, "workflow.graph");
+        assert!(matches!(intent.source, IntentSource::Voice { .. }));
+        assert!(intent
+            .constraints
+            .iter()
+            .any(|item| item.contains("Make cycle rejection explicit")));
+        assert_eq!(op.op, "intent.formalize");
+        assert_eq!(op.status, OperationStatus::Succeeded);
+        assert!(snapshot.intent.is_some());
+        assert!(snapshot
+            .op_log
+            .iter()
+            .any(|item| item.op == "intent.formalize"));
     }
 
     #[tokio::test]

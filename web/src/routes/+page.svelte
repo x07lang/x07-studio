@@ -355,11 +355,10 @@
 		if (!selected) return;
 		busy = true;
 		try {
-			const intent = api.formalizeLocal(selected, promptText, inputMode, revisionHistory);
-			const snapshot = await api.dispatch(selected, 'formalize_intent', intent);
-			await replaceSession(snapshot);
+			const response = await api.formalizeIntent(selected, promptText, inputMode, revisionHistory);
+			await replaceSession(response.session);
 			approvalState = 'awaiting';
-			statusLine = `${visibleAgent} polished the plan into an intent packet`;
+			statusLine = `${visibleAgent} polished the plan into an auditable intent packet`;
 		} finally {
 			busy = false;
 		}
@@ -487,8 +486,8 @@
 	async function approveSpecSnapshot(session: SessionSnapshot): Promise<SessionSnapshot> {
 		let current = session;
 		if (!current.intent) {
-			const intent = api.formalizeLocal(current, promptText, inputMode, revisionHistory);
-			current = await api.dispatch(current, 'formalize_intent', intent);
+			const response = await api.formalizeIntent(current, promptText, inputMode, revisionHistory);
+			current = response.session;
 		}
 		if (current.phase === 'intent_ready') {
 			current = await api.dispatch(current, 'draft_spec');
