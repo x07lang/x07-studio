@@ -208,3 +208,15 @@ This document records friction found while implementing the Studio web surface.
    latest verify/certify artifacts, and incident count directly from
    `arch/xtal/xtal.json`, `spec/**`, `gen/xtal/**`, `target/xtal/**`, and
    `.x07/studio/**` session state.
+
+21. Verification failures need a repair theater, not only a selected log row.
+
+   The operation inspector is useful for raw command evidence, but it does not
+   summarize the XTAL repair decision for non-expert users. Studio now derives a
+   Counterexample Theater from failed `OpRecord`s, diagnostics, repair artifacts,
+   violation artifacts, and incident evidence. It names the failing clause,
+   shows the smallest witness or command output, lists evidence artifacts, and
+   keeps the safe route explicit: inspect the witness, run `xtal.repair`, and
+   rerun verification before widening the spec. A live browser check against an
+   empty workspace confirmed that failed `xtal.verify` output is classified into
+   this repair surface and still selects the original operation for full audit.

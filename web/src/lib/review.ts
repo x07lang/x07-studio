@@ -35,6 +35,28 @@ export interface PatchReview {
 	artifacts: string[];
 }
 
+export type CounterexampleTone = 'empty' | 'failed' | 'repair' | 'incident';
+
+export interface CounterexampleDiagnostic {
+	code: string;
+	severity: string;
+	message: string;
+}
+
+export interface CounterexampleTheater {
+	tone: CounterexampleTone;
+	title: string;
+	summary: string;
+	clause: string;
+	counterexample: string;
+	route: string;
+	evidence: string[];
+	diagnostics: CounterexampleDiagnostic[];
+	opId?: string;
+	op?: string;
+	command?: string;
+}
+
 export function buildReviewSignals(ops: OpRecord[]): ReviewSignal[] {
 	const seen = new Set<string>();
 	const signals: ReviewSignal[] = [];
@@ -48,6 +70,38 @@ export function buildReviewSignals(ops: OpRecord[]): ReviewSignal[] {
 		if (signals.length >= 8) break;
 	}
 	return signals;
+}
+
+export function buildCounterexampleTheater(ops: OpRecord[]): CounterexampleTheater {
+	const op = [...ops].reverse().find(isCounterexampleCandidate);
+	if (!op) {
+		return {
+			tone: 'empty',
+			title: 'No counterexample captured',
+			summary: 'Verification failures, incidents, and repair candidates will appear here.',
+			clause: 'Awaiting failed clause',
+			counterexample: 'No failing witness is recorded yet.',
+			route: 'Run verify from an approved spec.',
+			evidence: [],
+			diagnostics: []
+		};
+	}
+	const diagnostics = diagnosticsFromOp(op);
+	const evidence = op.artifacts.filter(isCounterexampleArtifact);
+	const tone = counterexampleTone(op);
+	return {
+		tone,
+		title: counterexampleTitle(op, tone),
+		summary: diagnostics[0]?.message || shortReviewText(op, evidence[0]),
+		clause: counterexampleClause(op, diagnostics),
+		counterexample: counterexampleBody(op),
+		route: counterexampleRoute(op, tone),
+		evidence: evidence.length ? evidence.slice(0, 5) : op.artifacts.slice(0, 5),
+		diagnostics: diagnostics.slice(0, 3),
+		opId: op.id,
+		op: op.op,
+		command: op.command.join(' ')
+	};
 }
 
 export function buildPatchReview(op: OpRecord | null): PatchReview | null {
@@ -118,6 +172,98 @@ function reviewSignalFromOp(op: OpRecord): ReviewSignal | null {
 		);
 	}
 	return null;
+}
+
+function isCounterexampleCandidate(op: OpRecord): boolean {
+	const hasRepairArtifact = op.artifacts.some((artifact) => artifact.includes('/repair/'));
+	const hasIncidentArtifact = op.artifacts.some(
+		(artifact) => artifact.includes('/violations/') || artifact.includes('/ingest/')
+	);
+	return (
+		op.status === 'failed' ||
+		op.op.startsWith('xtal.repair') ||
+		op.op.startsWith('xtal.ingest') ||
+		op.op.includes('incident') ||
+		hasRepairArtifact ||
+		hasIncidentArtifact ||
+		diagnosticsFromOp(op).length > 0
+	);
+}
+
+function isCounterexampleArtifact(artifact: string): boolean {
+	return (
+		artifact.includes('/verify/') ||
+		artifact.includes('/repair/') ||
+		artifact.includes('/violations/') ||
+		artifact.includes('/ingest/') ||
+		artifact.includes('counterexample') ||
+		artifact.includes('incident')
+	);
+}
+
+function counterexampleTone(op: OpRecord): CounterexampleTone {
+	if (op.op.startsWith('xtal.repair') || op.artifacts.some((artifact) => artifact.includes('/repair/'))) {
+		return 'repair';
+	}
+	if (
+		op.op.startsWith('xtal.ingest') ||
+		op.op.includes('incident') ||
+		op.artifacts.some((artifact) => artifact.includes('/violations/') || artifact.includes('/ingest/'))
+	) {
+		return 'incident';
+	}
+	if (op.status === 'failed') return 'failed';
+	return 'repair';
+}
+
+function counterexampleTitle(op: OpRecord, tone: CounterexampleTone): string {
+	if (tone === 'repair') return 'Repair candidate ready';
+	if (tone === 'incident') return 'Incident witness linked';
+	if (op.op.startsWith('xtal.verify')) return 'Verification counterexample';
+	return 'Failure witness captured';
+}
+
+function counterexampleClause(op: OpRecord, diagnostics: CounterexampleDiagnostic[]): string {
+	const fromReport = findTextByKeys(op.report_json, [
+		'clause_id',
+		'clause',
+		'property',
+		'requires',
+		'ensures'
+	]);
+	return fromReport || diagnostics[0]?.code || 'Clause pending classification';
+}
+
+function counterexampleBody(op: OpRecord): string {
+	const fromReport = findTextByKeys(op.report_json, [
+		'smallest_counterexample',
+		'counterexample',
+		'failing_input',
+		'input',
+		'witness',
+		'repro'
+	]);
+	const fromOutput = [op.stderr, op.stdout]
+		.filter(Boolean)
+		.join('\n')
+		.trim();
+	const value = fromReport || fromOutput || op.notes || 'No failing input was recorded in the operation payload.';
+	return value.length > 220 ? `${value.slice(0, 217)}...` : value;
+}
+
+function counterexampleRoute(op: OpRecord, tone: CounterexampleTone): string {
+	if (tone === 'repair') return 'Review patchset and rerun verify.';
+	if (tone === 'incident') return 'Open a repair session from the incident witness.';
+	if (op.op.startsWith('xtal.verify')) return 'Run xtal.repair before widening the spec.';
+	return 'Classify the failure, then choose repair or spec review.';
+}
+
+function diagnosticsFromOp(op: OpRecord): CounterexampleDiagnostic[] {
+	return [
+		...diagnosticsFromValue(op.report_json),
+		...diagnosticsFromValue(op.stdout_json),
+		...diagnosticsFromValue(op.stderr_json)
+	];
 }
 
 function reviewSignal(
@@ -331,6 +477,63 @@ function dedupePatchFiles(files: PatchReviewFile[]): PatchReviewFile[] {
 		result.push(file);
 	}
 	return result.slice(0, 8);
+}
+
+function diagnosticsFromValue(value: unknown, depth = 0): CounterexampleDiagnostic[] {
+	if (depth > 6) return [];
+	const record = asRecord(value);
+	if (!record) {
+		if (!Array.isArray(value)) return [];
+		return value.flatMap((item) => diagnosticsFromValue(item, depth + 1));
+	}
+	if (Array.isArray(record.diagnostics)) {
+		return record.diagnostics.flatMap((item) => {
+			const diagnostic = asRecord(item);
+			if (!diagnostic) return [];
+			return [
+				{
+					code: textValue(diagnostic.code) || 'diagnostic',
+					severity: textValue(diagnostic.severity) || 'info',
+					message: textValue(diagnostic.message) || textValue(diagnostic.detail)
+				}
+			];
+		});
+	}
+	return Object.values(record).flatMap((item) => diagnosticsFromValue(item, depth + 1));
+}
+
+function findTextByKeys(value: unknown, keys: string[], depth = 0): string {
+	if (depth > 6) return '';
+	const record = asRecord(value);
+	if (!record) {
+		if (!Array.isArray(value)) return '';
+		for (const item of value) {
+			const found = findTextByKeys(item, keys, depth + 1);
+			if (found) return found;
+		}
+		return '';
+	}
+	for (const key of keys) {
+		const direct = stringifyReviewValue(record[key]);
+		if (direct) return direct;
+	}
+	for (const item of Object.values(record)) {
+		const found = findTextByKeys(item, keys, depth + 1);
+		if (found) return found;
+	}
+	return '';
+}
+
+function stringifyReviewValue(value: unknown): string {
+	if (typeof value === 'string') return value;
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+	if (value === undefined || value === null) return '';
+	try {
+		const body = JSON.stringify(value);
+		return body.length > 220 ? `${body.slice(0, 217)}...` : body;
+	} catch {
+		return '';
+	}
 }
 
 function patchReviewGate(op: OpRecord): string {

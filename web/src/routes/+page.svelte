@@ -2,7 +2,12 @@
 	import { onMount } from 'svelte';
 	import './+page.css';
 	import { StudioApi } from '$lib/api';
-	import { buildPatchReview, buildReviewSignals, type ReviewSignal } from '$lib/review';
+	import {
+		buildCounterexampleTheater,
+		buildPatchReview,
+		buildReviewSignals,
+		type ReviewSignal
+	} from '$lib/review';
 	import {
 		agentLanes,
 		canonicalDocRefs,
@@ -170,6 +175,7 @@
 	$: selectedPatchArtifact = patchsetArtifactForOp(selectedOp);
 	$: selectedOpWithPreview = mergeArtifactPreview(selectedOp, selectedArtifactPreview);
 	$: reviewSignals = buildReviewSignals(allOps);
+	$: counterexampleTheater = buildCounterexampleTheater(allOps);
 	$: selectedPatchReview = buildPatchReview(selectedOpWithPreview);
 	$: selectedOpDiagnostics = collectDiagnostics(selectedOp);
 	$: selectedOpOutput = operationOutput(selectedOp);
@@ -417,6 +423,18 @@
 		if (signal.op.startsWith('impl.')) selectedRoom = 'realization';
 		if (signal.op.startsWith('agent.')) selectedRoom = 'providers';
 		statusLine = `Reviewing ${signal.label.toLowerCase()}: ${signal.op}`;
+	}
+
+	function inspectCounterexample() {
+		if (!counterexampleTheater.opId) return;
+		selectedOpId = counterexampleTheater.opId;
+		selectedRoom = counterexampleTheater.tone === 'repair' ? 'repair' : 'verify';
+		statusLine = `Inspecting ${counterexampleTheater.title.toLowerCase()}`;
+	}
+
+	async function runRepairBinding() {
+		selectedRoom = 'repair';
+		await runBinding('xtal.repair');
 	}
 
 	async function loadArtifactPreview(sessionId: string, opId: string, artifact: string) {
@@ -1283,6 +1301,55 @@
 			<button class="command-button primary wide" type="button" on:click={approveAndRun} disabled={busy || !canRunProject}>
 				Run Verification
 			</button>
+		</section>
+
+		<section class={`panel counterexample-panel ${counterexampleTheater.tone}`} class:focused={selectedRoom === 'repair'} aria-label="Counterexample theater">
+			<div class="panel-head">
+				<div>
+					<p class="eyebrow">Counterexample Theater</p>
+					<h2>{counterexampleTheater.title}</h2>
+				</div>
+				<span class="badge">{counterexampleTheater.tone}</span>
+			</div>
+			<p>{counterexampleTheater.summary}</p>
+			<div class="counterexample-grid">
+				<div>
+					<span>Failing clause</span>
+					<strong>{counterexampleTheater.clause}</strong>
+				</div>
+				<div>
+					<span>Smallest witness</span>
+					<strong>{counterexampleTheater.counterexample}</strong>
+				</div>
+				<div>
+					<span>Safe route</span>
+					<strong>{counterexampleTheater.route}</strong>
+				</div>
+			</div>
+			{#if counterexampleTheater.diagnostics.length}
+				<div class="counterexample-diagnostics" aria-label="Counterexample diagnostics">
+					{#each counterexampleTheater.diagnostics as diagnostic}
+						<div>
+							<code>{diagnostic.code}</code>
+							<span>{diagnostic.severity}</span>
+							<strong>{diagnostic.message}</strong>
+						</div>
+					{/each}
+				</div>
+			{/if}
+			<div class="counterexample-evidence" aria-label="Counterexample evidence">
+				{#each counterexampleTheater.evidence.length ? counterexampleTheater.evidence : ['No evidence artifact recorded'] as artifact}
+					<code>{artifact}</code>
+				{/each}
+			</div>
+			<div class="counterexample-actions">
+				<button class="command-button" type="button" on:click={inspectCounterexample} disabled={!counterexampleTheater.opId}>
+					Inspect Witness
+				</button>
+				<button class="command-button warning" type="button" on:click={runRepairBinding} disabled={busy || !selected}>
+					Run Repair
+				</button>
+			</div>
 		</section>
 
 		<section class="panel review-panel" aria-label="Trust review signals">

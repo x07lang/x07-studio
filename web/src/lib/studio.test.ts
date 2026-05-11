@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { StudioApi } from './api';
-import { buildPatchReview, buildReviewSignals } from './review';
+import { buildCounterexampleTheater, buildPatchReview, buildReviewSignals } from './review';
 import {
 	appendDemoOp,
 	canonicalDocRefs,
@@ -101,6 +101,33 @@ describe('x07 Studio XTAL web model', () => {
 			'Implementation write'
 		]);
 		expect(signals[0].artifact).toBe('target/xtal/verify/summary.json');
+	});
+
+	it('derives counterexample theater state from failed verify diagnostics', () => {
+		const session = appendDemoOp(demoSession(), 'xtal.verify', 'failed');
+		const op = {
+			...session.op_log[0],
+			report_json: {
+				clause_id: 'ensures.sorted',
+				counterexample: { input: [3, 1, 2], expected: [1, 2, 3], actual: [3, 1, 2] },
+				diagnostics: [
+					{
+						code: 'E_SORT_ORDER',
+						severity: 'error',
+						message: 'Output must be sorted ascending.'
+					}
+				]
+			}
+		};
+
+		const theater = buildCounterexampleTheater([op]);
+
+		expect(theater.tone).toBe('failed');
+		expect(theater.title).toBe('Verification counterexample');
+		expect(theater.clause).toBe('ensures.sorted');
+		expect(theater.counterexample).toContain('"actual":[3,1,2]');
+		expect(theater.diagnostics[0].code).toBe('E_SORT_ORDER');
+		expect(theater.evidence).toContain('target/xtal/verify/summary.json');
 	});
 
 	it('derives visual patch review files from artifacts and patchset JSON', () => {

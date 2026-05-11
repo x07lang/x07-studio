@@ -76,6 +76,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Generated tests');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Last verify');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Provider');
+	await expect(page.getByLabel('Counterexample theater')).toContainText('No counterexample captured');
 
 	await page.getByRole('button', { name: 'Refresh Studio' }).click();
 	await expect(page.getByText('Demo projection active')).toBeVisible();
