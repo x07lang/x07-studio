@@ -259,6 +259,24 @@ export interface ProjectTemplate {
 	artifacts: string[];
 }
 
+export type GuardTone = 'ok' | 'review' | 'blocked';
+
+export interface GuardRailItem {
+	label: string;
+	value: string;
+	detail: string;
+	tone: GuardTone;
+}
+
+export interface WorldBudgetGuard {
+	posture: string;
+	review: string;
+	worlds: GuardRailItem[];
+	capabilities: GuardRailItem[];
+	budgets: GuardRailItem[];
+	gates: string[];
+}
+
 export const rooms: Array<{ id: Room; label: string }> = [
 	{ id: 'intent', label: 'Intent' },
 	{ id: 'spec', label: 'Spec' },
@@ -513,6 +531,142 @@ export const projectTemplates: ProjectTemplate[] = [
 		]
 	}
 ];
+
+export function buildWorldBudgetGuard(
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate,
+	ops: OpRecord[] = []
+): WorldBudgetGuard {
+	const haystack = [
+		template.riskProfile,
+		template.prompt,
+		...template.canonicalCommands,
+		...template.artifacts,
+		...ops.flatMap((op) => [op.op, ...op.command, ...op.artifacts])
+	]
+		.join(' ')
+		.toLowerCase();
+	const has = (needle: string) => haystack.includes(needle);
+	const contract = session?.contract ?? null;
+	const phase = session?.phase ?? 'intent_drafting';
+	const approved = Boolean(contract);
+	const osWidening = has('run-os') || has('db ') || has('dbguard') || has('migration');
+	const rrWidening = has('solve-rr') || has('/rr/') || has('cassette') || has('replay');
+	const sandboxWidening = has('sandbox');
+	const wasmWidening = has('x07-wasm') || has('wasm') || has('app build');
+	const releaseWidening = has('provenance') || has('deploy') || has('release') || has('pack');
+	const budgetWidening = has('budget') || has('slo') || has('profile');
+
+	const worlds: GuardRailItem[] = [
+		{
+			label: 'solve-pure',
+			value: 'default',
+			detail: 'deterministic verification lane',
+			tone: 'ok'
+		}
+	];
+	if (rrWidening) {
+		worlds.push({
+			label: 'solve-rr',
+			value: approved ? 'review gated' : 'planned',
+			detail: 'replay fixtures must be committed evidence',
+			tone: approved ? 'review' : 'blocked'
+		});
+	}
+	if (sandboxWidening || osWidening) {
+		worlds.push({
+			label: sandboxWidening ? 'sandbox' : 'run-os',
+			value: approved ? 'approval required' : 'blocked',
+			detail: osWidening ? 'OS or DB access is capability widening' : 'policy profile must be reviewed',
+			tone: approved ? 'review' : 'blocked'
+		});
+	}
+	if (wasmWidening) {
+		worlds.push({
+			label: 'wasm app',
+			value: approved ? 'artifact lane' : 'planned',
+			detail: 'profile validation, traces, and pack verification stay visible',
+			tone: approved ? 'review' : 'blocked'
+		});
+	}
+
+	const writePolicy = contract?.project_doctrine.write_policy;
+	const capabilities: GuardRailItem[] = [
+		{
+			label: 'spec writes',
+			value: writePolicy?.agent_write_specs ? 'agent writable' : 'human approval',
+			detail: 'spec-changing repairs return to review',
+			tone: writePolicy?.agent_write_specs ? 'review' : 'ok'
+		},
+		{
+			label: 'architecture',
+			value: writePolicy?.agent_write_arch ? 'agent writable' : 'locked',
+			detail: 'world, policy, and budget widening are gated',
+			tone: writePolicy?.agent_write_arch ? 'review' : 'ok'
+		}
+	];
+	if (rrWidening || sandboxWidening || osWidening) {
+		capabilities.push({
+			label: 'network / OS',
+			value: approved ? 'review lane' : 'not granted',
+			detail: 'RR, sandbox, and OS access cannot be hidden inside agent steps',
+			tone: approved ? 'review' : 'blocked'
+		});
+	}
+	if (releaseWidening) {
+		capabilities.push({
+			label: 'release',
+			value: approved ? 'trust review' : 'blocked',
+			detail: 'pack, provenance, deploy, and SLO evidence are separate gates',
+			tone: approved ? 'review' : 'blocked'
+		});
+	}
+
+	const budgets: GuardRailItem[] = [
+		{
+			label: 'verify budget',
+			value: phaseIndex(phase) >= phaseIndex('verify_running') ? 'spent' : 'reserved',
+			detail: 'coverage, proofs, and generated tests consume bounded lanes',
+			tone: 'ok'
+		}
+	];
+	if (budgetWidening) {
+		budgets.push({
+			label: has('slo') ? 'SLO budget' : 'arch budget',
+			value: approved ? 'evidence required' : 'planned',
+			detail: 'budget profiles must be visible before certify',
+			tone: approved ? 'review' : 'blocked'
+		});
+	}
+	if (rrWidening || releaseWidening) {
+		budgets.push({
+			label: rrWidening ? 'replay budget' : 'release budget',
+			value: approved ? 'metered' : 'blocked',
+			detail: rrWidening ? 'cassette replay expands test cost' : 'pack and provenance checks expand release cost',
+			tone: approved ? 'review' : 'blocked'
+		});
+	}
+
+	const gates = [
+		approved ? 'Session contract locked' : 'Approve spec to lock the session contract',
+		writePolicy
+			? `Write roots: ${writePolicy.paths.join(', ')}`
+			: 'Write roots pending spec approval',
+		releaseWidening ? 'Release/provenance gate required' : 'No release gate requested',
+		rrWidening || sandboxWidening || osWidening
+			? 'Capability widening requires review'
+			: 'Deterministic world boundary preserved'
+	];
+	const reviewCount = [...worlds, ...capabilities, ...budgets].filter((item) => item.tone !== 'ok').length;
+	return {
+		posture: reviewCount ? `${reviewCount} gated surfaces` : 'solve-pure ready',
+		review: reviewCount ? 'Review before agent execution' : 'No widening detected',
+		worlds,
+		capabilities,
+		budgets,
+		gates
+	};
+}
 
 export function createIntentPacket(
 	session: SessionSnapshot,

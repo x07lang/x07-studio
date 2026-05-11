@@ -111,6 +111,10 @@ parent-traversal paths before reading from the workspace root. For recorded x07
 patchsets, the daemon also applies the JSON Patch in memory against bounded
 workspace JSON targets on reviewable x07 project surfaces and returns per-file
 before/after previews or target-level errors without writing to disk.
+The right rail derives a world/budget guard from the selected example brief,
+session contract, and operation records, so solve-rr, sandbox/run-os, WASM app,
+release/provenance, policy, and SLO budget widening are visible before agent
+execution.
 Profiles marked `approval_required` are gated by pending `agent.approval.*`
 records; humans approve or reject those checkpoints in the same visible worklog
 before Studio starts the supervised command. Approval checkpoints are one-shot:

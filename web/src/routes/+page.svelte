@@ -10,6 +10,7 @@
 	} from '$lib/review';
 	import {
 		agentLanes,
+		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
 		defaultPrompt,
@@ -180,6 +181,7 @@
 	$: selectedOpDiagnostics = collectDiagnostics(selectedOp);
 	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
+	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
 	$: canApproveSpec = selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft';
 	$: canRunProject =
 		Boolean(selected) &&
@@ -241,20 +243,6 @@
 			label: 'Agents',
 			value: `${availableAgentCount}/${agentProfiles.length}`,
 			detail: agentProfiles.length ? 'profiles configured' : 'loading profiles'
-		}
-	];
-	$: worldState = [
-		{ label: 'Services', value: selected ? '1 / 1' : '0 / 1', ok: Boolean(selected) },
-		{ label: 'Specs', value: selected?.intent ? '2 / 2' : '0 / 2', ok: Boolean(selected?.intent) },
-		{
-			label: 'Policy',
-			value: selected?.contract ? 'locked' : 'draft',
-			ok: Boolean(selected?.contract)
-		},
-		{
-			label: 'Evidence',
-			value: selected && phaseIndex(selected.phase) >= phaseIndex('trust_review') ? 'ready' : 'pending',
-			ok: Boolean(selected && phaseIndex(selected.phase) >= phaseIndex('trust_review'))
 		}
 	];
 	$: operationRows = worklog.length ? worklog : [placeholderOp];
@@ -1386,19 +1374,52 @@
 			</div>
 		</section>
 
-		<section class="panel evidence-panel" aria-label="World state evidence">
+		<section class="panel guard-panel" aria-label="World and budget guard">
 			<div class="panel-head">
 				<div>
-					<p class="eyebrow">World State</p>
-					<h2>Evidence</h2>
+					<p class="eyebrow">World / Budget Guard</p>
+					<h2>{worldBudgetGuard.posture}</h2>
 				</div>
+				<span class="badge">{worldBudgetGuard.review}</span>
 			</div>
-			<div class="evidence-list">
-				{#each worldState as item}
-					<div class:ok={item.ok}>
-						<span>{item.label}</span>
-						<strong>{item.value}</strong>
+			<div class="guard-section">
+				<span>World map</span>
+				{#each worldBudgetGuard.worlds as item}
+					<div class={`guard-row ${item.tone}`}>
+						<strong>{item.label}</strong>
+						<em>{item.value}</em>
+						<small>{item.detail}</small>
 					</div>
+				{/each}
+			</div>
+			<div class="guard-section">
+				<span>Capability gates</span>
+				{#each worldBudgetGuard.capabilities as item}
+					<div class={`guard-row ${item.tone}`}>
+						<strong>{item.label}</strong>
+						<em>{item.value}</em>
+						<small>{item.detail}</small>
+					</div>
+				{/each}
+			</div>
+			<div class="guard-section">
+				<span>Budget heatmap</span>
+				<div class="budget-row">
+					<span>Consumed</span>
+					<strong>{consumedCredits.toFixed(1)} / 42.0</strong>
+				</div>
+				<div class="budget-meter"><i style={`width: ${budgetPercent}%`}></i></div>
+				{#each worldBudgetGuard.budgets as item}
+					<div class={`guard-row ${item.tone}`}>
+						<strong>{item.label}</strong>
+						<em>{item.value}</em>
+						<small>{item.detail}</small>
+					</div>
+				{/each}
+			</div>
+			<div class="guard-gates" aria-label="Guard review gates">
+				{#each worldBudgetGuard.gates as gate}
+					<code>{gate}</code>
 				{/each}
 			</div>
 		</section>
@@ -1427,24 +1448,6 @@
 				{#each doctrineDocRefs.slice(0, 5) as docRef}
 					<code>{docRef}</code>
 				{/each}
-			</div>
-		</section>
-
-		<section class="panel budget-panel" aria-label="Budget">
-			<div class="panel-head">
-				<div>
-					<p class="eyebrow">Budget</p>
-					<h2>42.0 credits</h2>
-				</div>
-			</div>
-			<div class="budget-row">
-				<span>Consumed</span>
-				<strong>{consumedCredits.toFixed(1)}</strong>
-			</div>
-			<div class="budget-meter"><i style={`width: ${budgetPercent}%`}></i></div>
-			<div class="budget-row">
-				<span>Remaining</span>
-				<strong>{(42 - consumedCredits).toFixed(1)}</strong>
 			</div>
 		</section>
 

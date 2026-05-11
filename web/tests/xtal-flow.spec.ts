@@ -8,6 +8,7 @@ const projects = [
 		taskType: 'new_behavior',
 		mode: 'Written Plan',
 		source: 'x07/docs/examples/agent-gate/xtal/toy-sorter',
+		guard: 'solve-pure',
 		prompt:
 			'Use docs/examples/agent-gate/xtal/toy-sorter to create a spec-first sorter with generated tests and xtal.verify evidence.'
 	},
@@ -18,6 +19,7 @@ const projects = [
 		taskType: 'behavior_change',
 		mode: 'Voice Transcript',
 		source: 'x07/docs/examples/agent-gate/xtal/workflow-graph',
+		guard: 'solve-pure',
 		prompt:
 			'Transcript: follow docs/examples/agent-gate/xtal/workflow-graph, compute workflow makespan from task durations and dependency edges, reject cycles, generate tests from spec, and run xtal.verify.'
 	},
@@ -28,6 +30,7 @@ const projects = [
 		taskType: 'new_behavior',
 		mode: 'Written Plan',
 		source: 'x07/docs/examples/readiness-checks/x07-sm-arch-contracts-smoke',
+		guard: 'arch budget',
 		prompt:
 			'Use docs/examples/readiness-checks/x07-sm-arch-contracts-smoke to generate a lifecycle step function with x07 sm gen, arch contracts, drift checks, and budget-scoped tests.'
 	},
@@ -38,6 +41,7 @@ const projects = [
 		taskType: 'new_behavior',
 		mode: 'Voice Transcript',
 		source: 'x07/docs/examples/apps/x07-api-gateway',
+		guard: 'solve-rr',
 		prompt:
 			'Transcript: use docs/examples/apps/x07-api-gateway to build a replayable API gateway with solve-pure routing, solve-rr upstream replay, sandbox policy, cassettes, and trust scripts.'
 	},
@@ -48,6 +52,7 @@ const projects = [
 		taskType: 'incident_repair',
 		mode: 'Incident Note',
 		source: 'x07/docs/examples/apps/x07dbguard',
+		guard: 'network / OS',
 		prompt:
 			'Incident note: use docs/examples/apps/x07dbguard to build a DB migration and drift guard with deterministic fingerprints, policy-gated apply, solve-rr drift verification, and certification evidence.'
 	},
@@ -58,6 +63,7 @@ const projects = [
 		taskType: 'new_behavior',
 		mode: 'Written Plan',
 		source: 'x07/docs/examples/wasm_showcases/x07_atlas',
+		guard: 'wasm app',
 		prompt:
 			'Use docs/examples/wasm_showcases/x07_atlas to build the x07 Atlas full-stack WASM app with app profile validation, trace replay, release pack verification, provenance, deploy planning, and SLO evidence.'
 	}
@@ -128,6 +134,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 		await page.getByRole('button', { name: 'Load Brief', exact: true }).click();
 		await expect(page.getByText(`${project.label} project brief loaded`)).toBeVisible();
 		await expect(page.getByLabel('Example-backed XTAL template')).toContainText(project.source);
+		await expect(page.getByLabel('World and budget guard')).toContainText(project.guard);
 
 		await page.getByLabel('Project title').fill(project.title);
 		await page.getByLabel('Task type').selectOption(project.taskType);

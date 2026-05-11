@@ -233,3 +233,16 @@ This document records friction found while implementing the Studio web surface.
    witness, and still routes the result through the same human approval gate. A
    live connected browser check confirmed the spec control, textarea, revision
    input, room select, tabs, daemon session record, and zero console issues.
+
+23. Complex examples need visible world and budget gates before agent execution.
+
+   The phase plan calls out World Map, Trust Border, and Budget Heatmap overlays,
+   but the browser only had a generic world-evidence card and a synthetic credit
+   meter. That was too weak for projects like `x07-api-gateway`, `x07dbguard`,
+   and `x07_atlas`, where the important review question is whether the agent is
+   crossing from solve-pure into solve-rr, sandbox/run-os, WASM app, release,
+   provenance, or SLO/budget lanes. Studio now derives a World / Budget Guard
+   from the selected example brief, session contract, and operation records. The
+   panel keeps deterministic solve-pure visible, flags capability widening, shows
+   budget evidence requirements, and lists review gates before supervised agent
+   execution.

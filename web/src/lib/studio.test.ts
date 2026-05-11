@@ -4,6 +4,7 @@ import { StudioApi } from './api';
 import { buildCounterexampleTheater, buildPatchReview, buildReviewSignals } from './review';
 import {
 	appendDemoOp,
+	buildWorldBudgetGuard,
 	canonicalDocRefs,
 	canonicalMcpTools,
 	createIntentPacket,
@@ -357,5 +358,25 @@ describe('x07 Studio XTAL web model', () => {
 			module_id: 'atlas.app',
 			entry: 'atlas_dev'
 		});
+	});
+
+	it('derives world, capability, and budget gates from complex project briefs', () => {
+		let session = demoSession();
+		session = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, projectTemplates[3].prompt));
+		session = reduceDemoEvent(session, 'draft_spec');
+		session = reduceDemoEvent(session, 'approve_spec');
+
+		const gatewayGuard = buildWorldBudgetGuard(session, projectTemplates[3]);
+		expect(gatewayGuard.worlds.map((item) => item.label)).toContain('solve-rr');
+		expect(gatewayGuard.worlds.map((item) => item.label)).toContain('sandbox');
+		expect(gatewayGuard.capabilities.map((item) => item.label)).toContain('network / OS');
+		expect(gatewayGuard.budgets.map((item) => item.label)).toContain('replay budget');
+		expect(gatewayGuard.gates).toContain('Capability widening requires review');
+
+		const atlasGuard = buildWorldBudgetGuard(session, projectTemplates[5]);
+		expect(atlasGuard.worlds.map((item) => item.label)).toContain('wasm app');
+		expect(atlasGuard.capabilities.map((item) => item.label)).toContain('release');
+		expect(atlasGuard.budgets.map((item) => item.label)).toContain('SLO budget');
+		expect(atlasGuard.gates).toContain('Release/provenance gate required');
 	});
 });
