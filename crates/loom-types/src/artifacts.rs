@@ -165,6 +165,84 @@ pub struct ProviderProfile {
     pub disabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStatus {
+    Available,
+    NeedsInstall,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentProfile {
+    pub schema_version: String,
+    pub id: String,
+    pub label: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub allowed_verbs: Vec<String>,
+    pub mcp_tools: Vec<String>,
+    pub write_roots: Vec<String>,
+    pub approval_required: bool,
+    pub status: AgentStatus,
+    pub notes: String,
+}
+
+impl AgentProfile {
+    pub fn codex() -> Self {
+        Self {
+            schema_version: "x07.studio.agent_profile@0.1.0".to_string(),
+            id: "openai-codex".to_string(),
+            label: "OpenAI Codex".to_string(),
+            command: "codex".to_string(),
+            args: Vec::new(),
+            allowed_verbs: vec![
+                "intent.formalize".to_string(),
+                "spec.check".to_string(),
+                "impl.sync.write".to_string(),
+                "xtal.verify".to_string(),
+                "xtal.repair".to_string(),
+            ],
+            mcp_tools: vec![
+                "x07.search_v1".to_string(),
+                "x07.context_pack_v1".to_string(),
+                "x07.exec_v1".to_string(),
+            ],
+            write_roots: vec![
+                "spec/".to_string(),
+                "src/".to_string(),
+                "tests/".to_string(),
+            ],
+            approval_required: true,
+            status: AgentStatus::NeedsInstall,
+            notes: "Remote coding-agent runner gated by x07 session contract.".to_string(),
+        }
+    }
+
+    pub fn claude_code() -> Self {
+        Self {
+            schema_version: "x07.studio.agent_profile@0.1.0".to_string(),
+            id: "claude-code".to_string(),
+            label: "Claude Code".to_string(),
+            command: "claude".to_string(),
+            args: Vec::new(),
+            allowed_verbs: vec![
+                "impl.sync.patchset".to_string(),
+                "impl.check".to_string(),
+                "xtal.certify".to_string(),
+            ],
+            mcp_tools: vec![
+                "x07.search_v1".to_string(),
+                "x07.context_pack_v1".to_string(),
+            ],
+            write_roots: vec!["src/".to_string(), "tests/".to_string()],
+            approval_required: true,
+            status: AgentStatus::NeedsInstall,
+            notes: "Alternate coding-agent runner for implementation and review lanes.".to_string(),
+        }
+    }
+}
+
 impl ProviderProfile {
     pub fn local_ollama() -> Self {
         Self {

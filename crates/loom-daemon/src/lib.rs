@@ -13,9 +13,10 @@ use loom_core::WorkspaceKernel;
 use loom_types::api::{
     BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse,
     CreateSessionRequest, DispatchEventRequest, HealthResponse, McpCallResponse,
-    ProbeProviderRequest, ProviderProbeResponse, RunBindingRequest, SaveProviderProfileRequest,
+    ProbeProviderRequest, ProviderProbeResponse, RunBindingRequest, SaveAgentProfileRequest,
+    SaveProviderProfileRequest,
 };
-use loom_types::artifacts::ProviderProfile;
+use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
 use loom_types::session::SessionSnapshot;
 
@@ -38,6 +39,7 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/v1/providers", get(list_providers).post(save_provider))
         .route("/v1/providers/probe", post(probe_provider))
+        .route("/v1/agents", get(list_agents).post(save_agent))
         .route("/v1/mcp/connect", post(connect_mcp))
         .route("/v1/mcp/{connection_id}/tools", get(list_mcp_tools))
         .route("/v1/mcp/{connection_id}/call", post(call_mcp_tool))
@@ -149,6 +151,25 @@ async fn save_provider(
     let kernel = state.kernel.lock().await;
     kernel
         .save_provider_profile(&request.profile)
+        .map_err(internal_error)?;
+    Ok(Json(request.profile))
+}
+
+async fn list_agents(
+    State(state): State<ApiState>,
+) -> Result<Json<Vec<AgentProfile>>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let profiles = kernel.list_agent_profiles().map_err(internal_error)?;
+    Ok(Json(profiles))
+}
+
+async fn save_agent(
+    State(state): State<ApiState>,
+    Json(request): Json<SaveAgentProfileRequest>,
+) -> Result<Json<AgentProfile>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    kernel
+        .save_agent_profile(&request.profile)
         .map_err(internal_error)?;
     Ok(Json(request.profile))
 }

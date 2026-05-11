@@ -66,3 +66,11 @@ This document records friction found while implementing the Studio web surface.
    easy to desynchronize. The new `/v1/sessions/{session_id}/xtal/run` route
    keeps the lifecycle in the kernel and records each canonical command as
    visible evidence.
+
+9. Agent profiles need to be command runners, not provider profiles.
+
+   OpenAI-compatible provider profiles are about model HTTP transport. Codex
+   and Claude Code are coding-agent command lanes with write roots, MCP tools,
+   approval gates, and allowed verbs. Studio now exposes them through
+   `x07.studio.agent_profile@0.1.0`, but still needs a future execution bridge
+   that can launch those agents under the session contract.

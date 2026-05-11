@@ -125,6 +125,22 @@ export interface AgentLane {
 	status: 'available' | 'configure' | 'review_only';
 }
 
+export type AgentStatus = 'available' | 'needs_install' | 'disabled';
+
+export interface AgentProfile {
+	schema_version: 'x07.studio.agent_profile@0.1.0';
+	id: string;
+	label: string;
+	command: string;
+	args: string[];
+	allowed_verbs: string[];
+	mcp_tools: string[];
+	write_roots: string[];
+	approval_required: boolean;
+	status: AgentStatus;
+	notes: string;
+}
+
 export interface ProjectTemplate {
 	id: ProjectDifficulty;
 	label: string;
@@ -201,6 +217,35 @@ export const agentLanes: AgentLane[] = [
 		writeScope: 'Implementation paths only after approved spec',
 		reviewGate: 'Human trust review before certify',
 		status: 'configure'
+	}
+];
+
+export const defaultAgentProfiles: AgentProfile[] = [
+	{
+		schema_version: 'x07.studio.agent_profile@0.1.0',
+		id: 'openai-codex',
+		label: 'OpenAI Codex',
+		command: 'codex',
+		args: [],
+		allowed_verbs: ['intent.formalize', 'spec.check', 'impl.sync.write', 'xtal.verify', 'xtal.repair'],
+		mcp_tools: ['x07.search_v1', 'x07.context_pack_v1', 'x07.exec_v1'],
+		write_roots: ['spec/', 'src/', 'tests/'],
+		approval_required: true,
+		status: 'needs_install',
+		notes: 'Remote coding-agent runner gated by x07 session contract.'
+	},
+	{
+		schema_version: 'x07.studio.agent_profile@0.1.0',
+		id: 'claude-code',
+		label: 'Claude Code',
+		command: 'claude',
+		args: [],
+		allowed_verbs: ['impl.sync.patchset', 'impl.check', 'xtal.certify'],
+		mcp_tools: ['x07.search_v1', 'x07.context_pack_v1'],
+		write_roots: ['src/', 'tests/'],
+		approval_required: true,
+		status: 'needs_install',
+		notes: 'Alternate coding-agent runner for implementation and review lanes.'
 	}
 ];
 

@@ -1,9 +1,11 @@
 import {
 	appendDemoOp,
 	createIntentPacket,
+	defaultAgentProfiles,
 	demoBindings,
 	demoSession,
 	reduceDemoEvent,
+	type AgentProfile,
 	type BindingDescriptor,
 	type HealthResponse,
 	type IntentInputMode,
@@ -51,6 +53,17 @@ export class StudioApi {
 			}
 		}
 		return demoBindings();
+	}
+
+	async listAgents(): Promise<AgentProfile[]> {
+		if (!this.demoMode) {
+			try {
+				return await request<AgentProfile[]>('/v1/agents');
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		return defaultAgentProfiles;
 	}
 
 	async createSession(title: string, task_type: TaskType): Promise<SessionSnapshot> {

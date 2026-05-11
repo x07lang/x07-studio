@@ -12,6 +12,7 @@
 		providerCards,
 		rooms,
 		workflowChecklist,
+		type AgentProfile,
 		type BindingDescriptor,
 		type HealthResponse,
 		type IntentInputMode,
@@ -27,6 +28,7 @@
 	let health: HealthResponse = { ok: true, workspace_root: '/workspace/x07-project' };
 	let sessions: SessionSnapshot[] = [];
 	let bindings: BindingDescriptor[] = [];
+	let agentProfiles: AgentProfile[] = [];
 	let selectedId = '';
 	let selectedRoom: Room = 'intent';
 	let selectedSessionForRoom = '';
@@ -71,6 +73,7 @@
 		health = await api.health();
 		sessions = await api.listSessions();
 		bindings = await api.listBindings();
+		agentProfiles = await api.listAgents();
 		selectedId = selectedId || sessions[0]?.session_id || '';
 		statusLine = api.isDemoMode ? 'Demo projection active' : 'Connected to Loom daemon';
 	}
@@ -442,6 +445,16 @@
 							<strong>{provider.label}</strong>
 							<span>{provider.model}</span>
 							<small>{provider.bridge}</small>
+						</div>
+					{/each}
+				</div>
+				<div class="agent-profiles" aria-label="Configured coding agents">
+					{#each agentProfiles as agent}
+						<div>
+							<strong>{agent.label}</strong>
+							<span>{agent.command} · {agent.status.replaceAll('_', ' ')}</span>
+							<small>{agent.allowed_verbs.join(' -> ')}</small>
+							<em>{agent.approval_required ? 'Approval gated' : 'Autonomous'} · {agent.write_roots.join(', ')}</em>
 						</div>
 					{/each}
 				</div>

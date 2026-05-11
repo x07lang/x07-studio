@@ -9,8 +9,8 @@ use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
 use loom_types::artifacts::{
-    IntentPacket, IntentSource, OpRecord, OperationStatus, ProviderProbeReport, ProviderProfile,
-    TaskType,
+    AgentProfile, AgentStatus, IntentPacket, IntentSource, OpRecord, OperationStatus,
+    ProviderProbeReport, ProviderProfile, TaskType,
 };
 use loom_types::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use loom_types::ops::SessionEvent;
@@ -197,6 +197,19 @@ impl WorkspaceKernel {
         self.store.load_provider_profiles()
     }
 
+    pub fn list_agent_profiles(&self) -> anyhow::Result<Vec<AgentProfile>> {
+        let profiles = self.store.load_agent_profiles()?;
+        if profiles.is_empty() {
+            Ok(default_agent_profiles())
+        } else {
+            Ok(profiles)
+        }
+    }
+
+    pub fn save_agent_profile(&self, profile: &AgentProfile) -> anyhow::Result<()> {
+        self.store.save_agent_profile(profile)
+    }
+
     pub fn save_provider_profile(&self, profile: &ProviderProfile) -> anyhow::Result<()> {
         self.store.save_provider_profile(profile)
     }
@@ -316,6 +329,29 @@ fn last_op_failed(snapshot: &SessionSnapshot) -> bool {
         .op_log
         .last()
         .is_some_and(|op| op.status == OperationStatus::Failed)
+}
+
+fn default_agent_profiles() -> Vec<AgentProfile> {
+    let mut codex = AgentProfile::codex();
+    codex.status = status_for_command(&codex.command);
+    let mut claude = AgentProfile::claude_code();
+    claude.status = status_for_command(&claude.command);
+    vec![codex, claude]
+}
+
+fn status_for_command(command: &str) -> AgentStatus {
+    if command_in_path(command) {
+        AgentStatus::Available
+    } else {
+        AgentStatus::NeedsInstall
+    }
+}
+
+fn command_in_path(command: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|dir| dir.join(command).is_file())
 }
 
 #[cfg(test)]

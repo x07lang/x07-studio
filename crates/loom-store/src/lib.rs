@@ -3,7 +3,7 @@ use std::io::Write;
 
 use anyhow::Context;
 use camino::{Utf8Path, Utf8PathBuf};
-use loom_types::artifacts::{ProviderProbeReport, ProviderProfile};
+use loom_types::artifacts::{AgentProfile, ProviderProbeReport, ProviderProfile};
 use loom_types::session::SessionSnapshot;
 
 #[derive(Debug, Clone)]
@@ -20,6 +20,7 @@ impl FsStore {
 
     pub fn init(&self) -> anyhow::Result<()> {
         fs::create_dir_all(self.sessions_dir())?;
+        fs::create_dir_all(self.agents_dir())?;
         fs::create_dir_all(self.providers_dir())?;
         fs::create_dir_all(self.reports_dir())?;
         Ok(())
@@ -31,6 +32,10 @@ impl FsStore {
 
     pub fn providers_dir(&self) -> Utf8PathBuf {
         self.root.join("providers")
+    }
+
+    pub fn agents_dir(&self) -> Utf8PathBuf {
+        self.root.join("agents")
     }
 
     pub fn reports_dir(&self) -> Utf8PathBuf {
@@ -54,6 +59,23 @@ impl FsStore {
         }
         sessions.sort_by(|a, b| a.title.cmp(&b.title));
         Ok(sessions)
+    }
+
+    pub fn save_agent_profile(&self, profile: &AgentProfile) -> anyhow::Result<()> {
+        let path = self.agents_dir().join(format!("{}.json", profile.id));
+        write_json(&path, profile)
+    }
+
+    pub fn load_agent_profiles(&self) -> anyhow::Result<Vec<AgentProfile>> {
+        let mut profiles = Vec::new();
+        for path in json_files(&self.agents_dir())? {
+            let bytes = fs::read(&path)?;
+            let profile: AgentProfile = serde_json::from_slice(&bytes)
+                .with_context(|| format!("failed to parse agent profile at {}", path))?;
+            profiles.push(profile);
+        }
+        profiles.sort_by(|a, b| a.label.cmp(&b.label));
+        Ok(profiles)
     }
 
     pub fn save_provider_profile(&self, profile: &ProviderProfile) -> anyhow::Result<()> {
@@ -141,7 +163,8 @@ mod tests {
 
     use camino::Utf8PathBuf;
     use loom_types::artifacts::{
-        ProbeStatus, ProviderCapabilities, ProviderProbeMode, ProviderProbeReport, ProviderProfile,
+        AgentProfile, ProbeStatus, ProviderCapabilities, ProviderProbeMode, ProviderProbeReport,
+        ProviderProfile,
     };
     use loom_types::session::SessionSnapshot;
     use uuid::Uuid;
@@ -201,6 +224,23 @@ mod tests {
 
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].id, "local");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn agent_profiles_roundtrip_through_studio_store() {
+        let root = temp_root();
+        let store = FsStore::new(root.as_path());
+        store.init().expect("store init");
+        let mut profile = AgentProfile::codex();
+        profile.id = "codex-local".to_string();
+
+        store.save_agent_profile(&profile).expect("save profile");
+        let profiles = store.load_agent_profiles().expect("load profiles");
+
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, "codex-local");
+        assert_eq!(profiles[0].command, "codex");
         fs::remove_dir_all(root).ok();
     }
 

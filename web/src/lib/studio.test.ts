@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	appendDemoOp,
 	createIntentPacket,
+	defaultAgentProfiles,
 	demoBindings,
 	demoSession,
 	nextPrimaryAction,
@@ -71,6 +72,15 @@ describe('x07 Studio XTAL web model', () => {
 		expect(ids).toContain('project.init.xtal-pure');
 		expect(ids).toContain('tests.gen.write');
 		expect(ids).toContain('impl.sync.write');
+	});
+
+	it('models Codex and Claude Code as coding-agent profiles', () => {
+		expect(defaultAgentProfiles.map((profile) => profile.id)).toEqual([
+			'openai-codex',
+			'claude-code'
+		]);
+		expect(defaultAgentProfiles[0].allowed_verbs).toContain('xtal.verify');
+		expect(defaultAgentProfiles[1].command).toBe('claude');
 	});
 
 	it('exposes phase progress and primary action labels', () => {

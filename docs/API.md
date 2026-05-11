@@ -111,6 +111,29 @@ Provider probe request:
 }
 ```
 
+## Agents
+
+- `GET /agents`
+- `POST /agents`
+
+Agent profile response:
+
+```json
+{
+  "schema_version": "x07.studio.agent_profile@0.1.0",
+  "id": "openai-codex",
+  "label": "OpenAI Codex",
+  "command": "codex",
+  "args": [],
+  "allowed_verbs": ["intent.formalize", "spec.check", "xtal.verify"],
+  "mcp_tools": ["x07.search_v1", "x07.context_pack_v1", "x07.exec_v1"],
+  "write_roots": ["spec/", "src/", "tests/"],
+  "approval_required": true,
+  "status": "available",
+  "notes": "Remote coding-agent runner gated by x07 session contract."
+}
+```
+
 ## MCP
 
 - `POST /mcp/connect`

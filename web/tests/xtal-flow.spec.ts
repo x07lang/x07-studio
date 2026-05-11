@@ -38,6 +38,10 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 		await page.getByRole('tab', { name: room }).click();
 		await expect(page.getByRole('tab', { name: room })).toHaveAttribute('aria-selected', 'true');
 	}
+	await page.getByRole('tab', { name: 'Agents' }).click();
+	await expect(page.getByLabel('Configured coding agents').getByText('OpenAI Codex')).toBeVisible();
+	await expect(page.getByLabel('Configured coding agents').getByText('Claude Code')).toBeVisible();
+	await page.getByRole('tab', { name: 'Intent' }).click();
 
 	await page.getByLabel('Active coding agent').selectOption('Claude Code');
 

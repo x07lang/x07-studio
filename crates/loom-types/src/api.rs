@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::artifacts::{ProviderProbeReport, ProviderProfile, TaskType};
+use crate::artifacts::{AgentProfile, ProviderProbeReport, ProviderProfile, TaskType};
 use crate::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use crate::ops::SessionEvent;
 use crate::session::SessionSnapshot;
@@ -35,6 +35,11 @@ pub struct RunBindingRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveProviderProfileRequest {
     pub profile: ProviderProfile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveAgentProfileRequest {
+    pub profile: AgentProfile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

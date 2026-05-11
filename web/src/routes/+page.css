@@ -493,6 +493,7 @@ textarea {
 
 .spec-grid,
 .providers,
+.agent-profiles,
 .agent-lanes,
 .evidence-list {
 	display: grid;
@@ -505,6 +506,7 @@ textarea {
 
 .spec-grid div,
 .provider,
+.agent-profiles div,
 .agent-lanes div,
 .evidence-list div {
 	border: 1px solid var(--border);
@@ -523,17 +525,26 @@ textarea {
 	margin-top: 12px;
 }
 
+.agent-profiles {
+	margin-top: 12px;
+}
+
+.agent-profiles span,
+.agent-profiles small,
+.agent-profiles em,
 .agent-lanes span,
 .agent-lanes small,
 .agent-lanes em {
 	color: var(--muted);
 }
 
+.agent-profiles small,
 .agent-lanes small {
 	font-family: var(--font-mono);
 	overflow-wrap: anywhere;
 }
 
+.agent-profiles em,
 .agent-lanes em {
 	font-style: normal;
 	font-size: 12px;
