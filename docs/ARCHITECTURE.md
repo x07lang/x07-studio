@@ -80,7 +80,10 @@ Studio can also record a supervised launch plan, or execute the configured agent
 command with a bounded timeout, and append the resulting stdout/stderr and
 artifacts as `agent.supervise.*` or `agent.run.*` operation records. Agent run
 execution is split into a `running` record and a later completion update so web
-clients can poll active progress without holding the daemon session lock.
+clients can poll active progress without holding the daemon session lock. While
+the process is active, stdout/stderr chunks update the same `agent.run.*` record
+so the browser worklog can show live command evidence instead of waiting for
+process exit.
 Profiles marked `approval_required` are gated by pending `agent.approval.*`
 records; humans approve or reject those checkpoints in the same visible worklog
 before Studio starts the supervised command. Approval checkpoints are one-shot:

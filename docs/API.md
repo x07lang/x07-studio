@@ -179,8 +179,9 @@ Agent run request:
 agent command. `mode: "execute"` runs the configured agent command from the
 workspace root with the handoff prompt path as its final argument. The daemon
 first appends a `running` `agent.run.*` operation so clients can poll the session
-while the command is active, then updates the same operation with captured
-stdout/stderr and a succeeded or failed status.
+while the command is active, updates the same operation with streaming
+stdout/stderr chunks, then writes the final captured output and succeeded or
+failed status.
 
 If the agent profile has `approval_required: true`, `mode: "execute"` first
 records a pending `agent.approval.*` checkpoint unless the latest relevant

@@ -28,13 +28,13 @@ This document records friction found while implementing the Studio web surface.
    write scopes, and visible worklogs. The web UI shows both lanes, but the
    backend should add a `x07.studio.agent_profile@0.1.0` schema.
 
-4. XTAL lifecycle commands are binding-first, but long-running visibility is
-   still coarse.
+4. XTAL lifecycle commands are binding-first, but long-running visibility must
+   be explicit.
 
-   `OpRecord` persists completed command details. For a fully visible agent
-   workflow, Studio needs streaming operation events: command started, stdout
-   chunk, artifact detected, diagnostic classified, approval requested, and
-   write completed.
+   `OpRecord` persists command details, and Studio now updates supervised
+   `agent.run.*` records with stdout/stderr chunks while the command is still
+   running. The next visibility layer is higher-level semantic events: artifact
+   detected, diagnostic classified, approval requested, and write completed.
 
 5. Documentation is strong on agent quickstart but scattered for Studio.
 
@@ -82,11 +82,11 @@ This document records friction found while implementing the Studio web surface.
    approved intent, allowed verbs, MCP tools, write roots, and required loop.
    Studio can now record supervised launch plans and run configured agent
    commands with a bounded timeout into visible `OpRecord`s. The daemon now
-   appends a `running` record before execution and updates the same record on
-   completion, so the web UI can poll active work. Human checkpoints are also
-   explicit pending `agent.approval.*` records for approval-gated profiles. The
-   remaining gap is streaming stdout/stderr chunks while the command is still
-   running and binding those chunks to finer-grained approval prompts.
+   appends a `running` record before execution, updates the same record with
+   stdout/stderr chunks while the command is active, and then records final
+   status and captured output. Human checkpoints are also explicit pending
+   `agent.approval.*` records for approval-gated profiles. The remaining gap is
+   binding raw chunks to finer-grained semantic approval prompts.
 
 11. The starter-template path needs a cleaner scaffold contract.
 

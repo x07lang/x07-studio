@@ -214,13 +214,33 @@ async fn run_agent_handoff(
             .map_err(internal_error)?
     };
     let (op, session) = if let Some(command) = prepared.command {
-        let op = WorkspaceKernel::execute_agent_command(command).await;
-        let session = {
-            let mut kernel = state.kernel.lock().await;
-            kernel
-                .complete_agent_run(op.clone())
-                .map_err(internal_error)?
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let execution = WorkspaceKernel::execute_agent_command_streaming(command, tx);
+        tokio::pin!(execution);
+        let session = loop {
+            tokio::select! {
+                update = rx.recv() => {
+                    if let Some(update) = update {
+                        let mut kernel = state.kernel.lock().await;
+                        kernel
+                            .complete_agent_run(update)
+                            .map_err(internal_error)?;
+                    }
+                }
+                final_op = &mut execution => {
+                    let mut kernel = state.kernel.lock().await;
+                    let session = kernel
+                        .complete_agent_run(final_op.clone())
+                        .map_err(internal_error)?;
+                    break session;
+                }
+            }
         };
+        let op = session
+            .op_log
+            .last()
+            .cloned()
+            .unwrap_or_else(|| prepared.op.clone());
         (op, session)
     } else {
         (prepared.op.clone(), prepared.session.clone())

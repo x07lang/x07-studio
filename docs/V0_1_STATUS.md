@@ -5,6 +5,7 @@
 - real x07 / x07-wasm / x07lp command execution through `loom-adapters::x07_cli`
 - machine-readable report capture for x07 and x07-wasm
 - structured stdout/stderr capture for x07-platform bindings
+- streaming stdout/stderr updates for supervised coding-agent commands
 - binding coverage for XTAL authoring, test generation, implementation sync, verify/repair/certify/ingest/improve, core checks, web-ui, device, workload, topology, deploy-plan, and selected platform query/control reads
 - MCP HTTP transport with initialize + session header handling
 - MCP stdio transport with newline-delimited JSON-RPC

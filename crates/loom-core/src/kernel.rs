@@ -5,7 +5,9 @@ use anyhow::{anyhow, Context};
 use camino::{Utf8Path, Utf8PathBuf};
 use uuid::Uuid;
 
-use loom_adapters::command_runner::{now_string, CommandExecution, CommandRunner};
+use loom_adapters::command_runner::{
+    now_string, CommandExecution, CommandRunner, CommandStreamUpdate,
+};
 use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
@@ -18,6 +20,7 @@ use loom_types::artifacts::{
 use loom_types::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use loom_types::ops::SessionEvent;
 use loom_types::session::{SessionPhase, SessionSnapshot};
+use tokio::sync::mpsc;
 
 use crate::workspace::WorkspaceModel;
 
@@ -558,6 +561,43 @@ impl WorkspaceKernel {
         {
             Ok(execution) => agent_execution_op(command, execution),
             Err(error) => agent_spawn_error_op(command, error),
+        }
+    }
+
+    pub async fn execute_agent_command_streaming(
+        command: AgentCommandPlan,
+        updates: mpsc::UnboundedSender<OpRecord>,
+    ) -> OpRecord {
+        let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel();
+        let run_command = command.clone();
+        let execution = async move {
+            CommandRunner
+                .run_with_timeout_streaming(
+                    run_command.cwd.as_path(),
+                    &run_command.program,
+                    &run_command.args,
+                    &BTreeMap::new(),
+                    Some(run_command.timeout_seconds),
+                    chunk_tx,
+                )
+                .await
+        };
+        tokio::pin!(execution);
+
+        loop {
+            tokio::select! {
+                chunk = chunk_rx.recv() => {
+                    if let Some(chunk) = chunk {
+                        let _ = updates.send(agent_streaming_op(&command, chunk));
+                    }
+                }
+                result = &mut execution => {
+                    return match result {
+                        Ok(execution) => agent_execution_op(command, execution),
+                        Err(error) => agent_spawn_error_op(command, error),
+                    };
+                }
+            }
         }
     }
 
@@ -1345,6 +1385,46 @@ fn agent_running_op(
     }
 }
 
+fn agent_streaming_op(command: &AgentCommandPlan, update: CommandStreamUpdate) -> OpRecord {
+    let stdout = format!(
+        "Supervised command streaming.\nCommand: {}\nPrompt: {}\n\n{}",
+        command.handoff.command.join(" "),
+        command.handoff.prompt_path,
+        update.stdout
+    );
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: command.op_id,
+        session_id: command.session_id,
+        op: format!("agent.run.{}", command.agent.id),
+        backend: "agent-supervisor".to_string(),
+        command: command.handoff.command.clone(),
+        started_at: command.handoff.created_at.clone(),
+        finished_at: None,
+        status: OperationStatus::Running,
+        exit_code: None,
+        artifacts: vec![command.prompt_path.to_string()],
+        notes: Some(format!(
+            "Streaming {} output under Studio supervision.",
+            command.agent.label
+        )),
+        stdout: Some(stdout),
+        stderr: if update.stderr.is_empty() {
+            None
+        } else {
+            Some(update.stderr)
+        },
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "mode": "execute",
+            "streaming": true,
+            "handoff": command.handoff,
+        })),
+        report_path: None,
+    }
+}
+
 fn agent_execution_op(command: AgentCommandPlan, execution: CommandExecution) -> OpRecord {
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
@@ -1592,8 +1672,16 @@ mod tests {
             .iter()
             .any(|op| op.op == "agent.run.echo-agent" && op.status == OperationStatus::Running));
 
-        let run_op =
-            WorkspaceKernel::execute_agent_command(prepared.command.expect("agent command")).await;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let run_op = WorkspaceKernel::execute_agent_command_streaming(
+            prepared.command.expect("agent command"),
+            tx,
+        )
+        .await;
+        let mut stream_updates = Vec::new();
+        while let Ok(update) = rx.try_recv() {
+            stream_updates.push(update);
+        }
         let run_session = kernel
             .complete_agent_run(run_op.clone())
             .expect("complete agent");
@@ -1605,6 +1693,14 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains(&handoff.prompt_path));
+        assert!(stream_updates.iter().any(|op| {
+            op.status == OperationStatus::Running
+                && op
+                    .stdout
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains(&handoff.prompt_path)
+        }));
         assert!(run_session
             .op_log
             .iter()

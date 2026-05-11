@@ -12,10 +12,8 @@ camino.workspace = true
 indexmap.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 uuid.workspace = true
 loom-adapters = { path = "../loom-adapters" }
 loom-store = { path = "../loom-store" }
 loom-types = { path = "../loom-types" }
-
-[dev-dependencies]
-tokio.workspace = true
