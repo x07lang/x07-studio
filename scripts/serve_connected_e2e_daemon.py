@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -189,6 +190,60 @@ def write_fake_tool(bin_dir: Path, name: str) -> Path:
     return path
 
 
+def write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def write_connected_examples(examples_root: Path) -> None:
+    atlas = examples_root / "wasm_showcases/x07_atlas"
+    for relative in [
+        "arch/app",
+        "arch/app/ops",
+        "arch/provenance",
+        "arch/slo",
+        "backend",
+        "frontend",
+        "tests/fixtures/metrics",
+        "tests/regress",
+        "tests/traces",
+    ]:
+        (atlas / relative).mkdir(parents=True, exist_ok=True)
+
+    (atlas / "README.md").write_text("# Connected E2E x07 Atlas\n", encoding="utf-8")
+    write_json(
+        atlas / "arch/app/index.x07app.json",
+        {"schema_version": "x07.app.index@0.1.0", "profiles": ["atlas_dev", "atlas_release"]},
+    )
+    write_json(atlas / "arch/app/ops/caps_release.json", {"schema_version": "x07.caps@0.1.0"})
+    write_json(atlas / "arch/app/ops/ops_release.json", {"schema_version": "x07.ops@0.1.0"})
+    write_json(atlas / "arch/slo/slo_min.json", {"schema_version": "x07.slo@0.1.0"})
+    (atlas / "arch/provenance/dev.ed25519.signing_key.b64").write_text("test\n", encoding="utf-8")
+    (atlas / "arch/provenance/dev.ed25519.public_key.b64").write_text("test\n", encoding="utf-8")
+    for project in ["backend", "frontend"]:
+        write_json(
+            atlas / project / "x07.json",
+            {"schema_version": "x07.project@0.1.0", "name": f"atlas-{project}"},
+        )
+        write_json(
+            atlas / project / "x07.lock.json",
+            {"schema_version": "x07.lock@0.1.0", "packages": []},
+        )
+    write_json(atlas / "tests/traces/happy_path.trace.json", {"schema_version": "x07.trace@0.1.0"})
+    write_json(
+        atlas / "tests/traces/validation_error.trace.json",
+        {"schema_version": "x07.trace@0.1.0"},
+    )
+    write_json(
+        atlas / "tests/regress/atlas_incident.trace.json",
+        {"schema_version": "x07.trace@0.1.0"},
+    )
+    write_json(
+        atlas / "tests/fixtures/metrics/atlas_canary_ok.json",
+        {"schema_version": "x07.metrics@0.1.0", "ok": True},
+    )
+
+
 def reset_target_path(repo_root: Path, path: Path) -> None:
     target_root = (repo_root / "target").resolve()
     if path != target_root and target_root not in path.parents:
@@ -203,8 +258,11 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     workspace = (repo_root / args.workspace).resolve()
     bin_dir = (repo_root / args.bin_dir).resolve()
+    examples_root = (repo_root / "target/connected-e2e-examples").resolve()
     reset_target_path(repo_root, workspace)
     reset_target_path(repo_root, bin_dir)
+    reset_target_path(repo_root, examples_root)
+    write_connected_examples(examples_root)
 
     x07 = write_fake_tool(bin_dir, "x07")
     x07_wasm = write_fake_tool(bin_dir, "x07-wasm")
@@ -217,6 +275,7 @@ def main() -> int:
     env["X07_STUDIO_X07_EXE"] = str(x07)
     env["X07_STUDIO_X07_WASM_EXE"] = str(x07_wasm)
     env["X07_STUDIO_X07LP_EXE"] = str(x07lp)
+    env["X07_STUDIO_X07_EXAMPLES_ROOT"] = str(examples_root)
 
     os.chdir(repo_root)
     os.execvpe(
