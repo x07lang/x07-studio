@@ -431,3 +431,14 @@ This document records friction found while implementing the Studio web surface.
    plan from daemon health, and its embedded daemon exports the actual random
    loopback address before serving so `/v1/health` no longer reports the static
    default port.
+
+42. Connected E2E must cover the complex workflow, not only the starter path.
+
+   The rendered demo test already drove the project form from simple examples
+   through `x07_atlas`, but the real-daemon browser test only exercised the toy
+   sorter. That left the x07-wasm, local platform, and supervised-agent surfaces
+   dependent on unit tests and demo-mode assumptions. The connected E2E harness
+   now provides deterministic `x07-wasm`, `x07lp`, Codex, and Claude shims and
+   proves a simple-to-Atlas project ladder can be created through the form,
+   revised, approved, handed to Claude Code, executed through the x07 Atlas
+   workflow, and surfaced in trust review without entering demo mode.

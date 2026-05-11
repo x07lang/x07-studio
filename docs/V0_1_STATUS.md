@@ -28,7 +28,7 @@
 - standalone packaging scripts assemble the daemon, native desktop shell, Forge shell, and static Svelte web app into a portable bundle
 - standalone launcher refreshes setup defaults, selects free local daemon/web ports, and reports the actual runtime addresses through daemon health
 - standalone CI validates bundle manifest, static web app, launcher scripts, first-run defaults, bundled `x07-wasm` wiring, and live launcher startup behind occupied default ports
-- connected browser E2E starts a real Loom daemon and runs the web app through a simple XTAL session without falling back to demo mode
+- connected browser E2E starts a real Loom daemon and runs the web app through simple XTAL and Atlas-level x07-wasm/platform sessions without falling back to demo mode
 - OpenAI-compatible provider probing through `/models`, `/responses`, and `/chat/completions`
 - Axum daemon routes for sessions, bindings, providers, and MCP connections
 - egui GUI shell and ratatui Forge shell over the daemon API

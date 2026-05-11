@@ -97,16 +97,71 @@ def run_x07(args: list[str]) -> None:
         return
 
 
+def run_x07_wasm(args: list[str]) -> None:
+    cwd = Path.cwd()
+    out_dir = option(args, "--out-dir")
+    if out_dir:
+        out_path = cwd / out_dir
+        out_path.mkdir(parents=True, exist_ok=True)
+        if args[:2] == ["app", "build"]:
+            write_json(
+                out_path / "app.bundle.json",
+                {"schema_version": "x07.wasm.app.bundle@0.1.0", "ok": True},
+            )
+        elif args[:2] == ["app", "pack"]:
+            write_json(
+                out_path / "app.pack.json",
+                {"schema_version": "x07.wasm.app.pack@0.1.0", "ok": True},
+            )
+        elif args[:2] == ["deploy", "plan"]:
+            write_json(
+                out_path / "deploy.plan.json",
+                {"schema_version": "x07.wasm.deploy.plan@0.1.0", "ok": True},
+            )
+
+    out = option(args, "--out")
+    if out:
+        write_json(
+            cwd / out,
+            {"schema_version": "x07.wasm.provenance@0.1.0", "ok": True},
+        )
+
+
+def run_agent(command: str, args: list[str]) -> None:
+    prompt_path = args[-1] if args else ".x07/studio/handoffs/unknown.md"
+    print(
+        json.dumps(
+            {
+                "schema_version": "x07.studio.agent_event@0.1.0",
+                "kind": "artifact",
+                "summary": f"{command} produced connected-e2e artifact evidence",
+                "artifact": prompt_path,
+            }
+        )
+    )
+    print(f"write: {prompt_path}")
+    print("approval required: connected-e2e policy checkpoint resolved by test")
+
+
 def main() -> int:
     args, report_out = split_args(sys.argv[1:])
-    if Path(sys.argv[0]).name == "x07":
+    tool = Path(sys.argv[0]).name
+    if tool == "x07":
         run_x07(args)
+    elif tool == "x07-wasm":
+        run_x07_wasm(args)
+    elif tool in {"codex", "claude"}:
+        run_agent(tool, args)
+    result = {"status": "ok", "time": int(time.time())}
+    if tool == "x07lp" and args[:1] == ["accept"]:
+        result["deployment_id"] = "connected-e2e-atlas"
+        result["exec_id"] = "connected-e2e-atlas"
     report = {
         "schema_version": "x07.connected_e2e.report@0.1.0",
         "ok": True,
-        "tool": Path(sys.argv[0]).name,
+        "tool": tool,
         "argv": args,
-        "result": {"status": "ok", "time": int(time.time())},
+        "result": result,
     }
     if report_out:
         write_json(Path(report_out), report)
@@ -154,6 +209,8 @@ def main() -> int:
     x07 = write_fake_tool(bin_dir, "x07")
     x07_wasm = write_fake_tool(bin_dir, "x07-wasm")
     x07lp = write_fake_tool(bin_dir, "x07lp")
+    write_fake_tool(bin_dir, "codex")
+    write_fake_tool(bin_dir, "claude")
 
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
