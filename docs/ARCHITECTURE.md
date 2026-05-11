@@ -26,11 +26,12 @@ separate product surface:
 
 The native desktop shell starts an embedded local daemon by default, so first
 launch works without a manual background process. The packaged web launcher
-starts `loom-daemon`, serves the built Svelte app, and proxies `/v1/**` to the
-daemon. Both surfaces consume the daemon health component report so onboarding
-can show whether `x07`, `x07-wasm`, `x07lp`, Codex, and Claude Code are
-available, missing, or optional. The launcher refreshes component paths without
-discarding user-edited onboarding defaults.
+starts `loom-daemon`, serves the built Svelte app on the preferred local port or
+the next free port, and proxies `/v1/**` to the daemon. Both surfaces consume the
+daemon health component report so onboarding can show whether `x07`,
+`x07-wasm`, `x07lp`, Codex, and Claude Code are available, missing, or optional.
+The launcher refreshes component paths without discarding user-edited onboarding
+defaults, and the daemon reports the runtime address selected by the launcher.
 
 ## Runtime shape
 

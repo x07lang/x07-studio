@@ -8,6 +8,7 @@ import http.server
 import json
 import os
 import shutil
+import socket
 import socketserver
 import subprocess
 import sys
@@ -58,13 +59,6 @@ def main() -> int:
     env = os.environ.copy()
     defaults_path = bundle_root / "defaults.env"
     load_env_file(defaults_path, env)
-    workspace_root = configured_path(
-        args.root,
-        env.get("X07_STUDIO_WORKSPACE_ROOT"),
-        Path.home() / "x07-studio-workspace",
-    )
-    daemon_addr = args.daemon_addr or env.get("X07_STUDIO_DAEMON_ADDR") or "127.0.0.1:7719"
-    web_addr = args.web_addr or env.get("X07_STUDIO_WEB_ADDR") or "127.0.0.1:7720"
     if not args.skip_bootstrap:
         run_component_bootstrap(
             bundle_root,
@@ -74,6 +68,21 @@ def main() -> int:
         )
         load_env_file(defaults_path, env)
 
+    workspace_root = configured_path(
+        args.root,
+        env.get("X07_STUDIO_WORKSPACE_ROOT"),
+        Path.home() / "x07-studio-workspace",
+    )
+    daemon_addr = choose_available_addr(
+        args.daemon_addr or env.get("X07_STUDIO_DAEMON_ADDR") or "127.0.0.1:7719",
+        "daemon",
+    )
+    web_addr = choose_available_addr(
+        args.web_addr or env.get("X07_STUDIO_WEB_ADDR") or "127.0.0.1:7720",
+        "web",
+        reserved={daemon_addr},
+    )
+    apply_runtime_addresses(env, daemon_addr, web_addr)
     workspace_root.mkdir(parents=True, exist_ok=True)
     daemon = start_daemon(bundle_root, workspace_root, daemon_addr, env)
     wait_for_daemon(f"http://{daemon_addr}/v1/health")
@@ -117,6 +126,47 @@ def normalize_env_value(key: str, value: str, base: Path) -> str:
 def configured_path(cli_value: Path | None, env_value: str | None, default: Path) -> Path:
     value = cli_value if cli_value is not None else Path(env_value) if env_value else default
     return Path(os.path.expandvars(os.path.expanduser(str(value))))
+
+
+def choose_available_addr(addr: str, label: str, reserved: set[str] | None = None) -> str:
+    reserved = reserved or set()
+    host, port = split_addr(addr)
+    if port == 0:
+        candidate = f"{host}:{ephemeral_port(host)}"
+        return choose_available_addr(candidate, label, reserved)
+    for candidate_port in range(port, min(port + 50, 65535) + 1):
+        candidate = f"{host}:{candidate_port}"
+        if candidate in reserved:
+            continue
+        if can_bind(host, candidate_port):
+            if candidate != addr:
+                print(f"{label} port {port} is busy; using {candidate}", file=sys.stderr)
+            return candidate
+    fallback_port = ephemeral_port(host)
+    fallback = f"{host}:{fallback_port}"
+    print(f"{label} port {port} is busy; using {fallback}", file=sys.stderr)
+    return fallback
+
+
+def can_bind(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind((host, port))
+        return True
+    except OSError:
+        return False
+
+
+def ephemeral_port(host: str) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, 0))
+        return int(probe.getsockname()[1])
+
+
+def apply_runtime_addresses(env: dict[str, str], daemon_addr: str, web_addr: str) -> None:
+    env["X07_STUDIO_DAEMON_ADDR"] = daemon_addr
+    env["X07_STUDIO_DAEMON_URL"] = f"http://{daemon_addr}"
+    env["X07_STUDIO_WEB_ADDR"] = web_addr
 
 
 def run_component_bootstrap(

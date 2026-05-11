@@ -196,8 +196,9 @@ python3 scripts/launch_studio_web.py --bundle-root .
 The launcher checks bundled and local runtime components, builds missing sibling
 source checkouts when they are available, refreshes `defaults.env`, starts
 `loom-daemon`, serves the static web app on
-`http://{manifest["web_addr"]}`, and proxies `/v1/**` to the daemon. The native
-desktop shell is available at `bin/{binary_name("x07-studio")}`.
+`http://{manifest["web_addr"]}` or the next free local port, and proxies
+`/v1/**` to the daemon. The native desktop shell is available at
+`bin/{binary_name("x07-studio")}`.
 The generated `defaults.env` sets a first-run workspace at
 `~/x07-studio-workspace`, local daemon/web addresses, and any bundled component
 paths.

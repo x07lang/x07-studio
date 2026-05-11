@@ -404,3 +404,13 @@ This document records friction found while implementing the Studio web surface.
    health payload: first-run defaults, the bootstrap command, resolved runtime
    component paths, missing required components, and optional Codex/Claude
    agent setup are visible before the user creates a project.
+
+39. Standalone launch defaults must reflect the running process.
+
+   The packaged web launcher used fixed local ports from `defaults.env`, and the
+   daemon health response always reported `127.0.0.1:7719`. If another local
+   service already owned that port, first-run launch could fail or show stale
+   setup guidance even after the launcher recovered. The launcher now selects
+   free daemon and web ports when defaults are busy, exports those choices to the
+   daemon process, and daemon health reports the runtime defaults back to the
+   browser onboarding plan.

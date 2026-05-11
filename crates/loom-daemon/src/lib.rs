@@ -1,3 +1,4 @@
+use std::env;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::Path as StdPath;
@@ -280,13 +281,24 @@ async fn health(State(state): State<ApiState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
         workspace_root,
-        defaults: StudioDefaults {
-            daemon_addr: "127.0.0.1:7719".to_string(),
-            provider_profile_id: "ollama-local".to_string(),
-            platform_state_dir: ".x07/platform".to_string(),
-        },
+        defaults: studio_defaults(),
         components: runtime_components(kernel.workspace_root()),
     })
+}
+
+fn studio_defaults() -> StudioDefaults {
+    StudioDefaults {
+        daemon_addr: env_setting("X07_STUDIO_DAEMON_ADDR", "127.0.0.1:7719"),
+        provider_profile_id: env_setting("X07_STUDIO_PROVIDER_PROFILE_ID", "ollama-local"),
+        platform_state_dir: env_setting("X07_STUDIO_PLATFORM_STATE_DIR", ".x07/platform"),
+    }
+}
+
+fn env_setting(key: &str, default: &str) -> String {
+    env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 async fn workspace_radar(State(state): State<ApiState>) -> Json<WorkspaceRadarResponse> {
@@ -606,7 +618,7 @@ fn not_found() -> (StatusCode, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{runtime_components, sibling_component_source};
+    use super::{env_setting, runtime_components, sibling_component_source};
 
     #[test]
     fn runtime_components_include_required_x07_wasm_and_platform_tools() {
@@ -668,6 +680,19 @@ mod tests {
         assert_eq!(wasm.source.as_deref(), Some(component.as_str()));
 
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn env_setting_uses_runtime_override_and_ignores_empty_values() {
+        let key = format!("X07_STUDIO_TEST_{}", uuid::Uuid::new_v4().simple());
+        assert_eq!(env_setting(&key, "fallback"), "fallback");
+
+        std::env::set_var(&key, "127.0.0.1:8123");
+        assert_eq!(env_setting(&key, "fallback"), "127.0.0.1:8123");
+
+        std::env::set_var(&key, " ");
+        assert_eq!(env_setting(&key, "fallback"), "fallback");
+        std::env::remove_var(key);
     }
 
     fn temp_root() -> camino::Utf8PathBuf {
