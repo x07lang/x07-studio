@@ -83,6 +83,88 @@ function escapeRegex(value: string) {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+async function installFakeSpeechRecognition(page: Page) {
+	await page.addInitScript(() => {
+		class FakeSpeechRecognition {
+			continuous = false;
+			interimResults = false;
+			lang = '';
+			onstart: (() => void) | null = null;
+			onend: (() => void) | null = null;
+			onerror: ((event: { error?: string }) => void) | null = null;
+			onresult: ((event: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null = null;
+
+			start() {
+				const fakeWindow = window as Window & {
+					__x07SpeechRecognitionInstance?: FakeSpeechRecognition;
+				};
+				fakeWindow.__x07SpeechRecognitionInstance = this;
+				this.onstart?.();
+			}
+
+			stop() {
+				this.onend?.();
+			}
+
+			abort() {
+				this.onend?.();
+			}
+
+			emitFinal(transcript: string) {
+				const result = { 0: { transcript }, isFinal: true };
+				this.onresult?.({ resultIndex: 0, results: { 0: result, length: 1 } });
+			}
+		}
+
+		const fakeWindow = window as Window & {
+			SpeechRecognition?: typeof FakeSpeechRecognition;
+			webkitSpeechRecognition?: typeof FakeSpeechRecognition;
+		};
+		fakeWindow.SpeechRecognition = FakeSpeechRecognition;
+		fakeWindow.webkitSpeechRecognition = FakeSpeechRecognition;
+	});
+}
+
+test('voice transcript capture appends a spoken witness before spec approval', async ({ page }) => {
+	await installFakeSpeechRecognition(page);
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto('/');
+
+	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
+	await expect(page.getByLabel('Speech witness capture')).toContainText('Speech capture available');
+	await page.getByLabel('Initial plan').fill('');
+	await page.getByLabel('Voice Transcript').click();
+	await page.getByRole('button', { name: 'Start voice capture' }).click();
+	await expect(page.getByLabel('Speech witness capture')).toContainText('Listening for a spoken intent witness');
+
+	await page.evaluate(() => {
+		const fakeWindow = window as Window & {
+			__x07SpeechRecognitionInstance?: { emitFinal: (transcript: string) => void };
+		};
+		fakeWindow.__x07SpeechRecognitionInstance?.emitFinal(
+			'Build a workflow graph optimizer that rejects cycles and records makespan evidence'
+		);
+	});
+
+	await expect(page.getByLabel('Initial plan')).toHaveValue(
+		/Transcript: Build a workflow graph optimizer that rejects cycles/
+	);
+	await expect(page.getByLabel('Captured voice witnesses')).toContainText(
+		'Build a workflow graph optimizer'
+	);
+	await page.getByRole('button', { name: 'Stop voice capture' }).click();
+	await expect(page.getByLabel('Speech witness capture')).toContainText(
+		'Voice witness captured; polish before approval'
+	);
+
+	await page.getByLabel('Project title').fill('Voice XTAL workflow graph');
+	await page.getByRole('button', { name: 'New Session', exact: true }).click();
+	await expect(page.getByText('Created simple project: Voice XTAL workflow graph')).toBeVisible();
+	await page.getByRole('button', { name: 'Polish Intent' }).click();
+	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
+	await expect(page.getByLabel('Spec approval preview')).toContainText('workflow.graph');
+});
+
 test('user can create increasingly difficult x07 project sessions and exercise controls', async ({ page }) => {
 	await page.setViewportSize({ width: 1728, height: 972 });
 	await page.goto('/');

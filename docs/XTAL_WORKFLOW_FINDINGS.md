@@ -442,3 +442,15 @@ This document records friction found while implementing the Studio web surface.
    proves a simple-to-Atlas project ladder can be created through the form,
    revised, approved, handed to Claude Code, executed through the x07 Atlas
    workflow, and surfaced in trust review without entering demo mode.
+
+43. Voice must become an intent witness, not a shortcut to code generation.
+
+   The UI already had a `Voice Transcript` input mode, but it only changed the
+   intent source label. That made spoken programming look supported while still
+   requiring a pasted transcript. The browser now exposes a Web Speech capture
+   control that appends final transcript segments as `Voice witness:` lines in
+   the same initial-plan textarea, keeps the user in the approval-gated intent
+   path, and falls back to paste-transcript guidance when speech capture is not
+   available. The Playwright test injects a deterministic `SpeechRecognition`
+   shim so CI verifies that a spoken workflow-graph witness reaches spec review
+   before approval.

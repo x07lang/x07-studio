@@ -21,6 +21,7 @@
 - MCP HTTP transport with initialize + session header handling
 - MCP stdio transport with newline-delimited JSON-RPC
 - daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, existing specs, incident notes, revision notes, and visible intent operation records
+- browser voice transcript capture that appends spoken witnesses into the same approval-gated intent path, with paste-transcript fallback when Web Speech is unavailable
 - opt-in provider-backed intent polish that records model suggestions as review evidence while keeping deterministic intent generation as the fallback
 - daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs
 - browser and native egui onboarding plans render first-run defaults, bootstrap command, resolved component sources, and required/optional setup work from the daemon health report
@@ -39,9 +40,9 @@
 - GUI exposes HTTP MCP first; stdio MCP is available through the daemon API already
 - provider probing is bounded and capability-oriented, not a full benchmark suite
 - session execution policy is enforced by the reducer and canonical binding catalog, not yet by a full path sandbox
-- the v0.1 shells expose lifecycle controls, basic lineage graph projection, artifact logs, a compact trust review queue, artifact-backed patchset previews, and path-level before/after visual patch review; voice/STT, richer graph overlays, and semantic side-by-side diff tooling remain later UI layers
+- the v0.1 shells expose lifecycle controls, basic lineage graph projection, artifact logs, a compact trust review queue, artifact-backed patchset previews, path-level before/after visual patch review, and browser speech transcript capture; richer STT/provider configuration, graph overlays, and semantic side-by-side diff tooling remain later UI layers
 - no compile-time proof cache yet
-- no voice/stt layer yet
+- no persisted audio capture, local STT model selection, or transcript confidence review yet
 
 ## Validation done here
 

@@ -829,6 +829,62 @@ h2 {
 	cursor: pointer;
 }
 
+.voice-capture {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 8px;
+	align-items: center;
+	margin-top: 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 9px;
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.voice-capture.listening {
+	border-color: rgba(85, 214, 231, 0.48);
+	background: rgba(85, 214, 231, 0.09);
+	box-shadow: inset 0 0 18px rgba(85, 214, 231, 0.06);
+}
+
+.voice-capture strong,
+.voice-capture span {
+	display: block;
+	font-size: 12px;
+}
+
+.voice-capture strong {
+	color: var(--text);
+}
+
+.voice-capture span {
+	margin-top: 2px;
+	color: var(--muted);
+}
+
+.voice-capture p {
+	grid-column: 1 / -1;
+	margin: 0;
+	color: #dffcff;
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.speech-history {
+	grid-column: 1 / -1;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.speech-history code {
+	border: 1px solid rgba(114, 228, 180, 0.26);
+	border-radius: var(--radius);
+	padding: 5px 7px;
+	background: rgba(114, 228, 180, 0.07);
+	white-space: normal;
+}
+
 textarea {
 	width: 100%;
 	min-height: 176px;

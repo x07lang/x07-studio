@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import './+page.css';
 	import { StudioApi } from '$lib/api';
 	import {
@@ -82,6 +82,44 @@
 	let docPreviewStatus = 'No documentation preview loaded';
 	let selectedDocPreview: DocPreviewResponse | null = null;
 	let workspaceRadar: WorkspaceRadarResponse | null = null;
+	let speechSupported = false;
+	let speechListening = false;
+	let speechStatus = 'Speech capture will append a transcript witness.';
+	let speechInterim = '';
+	let speechTranscriptHistory: string[] = [];
+	let speechRecognition: SpeechRecognitionLike | null = null;
+
+	type SpeechRecognitionResultLike = {
+		isFinal: boolean;
+		[index: number]: { transcript: string } | undefined;
+	};
+
+	type SpeechRecognitionEventLike = {
+		resultIndex?: number;
+		results: ArrayLike<SpeechRecognitionResultLike>;
+	};
+
+	type SpeechRecognitionErrorLike = {
+		error?: string;
+	};
+
+	type SpeechRecognitionLike = {
+		continuous: boolean;
+		interimResults: boolean;
+		lang: string;
+		onstart: (() => void) | null;
+		onend: (() => void) | null;
+		onerror: ((event: SpeechRecognitionErrorLike) => void) | null;
+		onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+		start: () => void;
+		stop: () => void;
+		abort?: () => void;
+	};
+
+	type SpeechRecognitionWindow = Window & {
+		SpeechRecognition?: new () => SpeechRecognitionLike;
+		webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+	};
 
 	const placeholderOp: OpRecord = {
 		id: 'op-seed',
@@ -327,7 +365,15 @@
 	}
 
 	onMount(async () => {
+		speechSupported = Boolean(speechRecognitionConstructor());
+		speechStatus = speechSupported
+			? 'Speech capture available; transcript stays in intent review.'
+			: 'Speech capture unavailable; paste a transcript witness.';
 		await refresh();
+	});
+
+	onDestroy(() => {
+		speechRecognition?.abort?.();
 	});
 
 	async function refresh() {
@@ -388,6 +434,108 @@
 		const focusedSessionId = selected?.session_id || selectedId;
 		if (focusedSessionId) selectedSessionForRoom = focusedSessionId;
 		statusLine = `Focused ${label} room`;
+	}
+
+	function speechRecognitionConstructor() {
+		if (typeof window === 'undefined') return undefined;
+		const speechWindow = window as SpeechRecognitionWindow;
+		return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+	}
+
+	function toggleSpeechCapture() {
+		if (speechListening) {
+			stopSpeechCapture();
+			return;
+		}
+		startSpeechCapture();
+	}
+
+	function startSpeechCapture() {
+		inputMode = 'voice';
+		const Recognition = speechRecognitionConstructor();
+		if (!Recognition) {
+			speechSupported = false;
+			speechStatus = 'Speech capture unavailable; paste a transcript witness.';
+			return;
+		}
+		speechRecognition?.abort?.();
+		speechInterim = '';
+		const recognition = new Recognition();
+		recognition.continuous = true;
+		recognition.interimResults = true;
+		recognition.lang = 'en-US';
+		recognition.onstart = () => {
+			speechListening = true;
+			speechStatus = 'Listening for a spoken intent witness.';
+		};
+		recognition.onresult = (event) => {
+			let finalText = '';
+			let interimText = '';
+			const startIndex = event.resultIndex ?? 0;
+			for (let index = startIndex; index < event.results.length; index += 1) {
+				const result = event.results[index];
+				const transcript = result?.[0]?.transcript?.replace(/\s+/g, ' ').trim() ?? '';
+				if (!transcript) continue;
+				if (result.isFinal) {
+					finalText = `${finalText} ${transcript}`.trim();
+				} else {
+					interimText = `${interimText} ${transcript}`.trim();
+				}
+			}
+			if (finalText) appendSpeechTranscript(finalText);
+			speechInterim = interimText;
+			speechStatus = interimText
+				? 'Capturing interim transcript.'
+				: finalText
+					? 'Voice witness appended; polish before approval.'
+					: speechStatus;
+		};
+		recognition.onerror = (event) => {
+			speechListening = false;
+			speechStatus = speechErrorStatus(event.error);
+		};
+		recognition.onend = () => {
+			if (speechInterim) {
+				appendSpeechTranscript(speechInterim);
+				speechInterim = '';
+			}
+			speechListening = false;
+			speechRecognition = null;
+			if (promptText.trim()) {
+				speechStatus = 'Voice witness captured; polish before approval.';
+			} else {
+				speechStatus = 'Speech capture ended without transcript text.';
+			}
+		};
+		speechRecognition = recognition;
+		try {
+			recognition.start();
+		} catch (error) {
+			speechListening = false;
+			speechRecognition = null;
+			speechStatus = error instanceof Error ? error.message : 'Speech capture failed to start.';
+		}
+	}
+
+	function stopSpeechCapture() {
+		speechStatus = 'Stopping speech capture.';
+		speechRecognition?.stop();
+	}
+
+	function appendSpeechTranscript(rawText: string) {
+		const transcript = rawText.replace(/\s+/g, ' ').trim();
+		if (!transcript) return;
+		const line = promptText.trim() ? `Voice witness: ${transcript}` : `Transcript: ${transcript}`;
+		promptText = promptText.trim() ? `${promptText.trimEnd()}\n${line}` : line;
+		speechTranscriptHistory = [transcript, ...speechTranscriptHistory].slice(0, 4);
+	}
+
+	function speechErrorStatus(error: string | undefined) {
+		if (error === 'not-allowed' || error === 'service-not-allowed') {
+			return 'Microphone permission blocked; paste a transcript witness.';
+		}
+		if (error === 'no-speech') return 'No speech captured; try again or paste a transcript.';
+		return `Speech capture failed${error ? `: ${error}` : ''}.`;
 	}
 
 	function primeRadarAction(action: 'intent' | 'brownfield' | 'incident') {
@@ -1161,6 +1309,31 @@
 								<input type="radio" bind:group={inputMode} value="incident" />
 								Incident Note
 							</label>
+						</div>
+						<div class:listening={speechListening} class="voice-capture" aria-label="Speech witness capture">
+							<div>
+								<strong>Speech witness</strong>
+								<span>{speechStatus}</span>
+							</div>
+							<button
+								class="segmented-button"
+								type="button"
+								aria-label={speechListening ? 'Stop voice capture' : 'Start voice capture'}
+								on:click={toggleSpeechCapture}
+								disabled={busy || (!speechSupported && !speechListening)}
+							>
+								{speechListening ? 'Stop Capture' : 'Start Voice Capture'}
+							</button>
+							{#if speechInterim}
+								<p>{speechInterim}</p>
+							{/if}
+							{#if speechTranscriptHistory.length}
+								<div class="speech-history" aria-label="Captured voice witnesses">
+									{#each speechTranscriptHistory as transcript}
+										<code>{transcript}</code>
+									{/each}
+								</div>
+							{/if}
 						</div>
 						<textarea bind:value={promptText} aria-label="Initial plan"></textarea>
 						<div class="revision-lane">
