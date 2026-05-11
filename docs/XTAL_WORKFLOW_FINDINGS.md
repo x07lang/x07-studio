@@ -193,3 +193,16 @@ This document records friction found while implementing the Studio web surface.
    `docs/examples/wasm_showcases/x07_atlas` and runs the app-pipeline lane with
    fixed Atlas artifact paths so agents can create and verify the full-stack
    example from the same XTAL workflow control.
+
+20. Workspace readiness needs a first-class surface, not only room-local panels.
+
+   The phase plan calls for Studio to open on a Workspace Radar that shows XTAL
+   readiness, active sessions, latest verify/certify state, incidents, provider
+   state, and new-session actions. Before this pass those signals existed only
+   as scattered right-rail, lifecycle, and intake details. The browser shell now
+   has a compact radar band backed by the live session/op state, with direct
+   Intent, Brownfield Extract, and Incident Improve actions that prepare the
+   correct task type, input mode, prompt, and approval lane before session
+   creation. The remaining gap is deriving manifest/test-drift counts directly
+   from `arch/xtal/xtal.json`, `gen/xtal/**`, and `target/xtal/**` instead of
+   projecting readiness mostly from the selected Studio session.
