@@ -356,6 +356,18 @@ export interface AutomationPlanStep {
 	state: AutomationPlanState;
 }
 
+export type EvidenceCoverageState = 'done' | 'active' | 'blocked' | 'failed';
+
+export interface EvidenceCoverageItem {
+	id: string;
+	label: string;
+	requirement: string;
+	evidence: string;
+	artifact: string;
+	state: EvidenceCoverageState;
+	opId?: string | null;
+}
+
 export const rooms: Array<{ id: Room; label: string }> = [
 	{ id: 'intent', label: 'Intent' },
 	{ id: 'spec', label: 'Spec' },
@@ -990,6 +1002,192 @@ export function buildAutomationPlan(
 	}));
 
 	return [...setupSteps, ...templateSteps].slice(0, 9);
+}
+
+export function buildEvidenceCoverage(
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate,
+	approvalState: ApprovalLoopState
+): EvidenceCoverageItem[] {
+	const ops = session?.op_log ?? [];
+	const approved = Boolean(session?.contract) || (session ? phaseIndex(session.phase) >= phaseIndex('spec_approved') : false);
+	const intentOp = latestMatchingOp(ops, ['intent.formalize']);
+	const scaffoldOp = latestMatchingOp(ops, ['project.init.xtal-pure', 'project.seed.']);
+	const specOp =
+		latestMatchingOp(ops, ['spec.extract', 'spec.scaffold', 'spec.check', 'tests.gen.write', 'project.seed.']) ??
+		(session?.intent?.source.kind === 'spec'
+			? latestMatchingOp(ops, ['intent.formalize'])
+			: null);
+	const implOp = latestMatchingOp(ops, ['impl.sync.write', 'impl.check', 'wasm.app.build.atlas_dev']);
+	const verifyOp = latestMatchingOp(ops, [
+		'xtal.verify',
+		'test.manifest',
+		'wasm.app.verify.atlas_release',
+		'wasm.app.test.'
+	]);
+	const agentOp = latestMatchingOp(ops, ['agent.handoff.', 'agent.run.', 'agent.event.', 'agent.approval.']);
+	const trustOp = latestMatchingOp(ops, [
+		'xtal.certify',
+		'wasm.provenance.verify',
+		'wasm.deploy.plan',
+		'lp.deploy.status.local',
+		'lp.deploy.query.local'
+	]);
+	const visibleOp = ops.at(-1) ?? null;
+	const specArtifact = template.artifacts[0] ?? 'spec/';
+	const verifyArtifact =
+		template.artifacts.find((artifact) => artifact.includes('verify') || artifact.includes('pack')) ??
+		'target/xtal/verify/summary.json';
+	const releaseArtifact =
+		template.artifacts.find(
+			(artifact) => artifact.includes('pack') || artifact.includes('deploy') || artifact.includes('provenance')
+		) ?? 'target/xtal/cert/';
+
+	return [
+		coverageItem({
+			id: 'intent',
+			label: 'Initial plan or spec',
+			requirement: 'Human input is preserved as an intent packet before code generation.',
+			evidence: session?.intent
+				? intentSourceEvidence(session)
+				: intentOp
+					? 'intent.formalize operation recorded'
+					: 'waiting for written plan, voice transcript, existing spec, or incident note',
+			artifact: '.x07/studio/sessions/<session>.json',
+			state: session?.intent || intentOp ? 'done' : session ? 'active' : 'blocked',
+			op: intentOp
+		}),
+		coverageItem({
+			id: 'approval',
+			label: 'Human approval loop',
+			requirement: 'Agent-polished intent cannot realize implementation until humans approve or repolish changes.',
+			evidence: approved
+				? 'session contract locked'
+				: approvalState === 'changes'
+					? 'revision requested; approval blocked until repolish'
+					: session?.intent
+						? 'awaiting human approve or request-changes decision'
+						: 'approval waits for intent polish',
+			artifact: '.x07/studio/sessions/session_contract.json',
+			state: approved ? 'done' : approvalState === 'changes' ? 'blocked' : session?.intent ? 'active' : 'blocked',
+			op: intentOp
+		}),
+		coverageItem({
+			id: 'project',
+			label: 'Project scaffold',
+			requirement: 'Studio creates or seeds the x07 project only after the approval gate.',
+			evidence: scaffoldOp?.op ?? (approved ? 'ready to initialize x07 project' : 'blocked before approval'),
+			artifact: 'x07.json',
+			state: stateFromOpOrGate(scaffoldOp, approved),
+			op: scaffoldOp
+		}),
+		coverageItem({
+			id: 'spec-tests',
+			label: 'Spec and generated tests',
+			requirement: 'Behavior is represented as x07 specs, examples, and generated tests.',
+			evidence: specOp?.op ?? (approved ? 'ready to scaffold/check specs and tests' : 'blocked before approval'),
+			artifact: specArtifact,
+			state: stateFromOpOrGate(specOp, approved),
+			op: specOp
+		}),
+		coverageItem({
+			id: 'implementation',
+			label: 'Implementation realization',
+			requirement: 'Implementation changes are synced through canonical bindings and visible patch evidence.',
+			evidence: implOp?.op ?? (approved ? 'ready for guarded implementation sync' : 'blocked before approval'),
+			artifact: 'target/xtal/impl-sync.patchset.json',
+			state: stateFromOpOrGate(implOp, approved),
+			op: implOp
+		}),
+		coverageItem({
+			id: 'verify',
+			label: 'Verification evidence',
+			requirement: 'Checks, generated tests, proofs, app traces, or SLO gates run before trust.',
+			evidence: verifyOp?.op ?? (approved ? 'ready for verify/test/app evidence' : 'blocked before approval'),
+			artifact: verifyArtifact,
+			state: stateFromOpOrGate(verifyOp, approved),
+			op: verifyOp
+		}),
+		coverageItem({
+			id: 'agent-visible',
+			label: 'Visible agent work',
+			requirement: 'Codex, Claude Code, and x07 command activity stays inspectable in the worklog.',
+			evidence: agentOp?.op ?? visibleOp?.op ?? (session ? 'worklog ready for operations' : 'no session selected'),
+			artifact: agentOp?.artifacts[0] ?? visibleOp?.artifacts[0] ?? '.x07/studio/handoffs/',
+			state: agentOp || visibleOp ? 'done' : session ? 'active' : 'blocked',
+			op: agentOp ?? visibleOp
+		}),
+		coverageItem({
+			id: 'trust-platform',
+			label: 'Trust and platform evidence',
+			requirement: 'Certification, provenance, deploy, or local platform delivery evidence is visible for release-shaped projects.',
+			evidence:
+				trustOp?.op ??
+				(session?.phase === 'trust_review'
+					? 'trust review is open'
+					: approved
+						? 'waiting for trust/certify/platform evidence'
+						: 'blocked before approval'),
+			artifact: releaseArtifact,
+			state: trustOp
+				? opStatusToCoverageState(trustOp.status)
+				: session?.phase === 'trust_review'
+					? 'active'
+					: approved
+						? 'active'
+						: 'blocked',
+			op: trustOp
+		})
+	];
+}
+
+function coverageItem(input: {
+	id: string;
+	label: string;
+	requirement: string;
+	evidence: string;
+	artifact: string;
+	state: EvidenceCoverageState;
+	op?: OpRecord | null;
+}): EvidenceCoverageItem {
+	return {
+		id: input.id,
+		label: input.label,
+		requirement: input.requirement,
+		evidence: input.evidence,
+		artifact: input.artifact,
+		state: input.state,
+		opId: input.op?.id ?? null
+	};
+}
+
+function latestMatchingOp(ops: OpRecord[], needles: string[]): OpRecord | null {
+	return (
+		[...ops]
+			.reverse()
+			.find((op) => needles.some((needle) => op.op.includes(needle) || op.command.join(' ').includes(needle))) ?? null
+	);
+}
+
+function stateFromOpOrGate(op: OpRecord | null, gateOpen: boolean): EvidenceCoverageState {
+	if (op) return opStatusToCoverageState(op.status);
+	return gateOpen ? 'active' : 'blocked';
+}
+
+function opStatusToCoverageState(status: OperationStatus): EvidenceCoverageState {
+	if (status === 'succeeded') return 'done';
+	if (status === 'failed') return 'failed';
+	if (status === 'running') return 'active';
+	return 'active';
+}
+
+function intentSourceEvidence(session: SessionSnapshot): string {
+	const source = session.intent?.source;
+	if (!source) return 'intent not formalized';
+	if (source.kind === 'voice') return 'voice transcript formalized';
+	if (source.kind === 'spec') return 'existing x07 spec formalized';
+	if (source.kind === 'incident') return 'incident bundle formalized';
+	return 'written plan formalized';
 }
 
 function stateForOps(

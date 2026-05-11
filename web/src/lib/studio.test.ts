@@ -7,6 +7,7 @@ import {
 	agentReadiness,
 	buildApprovalLedger,
 	buildAutomationPlan,
+	buildEvidenceCoverage,
 	buildOnboardingPlan,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
@@ -280,6 +281,35 @@ describe('x07 Studio XTAL web model', () => {
 		expect(runPlan.find((step) => step.label === 'Human approval')?.state).toBe('done');
 		expect(runPlan.find((step) => step.label === 'Project scaffold')?.state).toBe('done');
 		expect(runPlan.find((step) => step.command.includes('x07 xtal verify'))?.state).toBe('done');
+	});
+
+	it('maps prompt-to-artifact coverage from approval gates and operation evidence', () => {
+		let session = demoSession();
+		let coverage = buildEvidenceCoverage(session, projectTemplates[5], 'drafting');
+		expect(coverage.find((item) => item.id === 'intent')?.state).toBe('active');
+		expect(coverage.find((item) => item.id === 'project')?.state).toBe('blocked');
+
+		session = reduceDemoEvent(
+			session,
+			'formalize_intent',
+			createIntentPacket(session, projectTemplates[5].prompt)
+		);
+		session = reduceDemoEvent(session, 'draft_spec');
+		session = reduceDemoEvent(session, 'approve_spec');
+		session = appendDemoOp(session, 'project.seed.x07_atlas', 'succeeded');
+		session = appendDemoOp(session, 'wasm.app.build.atlas_dev', 'succeeded');
+		session = appendDemoOp(session, 'wasm.app.verify.atlas_release', 'succeeded');
+		session = appendDemoOp(session, 'lp.deploy.status.local', 'succeeded');
+
+		coverage = buildEvidenceCoverage(session, projectTemplates[5], 'approved');
+		expect(coverage.find((item) => item.id === 'project')?.state).toBe('done');
+		expect(coverage.find((item) => item.id === 'implementation')?.evidence).toBe(
+			'wasm.app.build.atlas_dev'
+		);
+		expect(coverage.find((item) => item.id === 'verify')?.state).toBe('done');
+		expect(coverage.find((item) => item.id === 'trust-platform')?.artifact).toBe(
+			'dist/showcase_fullstack/pack.atlas_release/app.pack.json'
+		);
 	});
 
 	it('models visible canonical operation records', () => {

@@ -258,6 +258,7 @@ This document records friction found while implementing the Studio web surface.
    requirement that the coding agent keeps improving the plan until human
    approval. Studio now treats the revision state as an approval blocker:
    `Approve Spec` stays disabled until `Polish Intent` runs again, and the
+   approval ledger explains why realization is blocked.
    Intent room shows an approval ledger with the input source, polish step,
    revision notes, human decision, and write-contract lock.
 
@@ -456,3 +457,15 @@ This document records friction found while implementing the Studio web surface.
    behavior, policy requirement, or incident evidence. The Playwright test
    injects a deterministic `SpeechRecognition` shim so CI verifies that a
    spoken workflow-graph witness reaches spec review before approval.
+
+44. Non-experts need a prompt-to-artifact audit, not only a command log.
+
+   The worklog and automation plan are useful for agents and reviewers, but a
+   user starting from natural language still needs a compact answer to "what
+   proof points are covered now?" Studio now derives a Prompt-to-Artifact audit
+   from the selected project brief, session approval state, and `OpRecord`s. It
+   maps initial plan/spec capture, human approval, project scaffold, spec/tests,
+   implementation realization, verification, visible agent work, and
+   trust/platform evidence to concrete artifacts and operation records. Each
+   audit row can select its source operation, so the summary remains grounded in
+   the canonical log instead of becoming a second source of truth.

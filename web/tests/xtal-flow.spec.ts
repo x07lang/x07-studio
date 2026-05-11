@@ -200,6 +200,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Onboarding setup plan')).toContainText('OpenAI Codex agent');
 	await expect(page.getByLabel('Counterexample theater')).toContainText('No counterexample captured');
 	await expect(page.getByLabel('Provider intent polish')).toContainText('Deterministic polish only');
+	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('Initial plan or spec');
+	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('Verification evidence');
 	await page.getByLabel('Provider intent polish').getByRole('checkbox').check();
 	await expect(page.getByLabel('Provider profile')).toBeEnabled();
 	await page.getByLabel('Provider profile').fill('ollama-local');
@@ -347,6 +349,10 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Trust review signals')).toContainText('Local platform delivery');
 	await expect(page.getByLabel('Trust review signals')).toContainText('SLO evidence');
 	await expect(page.getByLabel('Trust review signals')).toContainText('Release evidence');
+	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('Trust and platform evidence');
+	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('wasm.app.verify.atlas_release');
+	await page.getByLabel('Prompt-to-artifact audit').getByRole('button', { name: /Audit verify/ }).click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('wasm.app.verify.atlas_release');
 	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Local platform delivery/ }).click();
 	await expect(page.getByLabel('Selected operation inspector')).toContainText('lp.deploy.status.local');
 	await expect(page.getByLabel('Operation artifacts')).toContainText('.x07/platform');

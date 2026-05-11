@@ -39,10 +39,10 @@ x07-studio/
 │   ├── ARCHITECTURE.md
 │   ├── API.md
 │   ├── XTAL_WORKFLOW_FINDINGS.md
-│   └── COMMAND_BINDINGS.md
+│   ├── COMMAND_BINDINGS.md
+│   └── design/xtal-studio-ui-mockup.png
 ├── web/
-│   ├── src/
-│   └── static/mockups/x07-studio-xtal-ui-mockup.png
+│   └── src/
 ├── schemas/
 │   ├── index.json
 │   ├── x07.studio.intent_packet.schema.json

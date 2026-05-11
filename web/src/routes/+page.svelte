@@ -13,6 +13,7 @@
 		agentReadiness,
 		buildApprovalLedger,
 		buildAutomationPlan,
+		buildEvidenceCoverage,
 		buildOnboardingPlan,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
@@ -32,6 +33,7 @@
 		type ArtifactPreviewResponse,
 		type BindingDescriptor,
 		type DocPreviewResponse,
+		type EvidenceCoverageItem,
 		type HealthResponse,
 		type IntentInputMode,
 		type OpRecord,
@@ -240,6 +242,7 @@
 	$: checklist = selected ? workflowChecklist(selected) : [];
 	$: approvalLedger = buildApprovalLedger(selected, revisionHistory, approvalState);
 	$: automationPlan = buildAutomationPlan(selected, selectedProjectTemplate, approvalState);
+	$: evidenceCoverage = buildEvidenceCoverage(selected, selectedProjectTemplate, approvalState);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
 	$: draftWitnessPreview = previewIntentWitnesses(promptText, inputMode);
 	$: canApproveSpec =
@@ -661,6 +664,25 @@
 		if (signal.op.startsWith('impl.')) selectedRoom = 'realization';
 		if (signal.op.startsWith('agent.')) selectedRoom = 'providers';
 		statusLine = `Reviewing ${signal.label.toLowerCase()}: ${signal.op}`;
+	}
+
+	function selectEvidenceItem(item: EvidenceCoverageItem) {
+		if (!item.opId) {
+			statusLine = `${item.label}: ${item.state}`;
+			return;
+		}
+		const op = allOps.find((candidate) => candidate.id === item.opId);
+		if (!op) {
+			statusLine = `${item.label}: ${item.state}`;
+			return;
+		}
+		selectOperation(op);
+		if (op.op.includes('spec')) selectedRoom = 'spec';
+		if (op.op.includes('impl') || op.op.includes('project.')) selectedRoom = 'realization';
+		if (op.op.includes('verify') || op.op.includes('test') || op.op.includes('slo')) selectedRoom = 'verify';
+		if (op.op.includes('repair') || op.op.includes('incident') || op.op.includes('ingest')) selectedRoom = 'repair';
+		if (op.op.includes('cert') || op.op.includes('deploy') || op.op.includes('provenance')) selectedRoom = 'trust';
+		if (op.op.includes('agent.')) selectedRoom = 'providers';
 	}
 
 	function inspectCounterexample() {
@@ -1872,6 +1894,32 @@
 				{:else}
 					<div class="review-empty">No review signals recorded</div>
 				{/if}
+			</div>
+		</section>
+
+		<section class="panel evidence-panel" aria-label="Prompt-to-artifact audit">
+			<div class="panel-head">
+				<div>
+					<p class="eyebrow">Prompt-to-Artifact</p>
+					<h2>{evidenceCoverage.filter((item) => item.state === 'done').length} / {evidenceCoverage.length} covered</h2>
+				</div>
+				<span class="badge">{selectedProjectTemplate.label}</span>
+			</div>
+			<div class="evidence-list">
+				{#each evidenceCoverage as item}
+					<button
+						type="button"
+						class={`evidence-item ${item.state}`}
+						aria-label={`Audit ${item.id}`}
+						on:click={() => selectEvidenceItem(item)}
+					>
+						<span>{item.state}</span>
+						<strong>{item.label}</strong>
+						<small>{item.requirement}</small>
+						<code>{item.artifact}</code>
+						<em>{item.evidence}</em>
+					</button>
+				{/each}
 			</div>
 		</section>
 
