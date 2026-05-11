@@ -61,6 +61,9 @@
 			status: selected.phase === 'intent_drafting' ? 'pending' : 'ready'
 		})) ?? [];
 	$: worklog = selected?.op_log.slice(-12).reverse() ?? [];
+	$: pendingApprovals = worklog.filter(
+		(op) => op.op.startsWith('agent.approval.') && op.status === 'pending'
+	);
 	$: checklist = selected ? workflowChecklist(selected) : [];
 	$: canApproveSpec = selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft';
 	$: canRunProject =
@@ -208,13 +211,36 @@
 			const response = await pending;
 			await replaceSession(response.session);
 			const label = response.handoff.agent_label;
-			handoffStatus =
-				mode === 'execute'
-					? `${label} supervised command ${response.op.status}`
-					: `${label} supervised launch plan recorded`;
+			if (response.op.op.startsWith('agent.approval.') && response.op.status === 'pending') {
+				handoffStatus = `${label} approval required before supervised command`;
+			} else {
+				handoffStatus =
+					mode === 'execute'
+						? `${label} supervised command ${response.op.status}`
+						: `${label} supervised launch plan recorded`;
+			}
 			statusLine = handoffStatus;
 		} finally {
 			if (poll) clearInterval(poll);
+			busy = false;
+		}
+	}
+
+	async function resolveApproval(opId: string, decision: 'approve' | 'reject') {
+		if (!selected) return;
+		busy = true;
+		try {
+			const response = await api.resolveAgentApproval(
+				selected,
+				opId,
+				decision,
+				'Studio human checkpoint'
+			);
+			await replaceSession(response.session);
+			handoffStatus =
+				decision === 'approve' ? 'Agent checkpoint approved' : 'Agent checkpoint rejected';
+			statusLine = handoffStatus;
+		} finally {
 			busy = false;
 		}
 	}
@@ -532,6 +558,32 @@
 					{/each}
 				</div>
 				<p class="handoff-status">{handoffStatus}</p>
+				{#if pendingApprovals.length}
+					<div class="approval-queue" aria-label="Agent approval checkpoints">
+						{#each pendingApprovals as approval}
+							<div>
+								<strong>{approval.op}</strong>
+								<span>{approval.notes ?? 'Human approval required'}</span>
+								<button
+									class="segmented-button"
+									type="button"
+									on:click={() => resolveApproval(approval.id, 'approve')}
+									disabled={busy}
+								>
+									Approve {approval.op}
+								</button>
+								<button
+									class="segmented-button"
+									type="button"
+									on:click={() => resolveApproval(approval.id, 'reject')}
+									disabled={busy}
+								>
+									Reject {approval.op}
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
 				<div class="agent-lanes">
 					{#each agentLanes as lane}
 						<div>

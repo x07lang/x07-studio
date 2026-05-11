@@ -81,6 +81,10 @@ command with a bounded timeout, and append the resulting stdout/stderr and
 artifacts as `agent.supervise.*` or `agent.run.*` operation records. Agent run
 execution is split into a `running` record and a later completion update so web
 clients can poll active progress without holding the daemon session lock.
+Profiles marked `approval_required` are gated by pending `agent.approval.*`
+records; humans approve or reject those checkpoints in the same visible worklog
+before Studio starts the supervised command. Approval checkpoints are one-shot:
+the next relevant handoff, plan, or run requires a fresh approval.
 
 The web intake starts with simple, intermediate, and complex x07 project briefs.
 They are intentionally editable form seeds, not hidden generators: a user or

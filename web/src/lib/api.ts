@@ -5,10 +5,12 @@ import {
 	demoBindings,
 	demoSession,
 	reduceDemoEvent,
+	type AgentApprovalResponse,
 	type AgentHandoffResponse,
 	type AgentProfile,
 	type AgentRunMode,
 	type AgentRunResponse,
+	type ApprovalDecision,
 	type BindingDescriptor,
 	type HealthResponse,
 	type IntentInputMode,
@@ -250,10 +252,80 @@ export class StudioApi {
 			artifacts: [promptPath],
 			created_at: String(Date.now())
 		};
+		if (
+			mode === 'execute' &&
+			agent.approval_required &&
+			!agentRunApproved(session, agent.id)
+		) {
+			const next = appendDemoOp(
+				session,
+				`agent.approval.${agent.id}`,
+				'pending',
+				['approve-agent', agent.id],
+				[]
+			);
+			this.replaceDemo(next);
+			return { handoff, op: next.op_log.at(-1)!, session: next };
+		}
 		const opId = mode === 'execute' ? `agent.run.${agent.id}` : `agent.supervise.${agent.id}`;
 		const next = appendDemoOp(session, opId, 'succeeded', handoff.command, [promptPath]);
 		this.replaceDemo(next);
 		return { handoff, op: next.op_log.at(-1)!, session: next };
+	}
+
+	async createAgentApproval(
+		session: SessionSnapshot,
+		agentId: string,
+		reason: string
+	): Promise<AgentApprovalResponse> {
+		if (!this.demoMode) {
+			try {
+				const response = await request<AgentApprovalResponse>(
+					`/v1/sessions/${session.session_id}/agents/${agentId}/approval`,
+					{ method: 'POST', body: JSON.stringify({ reason }) }
+				);
+				this.replaceDemo(response.session);
+				return response;
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		const next = appendDemoOp(session, `agent.approval.${agentId}`, 'pending', [
+			'approve-agent',
+			agentId
+		]);
+		this.replaceDemo(next);
+		return { op: next.op_log.at(-1)!, session: next };
+	}
+
+	async resolveAgentApproval(
+		session: SessionSnapshot,
+		opId: string,
+		decision: ApprovalDecision,
+		notes: string
+	): Promise<AgentApprovalResponse> {
+		if (!this.demoMode) {
+			try {
+				const response = await request<AgentApprovalResponse>(
+					`/v1/sessions/${session.session_id}/approvals/${opId}`,
+					{ method: 'POST', body: JSON.stringify({ decision, notes }) }
+				);
+				this.replaceDemo(response.session);
+				return response;
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		const next = structuredClone(session) as SessionSnapshot;
+		const op = next.op_log.find((item) => item.id === opId);
+		if (op) {
+			op.status = decision === 'approve' ? 'succeeded' : 'failed';
+			op.finished_at = String(Date.now());
+			op.exit_code = decision === 'approve' ? 0 : 1;
+			op.notes = `${decision === 'approve' ? 'Approved' : 'Rejected'}: ${notes}`;
+		}
+		this.replaceDemo(next);
+		return { op: op ?? next.op_log.at(-1)!, session: next };
 	}
 
 	formalizeLocal(
@@ -290,6 +362,17 @@ function bindingVars(session: SessionSnapshot, bindingId: string): Record<string
 		return { ...common, input: '.x07/studio/incidents/manual-note.jsonl' };
 	}
 	return common;
+}
+
+function agentRunApproved(session: SessionSnapshot, agentId: string): boolean {
+	const approvalOp = `agent.approval.${agentId}`;
+	const handoffOp = `agent.handoff.${agentId}`;
+	const planOp = `agent.supervise.${agentId}`;
+	const runOp = `agent.run.${agentId}`;
+	const latestAgentGate = [...session.op_log].reverse().find(
+		(op) => op.op === approvalOp || op.op === handoffOp || op.op === planOp || op.op === runOp
+	);
+	return latestAgentGate?.op === approvalOp && latestAgentGate.status === 'succeeded';
 }
 
 function sanitizeOpName(value: string): string {

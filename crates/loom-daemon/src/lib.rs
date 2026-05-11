@@ -11,10 +11,11 @@ use uuid::Uuid;
 
 use loom_core::WorkspaceKernel;
 use loom_types::api::{
-    AgentHandoffResponse, AgentRunRequest, AgentRunResponse, BindingDescriptor, CallMcpToolRequest,
-    ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest,
-    HealthResponse, McpCallResponse, ProbeProviderRequest, ProviderProbeResponse,
-    RunBindingRequest, SaveAgentProfileRequest, SaveProviderProfileRequest,
+    AgentApprovalRequest, AgentApprovalResponse, AgentHandoffResponse, AgentRunRequest,
+    AgentRunResponse, BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse,
+    CreateSessionRequest, DispatchEventRequest, HealthResponse, McpCallResponse,
+    ProbeProviderRequest, ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest,
+    SaveAgentProfileRequest, SaveProviderProfileRequest,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -47,6 +48,14 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/v1/sessions/{session_id}/agents/{agent_id}/run",
             post(run_agent_handoff),
+        )
+        .route(
+            "/v1/sessions/{session_id}/agents/{agent_id}/approval",
+            post(create_agent_approval),
+        )
+        .route(
+            "/v1/sessions/{session_id}/approvals/{op_id}",
+            post(resolve_agent_approval),
         )
         .route("/v1/mcp/connect", post(connect_mcp))
         .route("/v1/mcp/{connection_id}/tools", get(list_mcp_tools))
@@ -221,6 +230,30 @@ async fn run_agent_handoff(
         op,
         session,
     }))
+}
+
+async fn create_agent_approval(
+    Path((session_id, agent_id)): Path<(Uuid, String)>,
+    State(state): State<ApiState>,
+    Json(request): Json<AgentApprovalRequest>,
+) -> Result<Json<AgentApprovalResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let (op, session) = kernel
+        .create_agent_approval(session_id, &agent_id, request.reason)
+        .map_err(internal_error)?;
+    Ok(Json(AgentApprovalResponse { op, session }))
+}
+
+async fn resolve_agent_approval(
+    Path((session_id, op_id)): Path<(Uuid, Uuid)>,
+    State(state): State<ApiState>,
+    Json(request): Json<ResolveApprovalRequest>,
+) -> Result<Json<AgentApprovalResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let (op, session) = kernel
+        .resolve_agent_approval(session_id, op_id, request.decision, request.notes)
+        .map_err(internal_error)?;
+    Ok(Json(AgentApprovalResponse { op, session }))
 }
 
 async fn probe_provider(

@@ -117,6 +117,8 @@ Provider probe request:
 - `POST /agents`
 - `POST /sessions/{session_id}/agents/{agent_id}/handoff`
 - `POST /sessions/{session_id}/agents/{agent_id}/run`
+- `POST /sessions/{session_id}/agents/{agent_id}/approval`
+- `POST /sessions/{session_id}/approvals/{op_id}`
 
 Agent profile response:
 
@@ -166,6 +168,19 @@ workspace root with the handoff prompt path as its final argument. The daemon
 first appends a `running` `agent.run.*` operation so clients can poll the session
 while the command is active, then updates the same operation with captured
 stdout/stderr and a succeeded or failed status.
+
+If the agent profile has `approval_required: true`, `mode: "execute"` first
+records a pending `agent.approval.*` checkpoint unless the latest relevant
+agent operation is a succeeded approval. A later handoff, plan, or run consumes
+that checkpoint and requires a new approval before the next execution. Resolve
+the checkpoint with:
+
+```json
+{
+  "decision": "approve",
+  "notes": "Human reviewed the session contract and write roots."
+}
+```
 
 ## MCP
 

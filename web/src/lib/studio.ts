@@ -175,6 +175,13 @@ export interface AgentRunResponse {
 	session: SessionSnapshot;
 }
 
+export type ApprovalDecision = 'approve' | 'reject';
+
+export interface AgentApprovalResponse {
+	op: OpRecord;
+	session: SessionSnapshot;
+}
+
 export interface ProjectTemplate {
 	id: ProjectDifficulty;
 	label: string;
@@ -498,7 +505,7 @@ export function appendDemoOp(
 			started_at: String(Date.now()),
 			finished_at: String(Date.now()),
 			status,
-			exit_code: status === 'succeeded' ? 0 : 1,
+			exit_code: status === 'succeeded' ? 0 : status === 'failed' ? 1 : null,
 			artifacts: artifacts ?? [`target/xtal/${bindingId.replaceAll('.', '/')}/summary.json`],
 			notes: 'visible agent operation record'
 		}

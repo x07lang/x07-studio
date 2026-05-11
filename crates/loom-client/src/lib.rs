@@ -3,9 +3,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use loom_types::api::{
-    AgentRunRequest, AgentRunResponse, BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest,
-    ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest, HealthResponse,
-    McpCallResponse, ProbeProviderRequest, ProviderProbeResponse, RunBindingRequest,
+    AgentApprovalRequest, AgentApprovalResponse, AgentRunRequest, AgentRunResponse,
+    BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse,
+    CreateSessionRequest, DispatchEventRequest, HealthResponse, McpCallResponse,
+    ProbeProviderRequest, ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest,
     SaveProviderProfileRequest,
 };
 use loom_types::artifacts::ProviderProfile;
@@ -78,6 +79,32 @@ impl DaemonClient {
     ) -> anyhow::Result<AgentRunResponse> {
         self.post(
             &format!("/v1/sessions/{session_id}/agents/{agent_id}/run"),
+            request,
+        )
+        .await
+    }
+
+    pub async fn create_agent_approval(
+        &self,
+        session_id: Uuid,
+        agent_id: &str,
+        request: &AgentApprovalRequest,
+    ) -> anyhow::Result<AgentApprovalResponse> {
+        self.post(
+            &format!("/v1/sessions/{session_id}/agents/{agent_id}/approval"),
+            request,
+        )
+        .await
+    }
+
+    pub async fn resolve_agent_approval(
+        &self,
+        session_id: Uuid,
+        op_id: Uuid,
+        request: &ResolveApprovalRequest,
+    ) -> anyhow::Result<AgentApprovalResponse> {
+        self.post(
+            &format!("/v1/sessions/{session_id}/approvals/{op_id}"),
             request,
         )
         .await

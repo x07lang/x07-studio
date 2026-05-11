@@ -47,6 +47,24 @@ pub struct AgentRunRequest {
     pub timeout_seconds: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    Approve,
+    Reject,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentApprovalRequest {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveApprovalRequest {
+    pub decision: ApprovalDecision,
+    pub notes: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveProviderProfileRequest {
     pub profile: ProviderProfile,
@@ -114,6 +132,12 @@ pub struct AgentHandoffResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunResponse {
     pub handoff: AgentHandoff,
+    pub op: crate::artifacts::OpRecord,
+    pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentApprovalResponse {
     pub op: crate::artifacts::OpRecord,
     pub session: SessionSnapshot,
 }

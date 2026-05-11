@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { StudioApi } from './api';
 import {
 	appendDemoOp,
 	createIntentPacket,
@@ -78,6 +79,45 @@ describe('x07 Studio XTAL web model', () => {
 		expect(session.op_log[0].op).toBe('agent.supervise.openai-codex');
 		expect(session.op_log[0].command[0]).toBe('codex');
 		expect(session.op_log[0].artifacts[0]).toContain('handoffs');
+	});
+
+	it('models pending human approval checkpoints', () => {
+		const session = appendDemoOp(demoSession(), 'agent.approval.openai-codex', 'pending', [
+			'approve-agent',
+			'openai-codex'
+		]);
+
+		expect(session.op_log[0].status).toBe('pending');
+		expect(session.op_log[0].exit_code).toBeNull();
+		expect(session.op_log[0].command).toEqual(['approve-agent', 'openai-codex']);
+	});
+
+	it('consumes agent approval checkpoints after one supervised run', async () => {
+		const api = new StudioApi();
+		await api.health();
+		let session = demoSession();
+		let response = await api.runAgentHandoff(session, 'openai-codex', 'execute');
+		expect(response.op.op).toBe('agent.approval.openai-codex');
+		expect(response.op.status).toBe('pending');
+
+		response = {
+			...response,
+			...(await api.resolveAgentApproval(
+				response.session,
+				response.op.id,
+				'approve',
+				'test checkpoint'
+			))
+		};
+		session = response.session;
+
+		response = await api.runAgentHandoff(session, 'openai-codex', 'execute');
+		expect(response.op.op).toBe('agent.run.openai-codex');
+		expect(response.op.status).toBe('succeeded');
+
+		response = await api.runAgentHandoff(response.session, 'openai-codex', 'execute');
+		expect(response.op.op).toBe('agent.approval.openai-codex');
+		expect(response.op.status).toBe('pending');
 	});
 
 	it('includes project initialization and write bindings for end-to-end XTAL creation', () => {

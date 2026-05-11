@@ -83,6 +83,7 @@ This document records friction found while implementing the Studio web surface.
    Studio can now record supervised launch plans and run configured agent
    commands with a bounded timeout into visible `OpRecord`s. The daemon now
    appends a `running` record before execution and updates the same record on
-   completion, so the web UI can poll active work. The remaining gap is
-   streaming stdout/stderr chunks and approval checkpoints while the command is
-   still running.
+   completion, so the web UI can poll active work. Human checkpoints are also
+   explicit pending `agent.approval.*` records for approval-gated profiles. The
+   remaining gap is streaming stdout/stderr chunks while the command is still
+   running and binding those chunks to finer-grained approval prompts.

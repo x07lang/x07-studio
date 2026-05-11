@@ -9,7 +9,7 @@ use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
-use loom_types::api::AgentRunMode;
+use loom_types::api::{AgentRunMode, ApprovalDecision};
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, OpRecord, OperationStatus,
     ProviderProbeReport, ProviderProfile, TaskType,
@@ -326,6 +326,20 @@ impl WorkspaceKernel {
                 None,
             ),
             AgentRunMode::Execute => {
+                if agent.approval_required && !agent_run_is_approved(&session, &agent.id) {
+                    let op = agent_approval_op(
+                        session_id,
+                        &agent,
+                        "Approve supervised execution before the command is launched.",
+                    );
+                    let snapshot = self.append_op(session_id, op.clone())?;
+                    return Ok(PreparedAgentRun {
+                        handoff,
+                        op,
+                        session: snapshot,
+                        command: None,
+                    });
+                }
                 let op = agent_running_op(session_id, &agent, &handoff, &prompt_path);
                 let command = AgentCommandPlan {
                     session_id,
@@ -348,6 +362,65 @@ impl WorkspaceKernel {
             session: snapshot,
             command,
         })
+    }
+
+    pub fn create_agent_approval(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        reason: Option<String>,
+    ) -> anyhow::Result<(OpRecord, SessionSnapshot)> {
+        let agent = self
+            .list_agent_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        let op = agent_approval_op(
+            session_id,
+            &agent,
+            reason
+                .as_deref()
+                .unwrap_or("Approve this agent checkpoint before continuing."),
+        );
+        let snapshot = self.append_op(session_id, op.clone())?;
+        Ok((op, snapshot))
+    }
+
+    pub fn resolve_agent_approval(
+        &mut self,
+        session_id: Uuid,
+        op_id: Uuid,
+        decision: ApprovalDecision,
+        notes: Option<String>,
+    ) -> anyhow::Result<(OpRecord, SessionSnapshot)> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let mut op = session
+            .op_log
+            .into_iter()
+            .find(|candidate| candidate.id == op_id)
+            .ok_or_else(|| anyhow!("unknown approval operation `{op_id}`"))?;
+        if !op.op.starts_with("agent.approval.") {
+            return Err(anyhow!("operation `{op_id}` is not an agent approval"));
+        }
+        let approved = decision == ApprovalDecision::Approve;
+        op.status = if approved {
+            OperationStatus::Succeeded
+        } else {
+            OperationStatus::Failed
+        };
+        op.finished_at = Some(now_string());
+        op.exit_code = Some(if approved { 0 } else { 1 });
+        op.notes = Some(format!(
+            "{}: {}",
+            if approved { "Approved" } else { "Rejected" },
+            notes.unwrap_or_else(|| "human checkpoint resolved".to_string())
+        ));
+        let snapshot = self.complete_agent_run(op.clone())?;
+        Ok((op, snapshot))
     }
 
     pub async fn execute_agent_command(command: AgentCommandPlan) -> OpRecord {
@@ -642,6 +715,55 @@ fn render_agent_handoff_prompt(
     out
 }
 
+fn agent_run_is_approved(session: &SessionSnapshot, agent_id: &str) -> bool {
+    let approval_op = format!("agent.approval.{agent_id}");
+    let handoff_op = format!("agent.handoff.{agent_id}");
+    let plan_op = format!("agent.supervise.{agent_id}");
+    let run_op = format!("agent.run.{agent_id}");
+    session
+        .op_log
+        .iter()
+        .rev()
+        .find(|op| {
+            op.op == approval_op || op.op == handoff_op || op.op == plan_op || op.op == run_op
+        })
+        .is_some_and(|op| op.op == approval_op && op.status == OperationStatus::Succeeded)
+}
+
+fn agent_approval_op(session_id: Uuid, agent: &AgentProfile, reason: &str) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("agent.approval.{}", agent.id),
+        backend: "human-approval".to_string(),
+        command: vec!["approve-agent".to_string(), agent.id.clone()],
+        started_at: now,
+        finished_at: None,
+        status: OperationStatus::Pending,
+        exit_code: None,
+        artifacts: Vec::new(),
+        notes: Some(reason.to_string()),
+        stdout: Some(format!(
+            "Approval required for {} before supervised execution.",
+            agent.label
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "agent_id": &agent.id,
+            "agent_label": &agent.label,
+            "approval_required": agent.approval_required,
+            "allowed_verbs": &agent.allowed_verbs,
+            "write_roots": &agent.write_roots,
+            "reason": reason,
+        })),
+        report_path: None,
+    }
+}
+
 fn agent_plan_op(
     session_id: Uuid,
     agent: &AgentProfile,
@@ -819,7 +941,7 @@ fn op_record_from_binding(
 mod tests {
     use uuid::Uuid;
 
-    use loom_types::api::AgentRunMode;
+    use loom_types::api::{AgentRunMode, ApprovalDecision};
     use loom_types::artifacts::{
         AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OperationStatus,
         TaskType, Witness, WitnessKind,
@@ -921,6 +1043,33 @@ mod tests {
             .iter()
             .any(|op| op.op == "agent.supervise.echo-agent"));
 
+        let blocked = kernel
+            .start_agent_handoff(
+                session.session_id,
+                "echo-agent",
+                AgentRunMode::Execute,
+                Some(5),
+            )
+            .expect("start blocked agent");
+        assert_eq!(blocked.op.op, "agent.approval.echo-agent");
+        assert_eq!(blocked.op.status, OperationStatus::Pending);
+        assert!(blocked.command.is_none());
+
+        let (approval, approval_session) = kernel
+            .resolve_agent_approval(
+                session.session_id,
+                blocked.op.id,
+                ApprovalDecision::Approve,
+                Some("test approval".to_string()),
+            )
+            .expect("approve agent");
+        assert_eq!(approval.status, OperationStatus::Succeeded);
+        assert!(approval_session
+            .op_log
+            .iter()
+            .any(|op| op.op == "agent.approval.echo-agent"
+                && op.status == OperationStatus::Succeeded));
+
         let prepared = kernel
             .start_agent_handoff(
                 session.session_id,
@@ -954,6 +1103,18 @@ mod tests {
             .op_log
             .iter()
             .any(|op| op.op == "agent.run.echo-agent"));
+
+        let blocked_again = kernel
+            .start_agent_handoff(
+                session.session_id,
+                "echo-agent",
+                AgentRunMode::Execute,
+                Some(5),
+            )
+            .expect("start blocked agent after consumed approval");
+        assert_eq!(blocked_again.op.op, "agent.approval.echo-agent");
+        assert_eq!(blocked_again.op.status, OperationStatus::Pending);
+        assert!(blocked_again.command.is_none());
 
         std::fs::remove_dir_all(root).ok();
     }

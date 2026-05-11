@@ -557,6 +557,26 @@ textarea {
 	overflow-wrap: anywhere;
 }
 
+.approval-queue {
+	display: grid;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.approval-queue div {
+	border: 1px solid rgba(255, 198, 110, 0.34);
+	border-radius: var(--radius);
+	padding: 10px;
+	background: rgba(255, 198, 110, 0.08);
+	display: grid;
+	gap: 7px;
+}
+
+.approval-queue span {
+	color: var(--muted);
+	font-size: 12px;
+}
+
 .worklog {
 	display: grid;
 	gap: 8px;
