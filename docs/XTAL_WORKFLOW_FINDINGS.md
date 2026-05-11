@@ -312,3 +312,21 @@ This document records friction found while implementing the Studio web surface.
    user project. Studio also resolves a sibling
    `x07-platform/scripts/x07lp-driver` when `x07lp` is not installed on `PATH`,
    because that is the common local multi-repo development layout.
+
+30. The design reference must be a product surface, not a landing page.
+
+   A fresh ImageGen concept is committed at
+   `docs/design/xtal-studio-ui-mockup.png`. The useful parts are the lifecycle
+   radar, lineage graph, plan approval loop, visible Codex/Claude worklog,
+   trust deltas, and bottom canonical command lane. Studio now mirrors the
+   command-lane and radar ideas in code-native controls instead of shipping the
+   mockup as a static screenshot.
+
+31. MCP doctrine should be selectable like the other lifecycle rooms.
+
+   The earlier browser shell exposed MCP tools and canonical x07 docs only in
+   the right rail. That made the docs/tool contract feel secondary even though
+   XTAL relies on agents starting from a compiled doctrine. Studio now has an
+   `MCP` room entry that focuses the Session Doctrine panel, keeping
+   `x07.search_v1`, `x07.context_pack_v1`, `x07.exec_v1`, and the canonical
+   `x07/docs/getting-started/**` references visible before agent handoff.

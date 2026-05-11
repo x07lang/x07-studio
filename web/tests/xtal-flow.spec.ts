@@ -81,12 +81,21 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.getByText('Demo projection active')).toBeVisible();
 	await expect(page.getByLabel('Operation log')).toBeInViewport();
+	await expect(page.getByLabel('Canonical command lane')).toContainText('x07 canonical command lane');
+	await page.locator('#command-lane-input').fill('x07 run --workspace demo --from intent --to verify');
+	await page.getByLabel('Command lane mode').selectOption('plan');
+	await page.getByLabel('Command lane environment').selectOption('sandbox');
+	await page.getByLabel('Command lane region').selectOption('us-east-1');
+	await page.getByLabel('Canonical command lane').getByRole('button', { name: 'Plan' }).click();
+	await expect(page.locator('footer')).toContainText('Planned');
+	await page.getByLabel('Command lane mode').selectOption('execute');
+	await expect(page.getByLabel('Command lane trust meter')).toContainText('Trust');
 	await expect(page.getByText('Agent Lane')).toBeVisible();
 	await expect(page.getByLabel('Trust review signals')).toContainText('No review signals recorded');
-	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('XTAL readiness');
-	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Active sessions');
-	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Generated tests');
-	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Last verify');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('XTAL');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Sessions');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Tests');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Verify');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Provider');
 	await expect(page.getByLabel('Setup readiness')).toContainText('x07-wasm');
 	await expect(page.getByLabel('Setup readiness')).toContainText('x07 platform');
@@ -131,10 +140,13 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByLabel('Active room').selectOption('intent');
 	await expect(page.getByLabel('Example-backed XTAL template').getByText('x07/docs/examples/agent-gate/xtal/toy-sorter')).toBeVisible();
 
-	for (const room of ['Spec', 'Realize', 'Verify', 'Repair', 'Trust', 'Ops', 'Agents', 'Intent']) {
+	for (const room of ['Spec', 'Realize', 'Verify', 'Repair', 'Trust', 'Ops', 'Agents', 'MCP', 'Intent']) {
 		await page.getByRole('tab', { name: room }).click();
 		await expect(page.getByRole('tab', { name: room })).toHaveAttribute('aria-selected', 'true');
 	}
+	await page.getByRole('tab', { name: 'MCP' }).click();
+	await expect(page.getByLabel('Session doctrine')).toContainText('x07.search_v1');
+	await expect(page.getByLabel('Session doctrine')).toContainText('x07/docs/getting-started/agent-quickstart.md');
 	await page.getByRole('tab', { name: 'Agents' }).click();
 	await expect(
 		page.getByLabel('Configured coding agents').getByText('OpenAI Codex', { exact: true })

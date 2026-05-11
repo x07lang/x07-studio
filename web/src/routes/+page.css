@@ -244,7 +244,7 @@ dd {
 	padding: 12px;
 	display: grid;
 	gap: 12px;
-	grid-template-rows: auto auto auto auto minmax(220px, 1fr) minmax(126px, 0.36fr) auto;
+	grid-template-rows: auto auto auto auto minmax(220px, 1fr) minmax(96px, 0.26fr) auto;
 }
 
 .topbar {
@@ -293,7 +293,7 @@ dd {
 
 .workspace-radar {
 	display: grid;
-	grid-template-columns: minmax(210px, 0.54fr) minmax(520px, 1.38fr) minmax(220px, 0.62fr);
+	grid-template-columns: minmax(190px, 0.46fr) minmax(160px, 0.42fr) minmax(460px, 1.22fr) minmax(220px, 0.58fr);
 	gap: 12px;
 	align-items: stretch;
 	padding: 11px;
@@ -317,6 +317,66 @@ dd {
 	overflow-wrap: anywhere;
 }
 
+.radar-chart {
+	display: grid;
+	grid-template-columns: 124px minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	border: 1px solid rgba(85, 214, 231, 0.16);
+	border-radius: var(--radius);
+	padding: 8px;
+	background: rgba(4, 10, 14, 0.34);
+}
+
+.radar-chart svg {
+	width: 124px;
+	height: 124px;
+	color: var(--cyan);
+}
+
+.radar-chart line,
+.radar-ring {
+	fill: none;
+	stroke: rgba(85, 214, 231, 0.24);
+	stroke-width: 1;
+}
+
+.radar-ring.inner {
+	stroke: rgba(255, 255, 255, 0.1);
+}
+
+.radar-fill {
+	fill: rgba(85, 214, 231, 0.17);
+	stroke: rgba(114, 228, 180, 0.88);
+	stroke-width: 2;
+}
+
+.radar-chart circle {
+	fill: var(--mint);
+	stroke: rgba(4, 10, 14, 0.85);
+	stroke-width: 1.5;
+}
+
+.radar-chart div {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+}
+
+.radar-chart strong {
+	font-size: 24px;
+	line-height: 1;
+	color: var(--text);
+}
+
+.radar-chart span {
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	text-transform: uppercase;
+}
+
 .radar-grid {
 	display: grid;
 	grid-template-columns: repeat(8, minmax(0, 1fr));
@@ -328,17 +388,17 @@ dd {
 	display: grid;
 	align-content: center;
 	gap: 3px;
-	min-height: 72px;
+	min-height: 58px;
 	min-width: 0;
 	border: 1px solid rgba(85, 214, 231, 0.16);
 	border-radius: var(--radius);
-	padding: 9px;
+	padding: 7px;
 	background: rgba(255, 255, 255, 0.035);
 }
 
 .radar-metric strong {
 	color: var(--text);
-	font-size: 18px;
+	font-size: 16px;
 	line-height: 1.08;
 }
 
@@ -368,12 +428,13 @@ dd {
 	gap: 10px;
 	border: 1px solid rgba(114, 228, 180, 0.18);
 	border-radius: var(--radius);
-	padding: 7px 9px;
+	padding: 6px 8px;
 	background: rgba(114, 228, 180, 0.055);
 }
 
 .radar-actions button {
 	justify-content: center;
+	min-height: 32px;
 }
 
 .setup-readiness {
@@ -390,7 +451,7 @@ dd {
 	min-width: 0;
 	border: 1px solid rgba(114, 228, 180, 0.18);
 	border-radius: var(--radius);
-	padding: 8px 9px;
+	padding: 6px 7px;
 	background: rgba(114, 228, 180, 0.055);
 }
 
@@ -400,19 +461,19 @@ dd {
 }
 
 .setup-readiness span {
-	font-size: 11px;
+	font-size: 10px;
 	font-weight: 700;
 	text-transform: uppercase;
 }
 
 .setup-readiness strong {
-	font-size: 13px;
+	font-size: 12px;
 	line-height: 1.1;
 }
 
 .setup-readiness small {
 	font-family: var(--font-mono);
-	font-size: 11px;
+	font-size: 10px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -422,7 +483,7 @@ dd {
 	align-items: end;
 	display: grid;
 	grid-template-columns: minmax(170px, 0.72fr) minmax(260px, 1.2fr) minmax(172px, 0.72fr) minmax(164px, 0.72fr) auto;
-	gap: 12px;
+	gap: 9px;
 }
 
 .form-title {
@@ -475,7 +536,7 @@ button:focus-visible {
 	border: 1px solid rgba(85, 214, 231, 0.17);
 	border-radius: var(--radius);
 	background: rgba(255, 255, 255, 0.035);
-	padding: 9px;
+	padding: 7px;
 	display: grid;
 	gap: 5px;
 	min-width: 0;
@@ -483,7 +544,9 @@ button:focus-visible {
 
 .template-meta strong,
 .template-meta code {
-	overflow-wrap: anywhere;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .template-meta code {
@@ -501,30 +564,32 @@ button:focus-visible {
 	grid-template-columns: repeat(8, minmax(112px, 1fr));
 	gap: 8px;
 	overflow-x: auto;
-	padding-bottom: 2px;
+	min-height: 32px;
+	overflow-y: hidden;
+	padding-bottom: 0;
 }
 
 .life-step {
-	min-height: 72px;
+	min-height: 32px;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
 	background: rgba(255, 255, 255, 0.042);
-	padding: 10px;
+	padding: 5px 7px;
 	display: grid;
-	grid-template-columns: 28px minmax(0, 1fr);
-	gap: 8px;
+	grid-template-columns: 22px minmax(0, 1fr);
+	gap: 6px;
 	align-content: start;
 }
 
 .life-step > span {
 	display: grid;
 	place-items: center;
-	width: 28px;
-	height: 28px;
+	width: 22px;
+	height: 22px;
 	border-radius: var(--radius);
 	background: rgba(255, 255, 255, 0.07);
 	color: var(--muted);
-	font-size: 12px;
+	font-size: 11px;
 }
 
 .life-step.done {
@@ -541,7 +606,7 @@ button:focus-visible {
 .life-step em {
 	color: var(--faint);
 	font-family: var(--font-mono);
-	font-size: 11px;
+	font-size: 10px;
 	font-style: normal;
 	white-space: nowrap;
 	overflow: hidden;
@@ -549,6 +614,7 @@ button:focus-visible {
 }
 
 .life-step em {
+	display: none;
 	grid-column: 2;
 }
 
@@ -1172,7 +1238,7 @@ textarea {
 	gap: 3px;
 	font-family: var(--font-mono);
 	font-size: 12px;
-	max-height: 112px;
+	max-height: 84px;
 	overflow: auto;
 }
 
@@ -1463,6 +1529,79 @@ textarea {
 	min-height: 42px;
 	padding: 0 14px;
 	color: var(--muted);
+}
+
+.command-lane.statusbar {
+	display: grid;
+	grid-template-columns: minmax(188px, 0.8fr) minmax(260px, 1.45fr) 104px 104px 126px auto minmax(132px, 0.55fr) auto;
+	gap: 9px;
+	align-items: center;
+	min-height: 56px;
+	padding: 6px 10px;
+}
+
+.command-lane-brand,
+.command-lane label,
+.lane-trust {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
+.command-lane-brand strong {
+	color: var(--cyan);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	text-transform: uppercase;
+}
+
+.command-lane-brand span,
+.command-lane label span,
+.lane-trust span,
+.command-lane > span {
+	color: var(--muted);
+	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.command-lane input,
+.command-lane select {
+	min-height: 28px;
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.lane-run {
+	min-height: 30px;
+	padding: 0 14px;
+	border-color: rgba(114, 228, 180, 0.48);
+	background: rgba(114, 228, 180, 0.12);
+	color: var(--text);
+}
+
+.lane-trust {
+	position: relative;
+	align-content: center;
+	border: 1px solid rgba(255, 195, 91, 0.22);
+	border-radius: var(--radius);
+	padding: 6px 8px;
+	background: rgba(255, 195, 91, 0.055);
+	overflow: hidden;
+}
+
+.lane-trust strong {
+	color: var(--text);
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+
+.lane-trust i {
+	display: block;
+	height: 3px;
+	border-radius: 99px;
+	background: linear-gradient(90deg, var(--amber), var(--mint));
 }
 
 .trust-panel p {
@@ -1809,6 +1948,24 @@ textarea {
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 
+	.radar-chart {
+		grid-template-columns: 118px minmax(0, 1fr);
+	}
+
+	.radar-chart svg {
+		width: 118px;
+		height: 118px;
+	}
+
+	.command-lane.statusbar {
+		grid-template-columns: minmax(180px, 1fr) minmax(260px, 1.4fr) repeat(3, minmax(92px, 0.46fr)) auto;
+	}
+
+	.lane-trust,
+	.command-lane > span {
+		display: none;
+	}
+
 	.form-title {
 		grid-column: 1 / -1;
 	}
@@ -1915,9 +2072,22 @@ textarea {
 		grid-template-columns: 1fr;
 	}
 
+	.radar-chart {
+		grid-template-columns: 112px minmax(0, 1fr);
+	}
+
 	.workspace {
 		overflow: visible;
 		grid-template-rows: auto;
+	}
+
+	.command-lane.statusbar {
+		grid-template-columns: 1fr;
+	}
+
+	.lane-trust,
+	.command-lane > span {
+		display: grid;
 	}
 
 	.main-grid {

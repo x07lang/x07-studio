@@ -330,7 +330,8 @@ export const rooms: Array<{ id: Room; label: string }> = [
 	{ id: 'repair', label: 'Repair' },
 	{ id: 'trust', label: 'Trust' },
 	{ id: 'ops', label: 'Ops' },
-	{ id: 'providers', label: 'Agents' }
+	{ id: 'providers', label: 'Agents' },
+	{ id: 'mcp', label: 'MCP' }
 ];
 
 export const lifecycle: Array<{ phase: SessionPhase; label: string; room: Room; binding?: string }> = [

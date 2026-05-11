@@ -66,6 +66,10 @@
 	let selectedOpId = '';
 	let worklogFilter: 'all' | 'codex' | 'claude' | 'xtal' = 'all';
 	let autoScroll = true;
+	let commandLaneText = 'x07 run --workspace x07-project --from intent --to trust';
+	let commandLaneMode: 'plan' | 'execute' = 'execute';
+	let commandLaneEnv = 'dev';
+	let commandLaneRegion = 'local';
 	let artifactPreviewKey = '';
 	let artifactPreviewStatus = 'No artifact preview loaded';
 	let selectedArtifactPreview: ArtifactPreviewResponse | null = null;
@@ -228,14 +232,43 @@
 	$: setupSummary = missingRequiredComponents.length
 		? `${missingRequiredComponents.length} missing`
 		: 'ready';
+	$: radarAxes = [
+		{ label: 'Intent', value: selected?.intent ? 96 : 38 },
+		{
+			label: 'Spec',
+			value: phaseIndex(selected?.phase ?? 'intent_drafting') >= phaseIndex('spec_draft') ? 88 : 36
+		},
+		{
+			label: 'Realize',
+			value:
+				phaseIndex(selected?.phase ?? 'intent_drafting') >= phaseIndex('realization_proposed')
+					? 82
+					: 30
+		},
+		{
+			label: 'Verify',
+			value:
+				latestVerifyOp?.status === 'succeeded'
+					? 92
+					: phaseIndex(selected?.phase ?? 'intent_drafting') >= phaseIndex('verify_running')
+						? 68
+						: 28
+		},
+		{
+			label: 'Trust',
+			value: latestCertifyOp?.status === 'succeeded' || selected?.phase === 'certified' ? 88 : 32
+		},
+		{ label: 'Ops', value: activeIncidentCount ? 74 : 42 }
+	];
+	$: radarPoints = radarPolygonPoints(radarAxes.map((axis) => axis.value));
 	$: radarMetrics = [
 		{
-			label: 'XTAL readiness',
+			label: 'XTAL',
 			value: `${readinessPercent}%`,
 			detail: workspaceRadar?.xtal_manifest.exists ? currentLifecycle.label : 'manifest missing'
 		},
 		{
-			label: 'Active sessions',
+			label: 'Sessions',
 			value: String(sessions.length),
 			detail: selected?.phase.replaceAll('_', ' ') ?? 'none'
 		},
@@ -245,22 +278,22 @@
 			detail: 'workspace specs'
 		},
 		{
-			label: 'Generated tests',
+			label: 'Tests',
 			value: workspaceRadar?.generated_tests.exists ? 'ready' : 'missing',
 			detail: workspaceRadar?.generated_tests.path ?? 'gen/xtal/tests.json'
 		},
 		{
-			label: 'Last verify',
+			label: 'Verify',
 			value: workspaceRadar?.latest_verify ? 'artifact' : statusLabel(latestVerifyOp),
 			detail: workspaceRadar?.latest_verify?.path ?? latestVerifyOp?.op ?? 'not run'
 		},
 		{
-			label: 'Last certify',
+			label: 'Certify',
 			value: workspaceRadar?.latest_certify ? 'artifact' : statusLabel(latestCertifyOp),
 			detail: workspaceRadar?.latest_certify?.path ?? latestCertifyOp?.op ?? 'not run'
 		},
 		{
-			label: 'Runtime incidents',
+			label: 'Incidents',
 			value: String(activeIncidentCount),
 			detail: activeIncidentCount ? 'repair lanes open' : 'none active'
 		},
@@ -268,11 +301,6 @@
 			label: 'Agents',
 			value: `${availableAgentCount}/${agentProfiles.length}`,
 			detail: agentProfiles.length ? 'profiles configured' : 'loading profiles'
-		},
-		{
-			label: 'Setup',
-			value: setupSummary,
-			detail: `${setupReadyCount}/${setupComponents.length || 1} components`
 		}
 	];
 	$: operationRows = worklog.length ? worklog : [placeholderOp];
@@ -412,6 +440,21 @@
 
 	function statusLabel(op: OpRecord | null) {
 		return op?.status ? op.status.replaceAll('_', ' ') : 'pending';
+	}
+
+	function radarPolygonPoints(values: number[]) {
+		const center = 64;
+		const radius = 50;
+		return values
+			.map((value, index) => {
+				const angle = -Math.PI / 2 + (index * Math.PI * 2) / values.length;
+				const safeValue = Math.max(8, Math.min(100, value));
+				const scaled = (safeValue / 100) * radius;
+				const x = center + Math.cos(angle) * scaled;
+				const y = center + Math.sin(angle) * scaled;
+				return `${x.toFixed(1)},${y.toFixed(1)}`;
+			})
+			.join(' ');
 	}
 
 	function componentDetail(component: RuntimeComponentStatus) {
@@ -592,6 +635,19 @@
 	async function runSelectedBinding() {
 		if (!selectedBindingId) return;
 		await runBinding(selectedBindingId);
+	}
+
+	async function runCommandLane() {
+		if (!selected) return;
+		if (commandLaneMode === 'plan') {
+			statusLine = `Planned ${selectedBindingId || commandLaneText}`;
+			return;
+		}
+		if (selectedBindingId) {
+			await runBinding(selectedBindingId);
+		} else {
+			statusLine = 'Select a canonical binding before execution';
+		}
 	}
 
 	async function replaceSession(snapshot: SessionSnapshot) {
@@ -898,6 +954,27 @@
 				<p class="eyebrow">Workspace Radar</p>
 				<h1>{workspaceName}</h1>
 				<code>{workspaceRoot}</code>
+			</div>
+			<div class="radar-chart" aria-label="XTAL lifecycle radar">
+				<svg viewBox="0 0 128 128" role="img" aria-label="Lifecycle radar chart">
+					<polygon class="radar-ring" points="64,14 107.3,39 107.3,89 64,114 20.7,89 20.7,39" />
+					<polygon class="radar-ring inner" points="64,31 92.6,47.5 92.6,80.5 64,97 35.4,80.5 35.4,47.5" />
+					<line x1="64" y1="14" x2="64" y2="114" />
+					<line x1="20.7" y1="39" x2="107.3" y2="89" />
+					<line x1="107.3" y1="39" x2="20.7" y2="89" />
+					<polygon class="radar-fill" points={radarPoints} />
+					{#each radarAxes as axis, index}
+						<circle
+							cx={64 + Math.cos(-Math.PI / 2 + (index * Math.PI * 2) / radarAxes.length) * ((Math.max(8, Math.min(100, axis.value)) / 100) * 50)}
+							cy={64 + Math.sin(-Math.PI / 2 + (index * Math.PI * 2) / radarAxes.length) * ((Math.max(8, Math.min(100, axis.value)) / 100) * 50)}
+							r="3"
+						/>
+					{/each}
+				</svg>
+				<div>
+					<strong>{readinessPercent}%</strong>
+					<span>XTAL lifecycle</span>
+				</div>
 			</div>
 			<div class="radar-grid">
 				{#each radarMetrics as metric}
@@ -1384,8 +1461,46 @@
 			{/if}
 		</section>
 
-		<footer class="statusbar">
-			<span>{statusLine}</span>
+		<footer class="command-lane statusbar" aria-label="Canonical command lane">
+			<div class="command-lane-brand">
+				<strong>x07 canonical command lane</strong>
+				<span>{statusLine}</span>
+			</div>
+			<label class="command-lane-input" for="command-lane-input">
+				<span>Command</span>
+				<input id="command-lane-input" bind:value={commandLaneText} />
+			</label>
+			<label>
+				<span>Mode</span>
+				<select bind:value={commandLaneMode} aria-label="Command lane mode">
+					<option value="execute">Execute</option>
+					<option value="plan">Plan</option>
+				</select>
+			</label>
+			<label>
+				<span>Env</span>
+				<select bind:value={commandLaneEnv} aria-label="Command lane environment">
+					<option value="dev">dev</option>
+					<option value="sandbox">sandbox</option>
+					<option value="release">release</option>
+				</select>
+			</label>
+			<label>
+				<span>Region</span>
+				<select bind:value={commandLaneRegion} aria-label="Command lane region">
+					<option value="local">local</option>
+					<option value="us-east-1">us-east-1</option>
+					<option value="eu-west-1">eu-west-1</option>
+				</select>
+			</label>
+			<button class="lane-run" type="button" on:click={runCommandLane} disabled={busy || !selected}>
+				{commandLaneMode === 'plan' ? 'Plan' : 'Execute'}
+			</button>
+			<div class="lane-trust" aria-label="Command lane trust meter">
+				<span>Trust</span>
+				<strong>{selected?.phase === 'certified' ? '100' : Math.max(18, readinessPercent)} / 100</strong>
+				<i style={`width: ${selected?.phase === 'certified' ? 100 : Math.max(18, readinessPercent)}%`}></i>
+			</div>
 			<span>{busy ? 'Running' : 'Idle'}</span>
 		</footer>
 	</section>
@@ -1533,7 +1648,7 @@
 			</div>
 		</section>
 
-		<section class="panel doctrine-panel" aria-label="Session doctrine">
+		<section class="panel doctrine-panel" class:focused={selectedRoom === 'mcp'} aria-label="Session doctrine">
 			<div class="panel-head">
 				<div>
 					<p class="eyebrow">Session Doctrine</p>
