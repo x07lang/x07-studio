@@ -354,7 +354,8 @@
 				...(asRecord(op.report_json) ?? {}),
 				artifact_preview: {
 					artifact: preview.artifact,
-					json: preview.json
+					json: preview.json,
+					patchset_preview: preview.patchset_preview
 				}
 			}
 		};
@@ -1081,6 +1082,21 @@
 										<span>{file.action}</span>
 										<small>{file.note}</small>
 										<em>{file.operations ? `${file.operations} ops` : file.source}</em>
+										{#if file.applyError}
+											<p class="patch-error">{file.applyError}</p>
+										{/if}
+										{#if file.before || file.after}
+											<div class="patch-diff" aria-label={`Patch before and after ${file.path}`}>
+												<div>
+													<span>Before</span>
+													<pre>{file.before ?? 'unavailable'}</pre>
+												</div>
+												<div>
+													<span>After</span>
+													<pre>{file.after ?? 'unavailable'}</pre>
+												</div>
+											</div>
+										{/if}
 									</div>
 								{/each}
 							</div>

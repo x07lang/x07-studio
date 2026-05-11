@@ -111,6 +111,20 @@ Artifact preview response:
   "json": {
     "schema_version": "x07.patchset@0.1.0",
     "patches": []
+  },
+  "patchset_preview": {
+    "schema_version": "x07.studio.patchset_preview@0.1.0",
+    "targets": [
+      {
+        "path": "src/main.x07.json",
+        "note": "Realize approved operation",
+        "operations": 2,
+        "before_json": {"solve": ["bytes.lit", "todo"]},
+        "after_json": {"solve": ["bytes.lit", "ok"]},
+        "apply_error": null,
+        "truncated": false
+      }
+    ]
   }
 }
 ```
@@ -118,7 +132,14 @@ Artifact preview response:
 The daemon only previews paths already recorded in that session's operation
 artifacts or report paths, rejects absolute or parent-traversal paths, reads
 from the workspace root, and caps preview bodies. Browser clients use this to
-turn patchset artifact paths into file-level patch review rows.
+turn patchset artifact paths into file-level patch review rows. When the
+artifact is an x07 patchset, the daemon also reads each bounded workspace target
+and applies the JSON Patch in memory so the browser can show before/after JSON
+without writing to disk. Patchset target previews are limited to reviewable x07
+project surfaces such as `src/`, `tests/`, `spec/`, `arch/`, `gen/`,
+`policy/`, `policies/`, `wit/`, `x07.json`, and `x07.lock.json`. Target-level
+read, policy, or patch failures are returned as `apply_error` rows instead of
+failing the whole artifact preview.
 
 Run XTAL workflow request:
 

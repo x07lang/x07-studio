@@ -20,6 +20,9 @@ export interface PatchReviewFile {
 	operations: number;
 	source: PatchReviewSource;
 	risk: PatchReviewRisk;
+	before?: string;
+	after?: string;
+	applyError?: string;
 }
 
 export interface PatchReview {
@@ -144,11 +147,10 @@ function shortReviewText(op: OpRecord, artifact?: string): string {
 }
 
 function patchsetFilesFromOp(op: OpRecord): PatchReviewFile[] {
-	return [
-		...patchsetFilesFromValue(op.report_json),
-		...patchsetFilesFromValue(op.stdout_json),
-		...patchsetFilesFromValue(op.stderr_json)
-	];
+	const values = [op.report_json, op.stdout_json, op.stderr_json];
+	const patchFiles = values.flatMap((value) => patchsetFilesFromValue(value));
+	const previewFiles = values.flatMap((value) => patchsetPreviewFilesFromValue(value));
+	return mergePatchsetPreviewFiles(patchFiles, previewFiles);
 }
 
 function patchsetFilesFromValue(value: unknown): PatchReviewFile[] {
@@ -197,6 +199,76 @@ function findPatchset(value: unknown, depth = 0): { patches?: unknown } | null {
 		if (found) return found;
 	}
 	return null;
+}
+
+function patchsetPreviewFilesFromValue(value: unknown): PatchReviewFile[] {
+	const preview = findPatchsetPreview(value);
+	if (!preview) return [];
+	const targets = Array.isArray(preview.targets) ? preview.targets : [];
+	return targets.flatMap((item) => {
+		const record = asRecord(item);
+		const path = textValue(record?.path);
+		if (!path) return [];
+		const applyError = textValue(record?.apply_error);
+		return [
+			{
+				path,
+				action: applyError ? 'preview error' : 'before/after JSON preview',
+				note: textValue(record?.note) || 'Patchset preview target',
+				operations: numericValue(record?.operations),
+				source: 'patchset' as const,
+				risk: riskForPath(path),
+				before: jsonSnippet(record?.before_json),
+				after: jsonSnippet(record?.after_json),
+				applyError: applyError || undefined
+			}
+		];
+	});
+}
+
+function findPatchsetPreview(value: unknown, depth = 0): { targets?: unknown } | null {
+	if (depth > 6) return null;
+	const record = asRecord(value);
+	if (!record) {
+		if (!Array.isArray(value)) return null;
+		for (const item of value) {
+			const found = findPatchsetPreview(item, depth + 1);
+			if (found) return found;
+		}
+		return null;
+	}
+	if (
+		textValue(record.schema_version) === 'x07.studio.patchset_preview@0.1.0' &&
+		Array.isArray(record.targets)
+	) {
+		return record;
+	}
+	for (const item of Object.values(record)) {
+		const found = findPatchsetPreview(item, depth + 1);
+		if (found) return found;
+	}
+	return null;
+}
+
+function mergePatchsetPreviewFiles(
+	patchFiles: PatchReviewFile[],
+	previewFiles: PatchReviewFile[]
+): PatchReviewFile[] {
+	if (!previewFiles.length) return patchFiles;
+	const files = [...patchFiles];
+	for (const preview of previewFiles) {
+		const existing = files.find((file) => file.path === preview.path && file.source === 'patchset');
+		if (!existing) {
+			files.push(preview);
+			continue;
+		}
+		existing.note = preview.note || existing.note;
+		existing.operations = preview.operations || existing.operations;
+		existing.before = preview.before;
+		existing.after = preview.after;
+		existing.applyError = preview.applyError;
+	}
+	return files;
 }
 
 function summarizePatchActions(patch: unknown[]): string {
@@ -290,4 +362,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function textValue(value: unknown): string {
 	return typeof value === 'string' ? value : '';
+}
+
+function numericValue(value: unknown): number {
+	return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function jsonSnippet(value: unknown): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	try {
+		const body = JSON.stringify(value, null, 2);
+		return body.length > 900 ? `${body.slice(0, 897)}...` : body;
+	} catch {
+		return undefined;
+	}
 }

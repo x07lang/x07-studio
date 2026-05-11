@@ -151,7 +151,7 @@ This document records friction found while implementing the Studio web surface.
    evidence, and certify evidence become clickable signals that select the
    original operation in the inspector.
 
-16. Patchsets need a file-level inspector before full diffs.
+16. Patchsets need a file-level inspector before semantic diffs.
 
    `x07.patchset@0.1.0` is the canonical deterministic edit vehicle, but the
    browser previously only showed the artifact path. The operation inspector now
@@ -159,6 +159,8 @@ This document records friction found while implementing the Studio web surface.
    roots, then renders affected files, JSON Patch operation counts, notes,
    review gates, and path risk. Studio now has a bounded daemon preview endpoint
    for recorded operation artifacts, so patchset artifact paths can become
-   concrete patch entries without granting arbitrary filesystem reads. The
-   remaining gap is full before/after JSON Patch diffs against the current
-   workspace files.
+   concrete patch entries without granting arbitrary filesystem reads. Recorded
+   x07 patchsets now also get in-memory before/after JSON previews for bounded
+   workspace targets, with target-level errors surfaced in the review row. The
+   remaining gap is richer semantic side-by-side diff tooling for large or
+   domain-specific x07AST changes.

@@ -142,13 +142,25 @@ describe('x07 Studio XTAL web model', () => {
 		const preview = await api.previewArtifact(session, 'target/xtal/impl-sync.patchset.json');
 		const op = {
 			...session.op_log[0],
-			report_json: { artifact_preview: { artifact: preview.artifact, json: preview.json } }
+			report_json: {
+				artifact_preview: {
+					artifact: preview.artifact,
+					json: preview.json,
+					patchset_preview: preview.patchset_preview
+				}
+			}
 		};
 
 		const review = buildPatchReview(op);
 		expect(preview.schema_version).toBe('x07.studio.artifact_preview@0.1.0');
 		expect(review?.files.map((file) => file.path)).toContain('src/main.x07.json');
 		expect(review?.files.find((file) => file.path === 'src/main.x07.json')?.operations).toBe(2);
+		expect(review?.files.find((file) => file.path === 'src/main.x07.json')?.before).toContain(
+			'todo'
+		);
+		expect(review?.files.find((file) => file.path === 'src/main.x07.json')?.after).toContain(
+			'ok'
+		);
 	});
 
 	it('does not replace connected artifact preview failures with demo content', async () => {

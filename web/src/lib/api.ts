@@ -421,6 +421,16 @@ function bindingVars(session: SessionSnapshot, bindingId: string): Record<string
 }
 
 function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
+	const beforeJson = {
+		schema_version: 'x07.ast@0.1.0',
+		decls: [],
+		solve: ['bytes.lit', 'todo']
+	};
+	const afterJson = {
+		schema_version: 'x07.ast@0.1.0',
+		decls: [{ kind: 'export', names: ['main.run'] }],
+		solve: ['bytes.lit', 'ok']
+	};
 	const json = artifact.includes('patchset')
 		? {
 				schema_version: 'x07.patchset@0.1.0',
@@ -452,7 +462,23 @@ function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
 		bytes_read: text.length,
 		truncated: false,
 		text,
-		json
+		json,
+		patchset_preview: json
+			? {
+					schema_version: 'x07.studio.patchset_preview@0.1.0',
+					targets: [
+						{
+							path: 'src/main.x07.json',
+							note: 'Demo implementation sync from approved spec',
+							operations: 2,
+							before_json: beforeJson,
+							after_json: afterJson,
+							apply_error: null,
+							truncated: false
+						}
+					]
+				}
+			: null
 	};
 }
 

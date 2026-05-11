@@ -83,6 +83,22 @@ export interface ArtifactPreviewResponse {
 	truncated: boolean;
 	text?: string | null;
 	json?: unknown;
+	patchset_preview?: PatchsetPreview | null;
+}
+
+export interface PatchsetPreview {
+	schema_version: 'x07.studio.patchset_preview@0.1.0';
+	targets: PatchsetTargetPreview[];
+}
+
+export interface PatchsetTargetPreview {
+	path: string;
+	note?: string | null;
+	operations: number;
+	before_json?: unknown;
+	after_json?: unknown;
+	apply_error?: string | null;
+	truncated: boolean;
 }
 
 export interface SessionSnapshot {

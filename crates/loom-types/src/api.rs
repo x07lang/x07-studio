@@ -71,6 +71,24 @@ pub struct ArtifactPreviewResponse {
     pub truncated: bool,
     pub text: Option<String>,
     pub json: Option<Value>,
+    pub patchset_preview: Option<PatchsetPreview>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchsetPreview {
+    pub schema_version: String,
+    pub targets: Vec<PatchsetTargetPreview>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchsetTargetPreview {
+    pub path: String,
+    pub note: Option<String>,
+    pub operations: usize,
+    pub before_json: Option<Value>,
+    pub after_json: Option<Value>,
+    pub apply_error: Option<String>,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

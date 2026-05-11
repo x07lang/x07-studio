@@ -13,8 +13,8 @@ use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
-use loom_types::api::ArtifactPreviewResponse;
 use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
+use loom_types::api::{ArtifactPreviewResponse, PatchsetPreview, PatchsetTargetPreview};
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
     OperationStatus, ProviderProbeReport, ProviderProfile, TaskType, Witness, WitnessKind,
@@ -144,6 +144,9 @@ impl WorkspaceKernel {
         let json = text
             .as_deref()
             .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok());
+        let patchset_preview = json
+            .as_ref()
+            .and_then(|value| self.preview_patchset_targets(value));
         let media_kind = if json.is_some() {
             "json"
         } else if text.is_some() {
@@ -159,7 +162,109 @@ impl WorkspaceKernel {
             truncated,
             text,
             json,
+            patchset_preview,
         })
+    }
+
+    fn preview_patchset_targets(&self, patchset: &serde_json::Value) -> Option<PatchsetPreview> {
+        let schema = patchset
+            .get("schema_version")
+            .and_then(|value| value.as_str())?;
+        if schema != "x07.patchset@0.1.0" && schema != "x07.arch.patchset@0.1.0" {
+            return None;
+        }
+        let targets = patchset
+            .get("patches")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .take(8)
+            .map(|target| self.preview_patchset_target(target))
+            .collect();
+        Some(PatchsetPreview {
+            schema_version: "x07.studio.patchset_preview@0.1.0".to_string(),
+            targets,
+        })
+    }
+
+    fn preview_patchset_target(&self, target: serde_json::Value) -> PatchsetTargetPreview {
+        const MAX_TARGET_PREVIEW_BYTES: u64 = 128 * 1024;
+        let path = target
+            .get("path")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+        let note = target
+            .get("note")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string);
+        let patch = target
+            .get("patch")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut output = PatchsetTargetPreview {
+            path: path.clone(),
+            note,
+            operations: patch.len(),
+            before_json: None,
+            after_json: None,
+            apply_error: None,
+            truncated: false,
+        };
+        let target_path = match safe_artifact_path(self.root.as_path(), &path) {
+            Ok(path) => path,
+            Err(error) => {
+                output.apply_error = Some(error.to_string());
+                return output;
+            }
+        };
+        if !is_reviewable_patchset_target(&path) {
+            output.apply_error =
+                Some("target preview path is outside reviewable project surfaces".to_string());
+            return output;
+        }
+        let metadata = match fs::metadata(&target_path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                output.apply_error = Some(format!("target unavailable: {error}"));
+                return output;
+            }
+        };
+        if !metadata.is_file() {
+            output.apply_error = Some("target is not a readable file".to_string());
+            return output;
+        }
+        if metadata.len() > MAX_TARGET_PREVIEW_BYTES {
+            output.truncated = true;
+            output.apply_error = Some(format!(
+                "target is larger than {} bytes",
+                MAX_TARGET_PREVIEW_BYTES
+            ));
+            return output;
+        }
+        let before = match fs::read_to_string(&target_path) {
+            Ok(text) => text,
+            Err(error) => {
+                output.apply_error = Some(format!("read target failed: {error}"));
+                return output;
+            }
+        };
+        let before_json = match serde_json::from_str::<serde_json::Value>(&before) {
+            Ok(value) => value,
+            Err(error) => {
+                output.apply_error = Some(format!("target is not JSON: {error}"));
+                return output;
+            }
+        };
+        let mut after_json = before_json.clone();
+        match apply_json_patch_preview(&mut after_json, &patch) {
+            Ok(()) => output.after_json = Some(after_json),
+            Err(error) => output.apply_error = Some(error.to_string()),
+        }
+        output.before_json = Some(before_json);
+        output
     }
 
     pub fn create_session(
@@ -1365,6 +1470,253 @@ fn safe_artifact_path(root: &Utf8Path, artifact: &str) -> anyhow::Result<Utf8Pat
     Ok(root.join(rel))
 }
 
+fn is_reviewable_patchset_target(path: &str) -> bool {
+    let rel = Utf8Path::new(path);
+    if rel.components().any(|component| match component {
+        camino::Utf8Component::Normal(name) => name.starts_with('.'),
+        _ => false,
+    }) {
+        return false;
+    }
+    if matches!(path, "x07.json" | "x07.lock.json") {
+        return true;
+    }
+    [
+        "src/",
+        "tests/",
+        "spec/",
+        "arch/",
+        "gen/",
+        "wit/",
+        "policy/",
+        "policies/",
+    ]
+    .iter()
+    .any(|prefix| path.starts_with(prefix))
+}
+
+fn apply_json_patch_preview(
+    document: &mut serde_json::Value,
+    patch: &[serde_json::Value],
+) -> anyhow::Result<()> {
+    for (index, op_value) in patch.iter().enumerate() {
+        let op = op_value
+            .as_object()
+            .ok_or_else(|| anyhow!("patch operation {index} is not an object"))?;
+        let op_name = op
+            .get("op")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("patch operation {index} is missing `op`"))?;
+        let path = op
+            .get("path")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("patch operation {index} is missing `path`"))?;
+        let tokens = decode_json_pointer(path)
+            .with_context(|| format!("patch operation {index} has invalid path `{path}`"))?;
+        match op_name {
+            "add" => {
+                let value = op
+                    .get("value")
+                    .cloned()
+                    .ok_or_else(|| anyhow!("patch add operation {index} is missing `value`"))?;
+                add_json_value(document, &tokens, value)
+                    .with_context(|| format!("patch add operation {index} failed"))?;
+            }
+            "replace" => {
+                let value = op
+                    .get("value")
+                    .cloned()
+                    .ok_or_else(|| anyhow!("patch replace operation {index} is missing `value`"))?;
+                replace_json_value(document, &tokens, value)
+                    .with_context(|| format!("patch replace operation {index} failed"))?;
+            }
+            "remove" => {
+                remove_json_value(document, &tokens)
+                    .with_context(|| format!("patch remove operation {index} failed"))?;
+            }
+            "test" => {
+                let expected = op
+                    .get("value")
+                    .ok_or_else(|| anyhow!("patch test operation {index} is missing `value`"))?;
+                let actual = json_value_at(document, &tokens)
+                    .with_context(|| format!("patch test operation {index} failed"))?;
+                if actual != expected {
+                    return Err(anyhow!("patch test operation {index} did not match"));
+                }
+            }
+            other => return Err(anyhow!("unsupported JSON Patch operation `{other}`")),
+        }
+    }
+    Ok(())
+}
+
+fn decode_json_pointer(path: &str) -> anyhow::Result<Vec<String>> {
+    if path.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !path.starts_with('/') {
+        return Err(anyhow!("JSON pointer must start with `/`"));
+    }
+    path.split('/')
+        .skip(1)
+        .map(decode_json_pointer_segment)
+        .collect()
+}
+
+fn decode_json_pointer_segment(segment: &str) -> anyhow::Result<String> {
+    let mut decoded = String::new();
+    let mut chars = segment.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '~' {
+            decoded.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('0') => decoded.push('~'),
+            Some('1') => decoded.push('/'),
+            Some(other) => return Err(anyhow!("unsupported JSON pointer escape `~{other}`")),
+            None => return Err(anyhow!("unterminated JSON pointer escape")),
+        }
+    }
+    Ok(decoded)
+}
+
+fn add_json_value(
+    document: &mut serde_json::Value,
+    path: &[String],
+    value: serde_json::Value,
+) -> anyhow::Result<()> {
+    if path.is_empty() {
+        *document = value;
+        return Ok(());
+    }
+    let (parent_path, leaf) = path.split_at(path.len() - 1);
+    let leaf = &leaf[0];
+    let parent = json_value_at_mut(document, parent_path)?;
+    match parent {
+        serde_json::Value::Object(map) => {
+            map.insert(leaf.clone(), value);
+            Ok(())
+        }
+        serde_json::Value::Array(items) => {
+            if leaf == "-" {
+                items.push(value);
+                return Ok(());
+            }
+            let index = parse_json_array_index(leaf)?;
+            if index > items.len() {
+                return Err(anyhow!("array index {index} is past the end"));
+            }
+            items.insert(index, value);
+            Ok(())
+        }
+        other => Err(anyhow!("cannot add into {}", json_type_name(other))),
+    }
+}
+
+fn replace_json_value(
+    document: &mut serde_json::Value,
+    path: &[String],
+    value: serde_json::Value,
+) -> anyhow::Result<()> {
+    if path.is_empty() {
+        *document = value;
+        return Ok(());
+    }
+    let target = json_value_at_mut(document, path)?;
+    *target = value;
+    Ok(())
+}
+
+fn remove_json_value(document: &mut serde_json::Value, path: &[String]) -> anyhow::Result<()> {
+    if path.is_empty() {
+        *document = serde_json::Value::Null;
+        return Ok(());
+    }
+    let (parent_path, leaf) = path.split_at(path.len() - 1);
+    let leaf = &leaf[0];
+    let parent = json_value_at_mut(document, parent_path)?;
+    match parent {
+        serde_json::Value::Object(map) => map
+            .remove(leaf)
+            .map(|_| ())
+            .ok_or_else(|| anyhow!("object key `{leaf}` does not exist")),
+        serde_json::Value::Array(items) => {
+            let index = parse_json_array_index(leaf)?;
+            if index >= items.len() {
+                return Err(anyhow!("array index {index} is out of bounds"));
+            }
+            items.remove(index);
+            Ok(())
+        }
+        other => Err(anyhow!("cannot remove from {}", json_type_name(other))),
+    }
+}
+
+fn json_value_at<'a>(
+    value: &'a serde_json::Value,
+    path: &[String],
+) -> anyhow::Result<&'a serde_json::Value> {
+    let mut current = value;
+    for token in path {
+        current = match current {
+            serde_json::Value::Object(map) => map
+                .get(token)
+                .ok_or_else(|| anyhow!("object key `{token}` does not exist"))?,
+            serde_json::Value::Array(items) => {
+                let index = parse_json_array_index(token)?;
+                items
+                    .get(index)
+                    .ok_or_else(|| anyhow!("array index {index} is out of bounds"))?
+            }
+            other => return Err(anyhow!("cannot descend into {}", json_type_name(other))),
+        };
+    }
+    Ok(current)
+}
+
+fn json_value_at_mut<'a>(
+    value: &'a mut serde_json::Value,
+    path: &[String],
+) -> anyhow::Result<&'a mut serde_json::Value> {
+    let mut current = value;
+    for token in path {
+        current = match current {
+            serde_json::Value::Object(map) => map
+                .get_mut(token)
+                .ok_or_else(|| anyhow!("object key `{token}` does not exist"))?,
+            serde_json::Value::Array(items) => {
+                let index = parse_json_array_index(token)?;
+                items
+                    .get_mut(index)
+                    .ok_or_else(|| anyhow!("array index {index} is out of bounds"))?
+            }
+            other => return Err(anyhow!("cannot descend into {}", json_type_name(other))),
+        };
+    }
+    Ok(current)
+}
+
+fn parse_json_array_index(token: &str) -> anyhow::Result<usize> {
+    if token.is_empty() {
+        return Err(anyhow!("array index is empty"));
+    }
+    token
+        .parse::<usize>()
+        .with_context(|| format!("array index `{token}` is invalid"))
+}
+
+fn json_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
 fn should_scaffold_spec(root: &Utf8Path, vars: &BTreeMap<String, String>) -> bool {
     let Some(input) = vars.get("input") else {
         return true;
@@ -2219,7 +2571,18 @@ mod tests {
     #[test]
     fn preview_artifact_reads_recorded_json_patchset() {
         let root = temp_root();
+        std::fs::create_dir_all(root.join("src")).expect("create src");
         std::fs::create_dir_all(root.join("target/xtal")).expect("create target/xtal");
+        std::fs::write(
+            root.join("src/main.x07.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": "x07.ast@0.1.0",
+                "decls": [],
+                "solve": ["bytes.lit", "todo"]
+            }))
+            .expect("serialize source"),
+        )
+        .expect("write source");
         let artifact = "target/xtal/impl-sync.patchset.json";
         std::fs::write(
             root.join(artifact),
@@ -2267,6 +2630,116 @@ mod tests {
                 .and_then(|json| json["schema_version"].as_str()),
             Some("x07.patchset@0.1.0")
         );
+        let target = preview
+            .patchset_preview
+            .as_ref()
+            .and_then(|preview| preview.targets.first())
+            .expect("patchset target preview");
+        assert_eq!(target.path, "src/main.x07.json");
+        assert_eq!(target.operations, 1);
+        assert!(target.apply_error.is_none(), "{:?}", target.apply_error);
+        assert_eq!(
+            target
+                .before_json
+                .as_ref()
+                .and_then(|json| json["solve"][1].as_str()),
+            Some("todo")
+        );
+        assert_eq!(
+            target
+                .after_json
+                .as_ref()
+                .and_then(|json| json["solve"][1].as_str()),
+            Some("ok")
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn preview_artifact_reports_patchset_target_errors_per_file() {
+        let root = temp_root();
+        std::fs::create_dir_all(root.join("target/xtal")).expect("create target/xtal");
+        std::fs::create_dir_all(root.join(".x07/studio")).expect("create hidden studio dir");
+        std::fs::write(root.join(".x07/studio/private.json"), "{}").expect("write hidden target");
+        let artifact = "target/xtal/impl-sync.patchset.json";
+        std::fs::write(
+            root.join(artifact),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": "x07.patchset@0.1.0",
+                "patches": [
+                    {
+                        "path": "../outside.x07.json",
+                        "patch": [
+                            { "op": "replace", "path": "/solve", "value": ["bytes.lit", "ok"] }
+                        ],
+                        "note": "Invalid target path"
+                    },
+                    {
+                        "path": ".x07/studio/private.json",
+                        "patch": [
+                            { "op": "replace", "path": "/secret", "value": "nope" }
+                        ],
+                        "note": "Hidden workspace target"
+                    }
+                ]
+            }))
+            .expect("serialize patchset"),
+        )
+        .expect("write patchset");
+
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("artifact preview", TaskType::NewBehavior)
+            .expect("create session");
+        kernel
+            .append_op(
+                session.session_id,
+                test_op(
+                    session.session_id,
+                    "impl.sync.patchset",
+                    vec![artifact.to_string()],
+                ),
+            )
+            .expect("append op");
+
+        let preview = kernel
+            .preview_artifact(session.session_id, artifact)
+            .expect("preview artifact");
+        let target = preview
+            .patchset_preview
+            .as_ref()
+            .and_then(|preview| preview.targets.first())
+            .expect("patchset target preview");
+        assert_eq!(target.path, "../outside.x07.json");
+        assert!(
+            target
+                .apply_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("workspace"),
+            "{:?}",
+            target.apply_error
+        );
+        assert!(target.before_json.is_none());
+        assert!(target.after_json.is_none());
+        let hidden_target = preview
+            .patchset_preview
+            .as_ref()
+            .and_then(|preview| preview.targets.get(1))
+            .expect("hidden target preview");
+        assert_eq!(hidden_target.path, ".x07/studio/private.json");
+        assert!(
+            hidden_target
+                .apply_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("reviewable project surfaces"),
+            "{:?}",
+            hidden_target.apply_error
+        );
+        assert!(hidden_target.before_json.is_none());
+        assert!(hidden_target.after_json.is_none());
 
         std::fs::remove_dir_all(root).ok();
     }
