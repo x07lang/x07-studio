@@ -98,3 +98,16 @@ This document records friction found while implementing the Studio web surface.
    scaffold when the template-provided spec path already exists. The x07 CLI
    could still expose a machine-readable "operation already exists" or
    "merge/update scaffold" mode for agentic workflows.
+
+12. Docs-example workflows need environment-aware sandbox and arch gates.
+
+   Live Studio runs against `docs/examples/apps/x07-api-gateway`,
+   `docs/examples/apps/x07dbguard`, and
+   `docs/examples/readiness-checks/x07-sm-arch-contracts-smoke` exposed two
+   project-ladder issues. First, VM-backed sandbox runs fail on local machines
+   without `X07_VM_VZ_GUEST_BUNDLE`; Studio now keeps the VM bindings but uses
+   explicit `*.sandbox.os` bindings with `--i-accept-weaker-isolation` when the
+   VM bundle is not declared. Second, several docs examples still had
+   `x07.arch.manifest@0.1.0` manifests while the current toolchain requires
+   `0.3.0`; the source examples were updated and Studio now runs
+   `arch.check.write_lock` as part of the seeded complex workflows.

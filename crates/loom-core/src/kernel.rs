@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
 
 use anyhow::{anyhow, Context};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -164,15 +165,25 @@ impl WorkspaceKernel {
             .intent
             .as_ref()
             .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
+        let template = workflow_template_from_intent(intent);
         let vars = xtal_workflow_vars_from_intent(intent);
 
         if !self.root.join("x07.json").exists() {
-            let snapshot = self
-                .run_binding(session_id, "project.init.xtal-pure", &BTreeMap::new())
-                .await?;
+            let snapshot = if let Some(example_path) = template.example_path() {
+                self.seed_example_project(session_id, template, example_path)?
+            } else {
+                self.run_binding(session_id, "project.init.xtal-pure", &BTreeMap::new())
+                    .await?
+            };
             if last_op_failed(&snapshot) {
                 return Ok(snapshot);
             }
+        }
+
+        if template != WorkflowTemplate::XtalPure {
+            return self
+                .run_seeded_template_workflow(session_id, template, &vars)
+                .await;
         }
 
         if should_scaffold_spec(self.root.as_path(), &vars) {
@@ -227,6 +238,104 @@ impl WorkspaceKernel {
             SessionEvent::VerificationPassed
         };
         self.dispatch_event(session_id, event)
+    }
+
+    async fn run_seeded_template_workflow(
+        &mut self,
+        session_id: Uuid,
+        template: WorkflowTemplate,
+        vars: &BTreeMap<String, String>,
+    ) -> anyhow::Result<SessionSnapshot> {
+        self.ensure_verify_phase(session_id)?;
+        for step in template.workflow_steps() {
+            let binding_id = *step;
+            if let Some(directory) = template.directory_for_step(binding_id) {
+                let snapshot = self.ensure_workflow_directory(session_id, directory)?;
+                if last_op_failed(&snapshot) {
+                    return self.finish_verification(session_id, false);
+                }
+            }
+
+            let mut step_vars = vars.clone();
+            if let Some(stdin) = template.stdin_for_step(binding_id) {
+                step_vars.insert("stdin".to_string(), stdin.to_string());
+            }
+            let snapshot = self.run_binding(session_id, binding_id, &step_vars).await?;
+            if last_op_failed(&snapshot) {
+                return self.finish_verification(session_id, false);
+            }
+        }
+        self.finish_verification(session_id, true)
+    }
+
+    fn ensure_verify_phase(&mut self, session_id: Uuid) -> anyhow::Result<()> {
+        let current = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if current.phase == SessionPhase::SpecApproved {
+            self.dispatch_event(session_id, SessionEvent::ProposeRealization)?;
+        }
+        let current = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if current.phase == SessionPhase::RealizationProposed {
+            self.dispatch_event(session_id, SessionEvent::AcceptRealization)?;
+        }
+        Ok(())
+    }
+
+    fn finish_verification(
+        &mut self,
+        session_id: Uuid,
+        passed: bool,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let event = if passed {
+            SessionEvent::VerificationPassed
+        } else {
+            SessionEvent::VerificationFailed
+        };
+        self.dispatch_event(session_id, event)
+    }
+
+    fn seed_example_project(
+        &mut self,
+        session_id: Uuid,
+        template: WorkflowTemplate,
+        example_path: &str,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let op = match find_examples_root()
+            .map(|root| root.join(example_path))
+            .filter(|path| path.join("x07.json").exists())
+        {
+            Some(source) => match copy_example_tree(source.as_path(), self.root.as_path()) {
+                Ok(()) => seeded_example_op(session_id, template, source.as_path()),
+                Err(error) => failed_seed_op(session_id, template, Some(source.as_path()), error),
+            },
+            None => failed_seed_op(
+                session_id,
+                template,
+                None,
+                anyhow!("x07 docs example `{example_path}` was not found"),
+            ),
+        };
+        self.append_op(session_id, op)
+    }
+
+    fn ensure_workflow_directory(
+        &mut self,
+        session_id: Uuid,
+        directory: &'static str,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let target = self.root.join(directory.trim_end_matches('/'));
+        let op = match fs::create_dir_all(target.as_path()) {
+            Ok(()) => prepared_directory_op(session_id, directory),
+            Err(error) => failed_directory_op(session_id, directory, error.into()),
+        };
+        self.append_op(session_id, op)
     }
 
     pub fn list_provider_profiles(&self) -> anyhow::Result<Vec<ProviderProfile>> {
@@ -561,6 +670,343 @@ pub fn xtal_workflow_vars_from_intent(intent: &IntentPacket) -> BTreeMap<String,
             "target/xtal/impl-sync.patchset.json".to_string(),
         ),
     ])
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkflowTemplate {
+    XtalPure,
+    WorkflowGraph,
+    StateMachineArch,
+    ApiGateway,
+    DbGuard,
+}
+
+impl WorkflowTemplate {
+    fn id(self) -> &'static str {
+        match self {
+            Self::XtalPure => "xtal-pure",
+            Self::WorkflowGraph => "workflow-graph",
+            Self::StateMachineArch => "state-machine-arch",
+            Self::ApiGateway => "x07-api-gateway",
+            Self::DbGuard => "x07dbguard",
+        }
+    }
+
+    fn example_path(self) -> Option<&'static str> {
+        match self {
+            Self::XtalPure => None,
+            Self::WorkflowGraph => Some("agent-gate/xtal/workflow-graph"),
+            Self::StateMachineArch => Some("readiness-checks/x07-sm-arch-contracts-smoke"),
+            Self::ApiGateway => Some("apps/x07-api-gateway"),
+            Self::DbGuard => Some("apps/x07dbguard"),
+        }
+    }
+
+    fn workflow_steps(self) -> &'static [&'static str] {
+        self.workflow_steps_for_environment(sandbox_vm_guest_bundle_declared())
+    }
+
+    fn workflow_steps_for_environment(self, has_vm_guest_bundle: bool) -> &'static [&'static str] {
+        match self {
+            Self::XtalPure => &[],
+            Self::WorkflowGraph => &[
+                "tests.gen.write",
+                "gen.verify",
+                "test.xtal.generated.all",
+                "impl.check",
+                "xtal.dev",
+                "xtal.verify",
+                "test.manifest",
+            ],
+            Self::StateMachineArch => &[
+                "sm.gen.write",
+                "test.sm.generated",
+                "run.stdin",
+                "arch.check.write_lock",
+                "test.manifest",
+            ],
+            Self::ApiGateway if has_vm_guest_bundle => &[
+                "arch.check.write_lock",
+                "test.manifest",
+                "run.sandbox",
+                "bundle.api_gateway.sandbox",
+            ],
+            Self::ApiGateway => &[
+                "arch.check.write_lock",
+                "test.manifest",
+                "run.sandbox.os",
+                "bundle.api_gateway.sandbox.os",
+            ],
+            Self::DbGuard if has_vm_guest_bundle => &[
+                "pkg.lock",
+                "arch.check.write_lock",
+                "test.manifest",
+                "run.stdin",
+                "run.sandbox.stdin",
+                "bundle.dbguard.sandbox",
+            ],
+            Self::DbGuard => &[
+                "pkg.lock",
+                "arch.check.write_lock",
+                "test.manifest",
+                "run.stdin",
+                "run.sandbox.stdin.os",
+                "bundle.dbguard.sandbox.os",
+            ],
+        }
+    }
+
+    fn stdin_for_step(self, step: &str) -> Option<&'static str> {
+        match (self, step) {
+            (Self::StateMachineArch, "run.stdin") => Some("start\ntick\nfinish\n"),
+            (Self::DbGuard, "run.stdin") => Some("verify"),
+            (Self::DbGuard, "run.sandbox.stdin") => Some("apply out/dbguard.sqlite"),
+            (Self::DbGuard, "run.sandbox.stdin.os") => Some("apply out/dbguard.sqlite"),
+            _ => None,
+        }
+    }
+
+    fn directory_for_step(self, step: &str) -> Option<&'static str> {
+        match (self, step) {
+            (Self::DbGuard, "run.sandbox.stdin") => Some("out/"),
+            (Self::DbGuard, "run.sandbox.stdin.os") => Some("out/"),
+            _ => None,
+        }
+    }
+}
+
+fn workflow_template_from_intent(intent: &IntentPacket) -> WorkflowTemplate {
+    let target = intent.targets.first();
+    let module_id = target
+        .map(|item| item.module_id.as_str())
+        .unwrap_or_default();
+    let entry = target
+        .and_then(|item| item.entry.as_deref())
+        .unwrap_or_default();
+    let raw_source = match &intent.source {
+        IntentSource::Text { raw } => raw.as_str(),
+        IntentSource::Voice { transcript } => transcript.as_str(),
+        IntentSource::Incident { path } => path.as_str(),
+    };
+    let haystack = format!("{module_id} {entry} {raw_source}").to_ascii_lowercase();
+    if haystack.contains("x07dbguard") || module_id == "db.guard" {
+        WorkflowTemplate::DbGuard
+    } else if haystack.contains("x07-api-gateway") || module_id == "gateway.core" {
+        WorkflowTemplate::ApiGateway
+    } else if haystack.contains("x07-sm-arch-contracts-smoke") || module_id == "workflow.lifecycle"
+    {
+        WorkflowTemplate::StateMachineArch
+    } else if haystack.contains("workflow-graph") || module_id == "workflow.graph" {
+        WorkflowTemplate::WorkflowGraph
+    } else {
+        WorkflowTemplate::XtalPure
+    }
+}
+
+fn find_examples_root() -> Option<Utf8PathBuf> {
+    if let Ok(value) = std::env::var("X07_STUDIO_X07_EXAMPLES_ROOT") {
+        let path = Utf8PathBuf::from(value);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    let cwd = std::env::current_dir().ok()?;
+    let cwd = Utf8PathBuf::from_path_buf(cwd).ok()?;
+    [
+        cwd.join("x07/docs/examples"),
+        cwd.join("../x07/docs/examples"),
+        cwd.join("../../x07/docs/examples"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.exists())
+}
+
+fn sandbox_vm_guest_bundle_declared() -> bool {
+    std::env::var_os("X07_VM_VZ_GUEST_BUNDLE").is_some()
+}
+
+fn copy_example_tree(source: &Utf8Path, destination: &Utf8Path) -> anyhow::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source.as_std_path())
+        .with_context(|| format!("failed to read example directory `{source}`"))?
+    {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if should_skip_seed_path(&name) {
+            continue;
+        }
+        let source_path = Utf8PathBuf::from_path_buf(entry.path())
+            .map_err(|path| anyhow!("example path is not UTF-8: {}", path.display()))?;
+        let destination_path = destination.join(name.as_ref());
+        if source_path.is_dir() {
+            copy_example_tree(source_path.as_path(), destination_path.as_path())?;
+        } else {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(source_path.as_std_path(), destination_path.as_std_path()).with_context(
+                || format!("failed to copy `{source_path}` to `{destination_path}`"),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_seed_path(name: &str) -> bool {
+    matches!(name, ".git" | "target" | "dist" | "node_modules")
+}
+
+fn seeded_example_op(session_id: Uuid, template: WorkflowTemplate, source: &Utf8Path) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("project.seed.{}", template.id()),
+        backend: "studio".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "seed-example".to_string(),
+            source.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![
+            "x07.json".to_string(),
+            "src/".to_string(),
+            "tests/".to_string(),
+        ],
+        notes: Some(format!(
+            "Seeded docs example `{}` into the workspace.",
+            template.id()
+        )),
+        stdout: Some(format!("Seeded example from `{source}`.")),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.project_seed@0.1.0",
+            "ok": true,
+            "template": template.id(),
+            "source": source.to_string(),
+        })),
+        report_path: None,
+    }
+}
+
+fn failed_seed_op(
+    session_id: Uuid,
+    template: WorkflowTemplate,
+    source: Option<&Utf8Path>,
+    error: anyhow::Error,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("project.seed.{}", template.id()),
+        backend: "studio".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "seed-example".to_string(),
+            source.map(Utf8Path::to_string).unwrap_or_default(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Failed,
+        exit_code: Some(1),
+        artifacts: Vec::new(),
+        notes: Some(format!("Failed to seed docs example `{}`.", template.id())),
+        stdout: None,
+        stderr: Some(error.to_string()),
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.project_seed@0.1.0",
+            "ok": false,
+            "template": template.id(),
+            "source": source.map(|path| path.to_string()),
+            "error": error.to_string(),
+        })),
+        report_path: None,
+    }
+}
+
+fn prepared_directory_op(session_id: Uuid, directory: &str) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!(
+            "project.prepare.{}",
+            directory.trim_end_matches('/').replace('/', ".")
+        ),
+        backend: "studio".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "mkdir".to_string(),
+            directory.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![directory.to_string()],
+        notes: Some(format!(
+            "Prepared `{directory}` for the documented workflow."
+        )),
+        stdout: Some(format!("Prepared directory `{directory}`.")),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.directory_prepare@0.1.0",
+            "ok": true,
+            "directory": directory,
+        })),
+        report_path: None,
+    }
+}
+
+fn failed_directory_op(session_id: Uuid, directory: &str, error: anyhow::Error) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!(
+            "project.prepare.{}",
+            directory.trim_end_matches('/').replace('/', ".")
+        ),
+        backend: "studio".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "mkdir".to_string(),
+            directory.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Failed,
+        exit_code: Some(1),
+        artifacts: Vec::new(),
+        notes: Some(format!("Failed to prepare `{directory}`.")),
+        stdout: None,
+        stderr: Some(error.to_string()),
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.directory_prepare@0.1.0",
+            "ok": false,
+            "directory": directory,
+            "error": error.to_string(),
+        })),
+        report_path: None,
+    }
 }
 
 fn sanitize_op_name(value: &str) -> String {
@@ -1004,7 +1450,10 @@ mod tests {
         TaskType, Witness, WitnessKind,
     };
 
-    use super::{should_scaffold_spec, xtal_workflow_vars_from_intent, WorkspaceKernel};
+    use super::{
+        copy_example_tree, should_scaffold_spec, workflow_template_from_intent,
+        xtal_workflow_vars_from_intent, WorkflowTemplate, WorkspaceKernel,
+    };
 
     #[test]
     fn xtal_workflow_vars_use_safe_payload_param() {
@@ -1190,6 +1639,135 @@ mod tests {
         assert!(!should_scaffold_spec(root.as_path(), &vars));
 
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn workflow_template_maps_docs_examples_to_command_lanes() {
+        let workflow = IntentPacket {
+            schema_version: "x07.studio.intent_packet@0.1.0".to_string(),
+            session_id: Uuid::nil(),
+            workspace_root: "/workspace".to_string(),
+            task_type: TaskType::NewBehavior,
+            targets: vec![IntentTarget {
+                module_id: "workflow.graph".to_string(),
+                entry: Some("makespan_u32".to_string()),
+            }],
+            examples: vec![],
+            constraints: vec![],
+            policy_implications: vec![],
+            ambiguities: vec![],
+            assumptions: vec![],
+            witnesses: vec![],
+            source: IntentSource::Text {
+                raw: "Use docs/examples/agent-gate/xtal/workflow-graph".to_string(),
+            },
+        };
+        let gateway = IntentPacket {
+            targets: vec![IntentTarget {
+                module_id: "gateway.core".to_string(),
+                entry: Some("route_request_v1".to_string()),
+            }],
+            source: IntentSource::Text {
+                raw: "Use docs/examples/apps/x07-api-gateway".to_string(),
+            },
+            ..workflow.clone()
+        };
+        let dbguard = IntentPacket {
+            targets: vec![IntentTarget {
+                module_id: "db.guard".to_string(),
+                entry: Some("verify_drift".to_string()),
+            }],
+            source: IntentSource::Text {
+                raw: "Use docs/examples/apps/x07dbguard".to_string(),
+            },
+            ..workflow.clone()
+        };
+
+        assert_eq!(
+            workflow_template_from_intent(&workflow),
+            WorkflowTemplate::WorkflowGraph
+        );
+        assert_eq!(
+            WorkflowTemplate::WorkflowGraph.workflow_steps(),
+            &[
+                "tests.gen.write",
+                "gen.verify",
+                "test.xtal.generated.all",
+                "impl.check",
+                "xtal.dev",
+                "xtal.verify",
+                "test.manifest"
+            ]
+        );
+        assert_eq!(
+            workflow_template_from_intent(&gateway),
+            WorkflowTemplate::ApiGateway
+        );
+        assert_eq!(
+            WorkflowTemplate::ApiGateway.workflow_steps_for_environment(true),
+            &[
+                "arch.check.write_lock",
+                "test.manifest",
+                "run.sandbox",
+                "bundle.api_gateway.sandbox"
+            ]
+        );
+        assert_eq!(
+            WorkflowTemplate::ApiGateway.workflow_steps_for_environment(false),
+            &[
+                "arch.check.write_lock",
+                "test.manifest",
+                "run.sandbox.os",
+                "bundle.api_gateway.sandbox.os"
+            ]
+        );
+        assert_eq!(
+            workflow_template_from_intent(&dbguard),
+            WorkflowTemplate::DbGuard
+        );
+        assert_eq!(
+            WorkflowTemplate::StateMachineArch.stdin_for_step("run.stdin"),
+            Some("start\ntick\nfinish\n")
+        );
+        assert_eq!(
+            WorkflowTemplate::DbGuard.workflow_steps_for_environment(false),
+            &[
+                "pkg.lock",
+                "arch.check.write_lock",
+                "test.manifest",
+                "run.stdin",
+                "run.sandbox.stdin.os",
+                "bundle.dbguard.sandbox.os"
+            ]
+        );
+        assert_eq!(
+            WorkflowTemplate::DbGuard.stdin_for_step("run.sandbox.stdin.os"),
+            Some("apply out/dbguard.sqlite")
+        );
+        assert_eq!(
+            WorkflowTemplate::DbGuard.directory_for_step("run.sandbox.stdin.os"),
+            Some("out/")
+        );
+    }
+
+    #[test]
+    fn copy_example_tree_skips_generated_targets() {
+        let source = temp_root();
+        let destination = temp_root();
+        std::fs::create_dir_all(source.join("src")).expect("create src");
+        std::fs::create_dir_all(source.join("target")).expect("create target");
+        std::fs::write(source.join("x07.json"), "{}").expect("write project");
+        std::fs::write(source.join("src/main.x07.json"), "{}").expect("write source");
+        std::fs::write(source.join("target/stale.json"), "{}").expect("write target");
+
+        copy_example_tree(source.as_path(), destination.as_path()).expect("copy example");
+
+        assert!(destination.join("x07.json").exists());
+        assert!(destination.join("src/main.x07.json").exists());
+        assert!(!destination.join("target/stale.json").exists());
+
+        std::fs::remove_dir_all(source).ok();
+        std::fs::remove_dir_all(destination).ok();
     }
 
     fn temp_root() -> camino::Utf8PathBuf {

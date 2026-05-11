@@ -148,7 +148,7 @@
 		if (worklogFilter === 'all') return true;
 		if (worklogFilter === 'codex') return op.op.includes('codex');
 		if (worklogFilter === 'claude') return op.op.includes('claude-code');
-		return op.op.startsWith('xtal.') || op.op.startsWith('spec.') || op.op.startsWith('impl.');
+		return isX07WorkflowOp(op.op);
 	});
 	$: selectedBindingId = selectedBindingId || bindings[0]?.id || '';
 	$: pendingApprovals = worklog.filter(
@@ -235,6 +235,30 @@
 		const label = rooms.find((item) => item.id === room)?.label ?? room;
 		selectedRoom = room;
 		statusLine = `Focused ${label} room`;
+	}
+
+	function isX07WorkflowOp(op: string) {
+		return [
+			'project.',
+			'spec.',
+			'tests.',
+			'test.',
+			'gen.',
+			'sm.',
+			'arch.',
+			'pkg.',
+			'run.',
+			'bundle.',
+			'impl.',
+			'xtal.'
+		].some((prefix) => op.startsWith(prefix));
+	}
+
+	function focusRoomFromKey(event: KeyboardEvent, room: Room) {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			focusRoom(room);
+		}
 	}
 
 	function selectSession(sessionId: string) {
@@ -497,9 +521,11 @@
 					class:active={selectedRoom === room.id}
 					type="button"
 					role="tab"
+					data-room={room.id}
 					aria-label={room.label}
 					aria-selected={selectedRoom === room.id}
-					on:click={() => focusRoom(room.id)}
+					on:pointerdown={() => focusRoom(room.id)}
+					on:keydown={(event) => focusRoomFromKey(event, room.id)}
 				>
 					<span>{room.label}</span>
 					<small>{roomStatus[room.id].state}</small>

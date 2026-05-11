@@ -126,6 +126,11 @@ describe('x07 Studio XTAL web model', () => {
 
 		expect(ids).toContain('project.init.xtal-pure');
 		expect(ids).toContain('tests.gen.write');
+		expect(ids).toContain('gen.verify');
+		expect(ids).toContain('test.manifest');
+		expect(ids).toContain('run.stdin');
+		expect(ids).toContain('run.sandbox.os');
+		expect(ids).toContain('run.sandbox.stdin.os');
 		expect(ids).toContain('impl.sync.write');
 	});
 

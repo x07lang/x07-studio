@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
@@ -33,7 +34,20 @@ impl CommandRunner {
         args: &[String],
         envs: &BTreeMap<String, String>,
     ) -> anyhow::Result<CommandExecution> {
-        self.run_with_timeout(cwd, program, args, envs, None).await
+        self.run_with_timeout_and_stdin(cwd, program, args, envs, None, None)
+            .await
+    }
+
+    pub async fn run_with_stdin(
+        &self,
+        cwd: &Utf8Path,
+        program: &str,
+        args: &[String],
+        envs: &BTreeMap<String, String>,
+        stdin: &str,
+    ) -> anyhow::Result<CommandExecution> {
+        self.run_with_timeout_and_stdin(cwd, program, args, envs, None, Some(stdin))
+            .await
     }
 
     pub async fn run_with_timeout(
@@ -44,11 +58,28 @@ impl CommandRunner {
         envs: &BTreeMap<String, String>,
         timeout_seconds: Option<u64>,
     ) -> anyhow::Result<CommandExecution> {
+        self.run_with_timeout_and_stdin(cwd, program, args, envs, timeout_seconds, None)
+            .await
+    }
+
+    async fn run_with_timeout_and_stdin(
+        &self,
+        cwd: &Utf8Path,
+        program: &str,
+        args: &[String],
+        envs: &BTreeMap<String, String>,
+        timeout_seconds: Option<u64>,
+        stdin: Option<&str>,
+    ) -> anyhow::Result<CommandExecution> {
         let started_at = now_string();
         let mut command = Command::new(program);
         command.current_dir(cwd.as_std_path());
         command.args(args);
-        command.stdin(Stdio::null());
+        command.stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
         command.kill_on_drop(true);
@@ -56,10 +87,25 @@ impl CommandRunner {
             command.env(key, value);
         }
 
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("failed to spawn `{program}`"))?;
+        if let Some(input) = stdin {
+            if let Some(mut child_stdin) = child.stdin.take() {
+                child_stdin
+                    .write_all(input.as_bytes())
+                    .await
+                    .with_context(|| format!("failed to write stdin for `{program}`"))?;
+            }
+        }
         let output = if let Some(seconds) = timeout_seconds {
-            match tokio::time::timeout(Duration::from_secs(seconds.max(1)), command.output()).await
+            match tokio::time::timeout(
+                Duration::from_secs(seconds.max(1)),
+                child.wait_with_output(),
+            )
+            .await
             {
-                Ok(output) => output.with_context(|| format!("failed to spawn `{program}`"))?,
+                Ok(output) => output.with_context(|| format!("failed to wait for `{program}`"))?,
                 Err(_) => {
                     let stderr = format!("command timed out after {} seconds", seconds.max(1));
                     return Ok(CommandExecution {
@@ -77,10 +123,10 @@ impl CommandRunner {
                 }
             }
         } else {
-            command
-                .output()
+            child
+                .wait_with_output()
                 .await
-                .with_context(|| format!("failed to spawn `{program}`"))?
+                .with_context(|| format!("failed to wait for `{program}`"))?
         };
 
         let finished_at = now_string();
@@ -116,4 +162,29 @@ fn parse_json(input: &str) -> Option<Value> {
         return None;
     }
     serde_json::from_str(trimmed).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::CommandRunner;
+
+    #[tokio::test]
+    async fn runner_can_supply_stdin() {
+        let cwd = camino::Utf8PathBuf::from_path_buf(std::env::temp_dir()).expect("utf8 temp");
+        let execution = CommandRunner
+            .run_with_stdin(
+                cwd.as_path(),
+                "/bin/sh",
+                &["-c".to_string(), "cat".to_string()],
+                &BTreeMap::new(),
+                "verify",
+            )
+            .await
+            .expect("run stdin command");
+
+        assert_eq!(execution.exit_code, Some(0));
+        assert_eq!(execution.stdout, "verify");
+    }
 }

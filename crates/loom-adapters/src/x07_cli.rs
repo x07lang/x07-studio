@@ -147,11 +147,22 @@ impl CliAdapter {
         }
 
         let program = resolve_program(binding.program);
-        let execution = self
-            .runner
-            .run(&self.root, &program, &rendered.args, &BTreeMap::new())
-            .await
-            .with_context(|| format!("binding `{binding_id}` failed to spawn"))?;
+        let execution = if let Some(stdin) = vars.get("stdin") {
+            self.runner
+                .run_with_stdin(
+                    &self.root,
+                    &program,
+                    &rendered.args,
+                    &BTreeMap::new(),
+                    stdin,
+                )
+                .await
+        } else {
+            self.runner
+                .run(&self.root, &program, &rendered.args, &BTreeMap::new())
+                .await
+        }
+        .with_context(|| format!("binding `{binding_id}` failed to spawn"))?;
 
         let report_json = match binding.machine_json {
             MachineJsonMode::ReportFile => report_path
@@ -336,6 +347,205 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
         ],
         artifacts: &["gen/xtal/tests.json"],
         notes: "Check generated tests from spec for drift.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "gen.verify",
+        category: "x07/gen",
+        program: ProgramKey::X07,
+        args: &["gen", "verify", "--index", "arch/gen/index.x07gen.json"],
+        artifacts: &["gen/"],
+        notes: "Verify generated artifacts against the generator index.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "test.manifest",
+        category: "x07/test",
+        program: ProgramKey::X07,
+        args: &["test", "--manifest", "tests/tests.json"],
+        artifacts: &["target/x07test"],
+        notes: "Run the project test manifest.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "test.xtal.generated.all",
+        category: "x07/test",
+        program: ProgramKey::X07,
+        args: &[
+            "test",
+            "--all",
+            "--no-fail-fast",
+            "--manifest",
+            "gen/xtal/tests.json",
+        ],
+        artifacts: &["target/x07test"],
+        notes: "Run generated XTAL examples and properties.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "test.sm.generated",
+        category: "x07/test",
+        program: ProgramKey::X07,
+        args: &["test", "--manifest", "gen/sm/tests.manifest.json"],
+        artifacts: &["target/x07test"],
+        notes: "Run generated state-machine tests.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "sm.gen.write",
+        category: "x07/sm",
+        program: ProgramKey::X07,
+        args: &[
+            "sm",
+            "gen",
+            "--input",
+            "arch/sm/specs/lifecycle.sm.json",
+            "--out",
+            "gen/sm",
+            "--write",
+        ],
+        artifacts: &["gen/sm"],
+        notes: "Generate state-machine implementation and tests.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "arch.check.write_lock",
+        category: "x07/arch",
+        program: ProgramKey::X07,
+        args: &["arch", "check", "--write-lock"],
+        artifacts: &["arch/manifest.lock.json", "arch/contracts.lock.json"],
+        notes: "Check architecture contracts and refresh locks.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "pkg.lock",
+        category: "x07/package",
+        program: ProgramKey::X07,
+        args: &["pkg", "lock", "--project", "x07.json"],
+        artifacts: &["x07.lock.json"],
+        notes: "Resolve and write the project lockfile.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "run.sandbox",
+        category: "x07/run",
+        program: ProgramKey::X07,
+        args: &["run", "--profile", "sandbox"],
+        artifacts: &["target/x07run"],
+        notes: "Run the project through the sandbox profile.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "run.sandbox.os",
+        category: "x07/run",
+        program: ProgramKey::X07,
+        args: &[
+            "run",
+            "--profile",
+            "sandbox",
+            "--sandbox-backend",
+            "os",
+            "--i-accept-weaker-isolation",
+        ],
+        artifacts: &["target/x07run"],
+        notes: "Run the sandbox profile with explicit OS-backed weaker isolation.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "run.stdin",
+        category: "x07/run",
+        program: ProgramKey::X07,
+        args: &["run", "--stdin"],
+        artifacts: &["target/x07run"],
+        notes: "Run the project with stdin supplied by Studio.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "run.sandbox.stdin",
+        category: "x07/run",
+        program: ProgramKey::X07,
+        args: &["run", "--profile", "sandbox", "--stdin"],
+        artifacts: &["target/x07run"],
+        notes: "Run the sandbox profile with stdin supplied by Studio.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "run.sandbox.stdin.os",
+        category: "x07/run",
+        program: ProgramKey::X07,
+        args: &[
+            "run",
+            "--profile",
+            "sandbox",
+            "--sandbox-backend",
+            "os",
+            "--i-accept-weaker-isolation",
+            "--stdin",
+        ],
+        artifacts: &["target/x07run"],
+        notes: "Run the sandbox profile with Studio stdin and explicit OS-backed weaker isolation.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "bundle.api_gateway.sandbox",
+        category: "x07/bundle",
+        program: ProgramKey::X07,
+        args: &[
+            "bundle",
+            "--profile",
+            "sandbox",
+            "--out",
+            "dist/x07-api-gateway",
+        ],
+        artifacts: &["dist/x07-api-gateway"],
+        notes: "Bundle the API gateway sandbox executable.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "bundle.api_gateway.sandbox.os",
+        category: "x07/bundle",
+        program: ProgramKey::X07,
+        args: &[
+            "bundle",
+            "--profile",
+            "sandbox",
+            "--sandbox-backend",
+            "os",
+            "--i-accept-weaker-isolation",
+            "--out",
+            "dist/x07-api-gateway",
+        ],
+        artifacts: &["dist/x07-api-gateway"],
+        notes:
+            "Bundle the API gateway sandbox executable with explicit OS-backed weaker isolation.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "bundle.dbguard.sandbox",
+        category: "x07/bundle",
+        program: ProgramKey::X07,
+        args: &["bundle", "--profile", "sandbox", "--out", "dist/x07dbguard"],
+        artifacts: &["dist/x07dbguard"],
+        notes: "Bundle the DB drift guard sandbox executable.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "bundle.dbguard.sandbox.os",
+        category: "x07/bundle",
+        program: ProgramKey::X07,
+        args: &[
+            "bundle",
+            "--profile",
+            "sandbox",
+            "--sandbox-backend",
+            "os",
+            "--i-accept-weaker-isolation",
+            "--out",
+            "dist/x07dbguard",
+        ],
+        artifacts: &["dist/x07dbguard"],
+        notes:
+            "Bundle the DB drift guard sandbox executable with explicit OS-backed weaker isolation.",
         machine_json: MachineJsonMode::ReportFile,
     },
     BindingTemplate {
@@ -798,6 +1008,22 @@ mod tests {
             "spec.scaffold",
             "spec.check",
             "tests.gen.check",
+            "gen.verify",
+            "test.manifest",
+            "test.xtal.generated.all",
+            "test.sm.generated",
+            "sm.gen.write",
+            "arch.check.write_lock",
+            "pkg.lock",
+            "run.sandbox",
+            "run.sandbox.os",
+            "run.stdin",
+            "run.sandbox.stdin",
+            "run.sandbox.stdin.os",
+            "bundle.api_gateway.sandbox",
+            "bundle.api_gateway.sandbox.os",
+            "bundle.dbguard.sandbox",
+            "bundle.dbguard.sandbox.os",
             "impl.sync.write",
             "impl.sync.patchset",
             "xtal.dev",

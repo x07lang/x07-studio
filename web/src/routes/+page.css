@@ -99,6 +99,11 @@ dt {
 	color: var(--text);
 }
 
+.room-list button span,
+.room-list button small {
+	pointer-events: none;
+}
+
 .room-list button small,
 .session-stack small {
 	font-size: 11px;
