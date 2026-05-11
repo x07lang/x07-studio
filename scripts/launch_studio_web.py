@@ -18,12 +18,22 @@ import webbrowser
 from pathlib import Path
 
 
+COMPONENT_ENV_KEYS = {
+    "X07_STUDIO_X07_EXE",
+    "X07_STUDIO_X07_WASM_EXE",
+    "X07_STUDIO_X07LP_EXE",
+}
+PATH_SETTING_KEYS = {
+    "X07_STUDIO_WORKSPACE_ROOT",
+}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle-root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--root", type=Path, default=Path.home() / "x07-studio-workspace")
-    parser.add_argument("--daemon-addr", default="127.0.0.1:7719")
-    parser.add_argument("--web-addr", default="127.0.0.1:7720")
+    parser.add_argument("--root", type=Path)
+    parser.add_argument("--daemon-addr")
+    parser.add_argument("--web-addr")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument(
         "--no-install-missing",
@@ -45,10 +55,16 @@ def main() -> int:
         print(f"web app not found under {bundle_root}", file=sys.stderr)
         return 1
 
-    args.root.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     defaults_path = bundle_root / "defaults.env"
     load_env_file(defaults_path, env)
+    workspace_root = configured_path(
+        args.root,
+        env.get("X07_STUDIO_WORKSPACE_ROOT"),
+        Path.home() / "x07-studio-workspace",
+    )
+    daemon_addr = args.daemon_addr or env.get("X07_STUDIO_DAEMON_ADDR") or "127.0.0.1:7719"
+    web_addr = args.web_addr or env.get("X07_STUDIO_WEB_ADDR") or "127.0.0.1:7720"
     if not args.skip_bootstrap:
         run_component_bootstrap(
             bundle_root,
@@ -58,12 +74,13 @@ def main() -> int:
         )
         load_env_file(defaults_path, env)
 
-    daemon = start_daemon(bundle_root, args.root, args.daemon_addr, env)
-    wait_for_daemon(f"http://{args.daemon_addr}/v1/health")
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    daemon = start_daemon(bundle_root, workspace_root, daemon_addr, env)
+    wait_for_daemon(f"http://{daemon_addr}/v1/health")
     try:
-        url = f"http://{args.web_addr}"
-        server = make_server(args.web_addr, web_root, f"http://{args.daemon_addr}")
-        print(json.dumps({"studio_url": url, "workspace_root": str(args.root)}, indent=2))
+        url = f"http://{web_addr}"
+        server = make_server(web_addr, web_root, f"http://{daemon_addr}")
+        print(json.dumps({"studio_url": url, "workspace_root": str(workspace_root)}, indent=2))
         if not args.no_open:
             webbrowser.open(url)
         server.serve_forever()
@@ -82,10 +99,24 @@ def load_env_file(path: Path, env: dict[str, str]) -> None:
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key, value = stripped.split("=", 1)
-        normalized = value.strip().strip('"')
-        if key.startswith("X07_STUDIO_") and normalized and not Path(normalized).is_absolute():
-            normalized = str((path.parent / normalized).resolve())
+        key = key.strip()
+        normalized = normalize_env_value(key, value.strip().strip('"'), path.parent)
         env[key] = normalized
+
+
+def normalize_env_value(key: str, value: str, base: Path) -> str:
+    if not value:
+        return value
+    if key in COMPONENT_ENV_KEYS and not Path(value).is_absolute():
+        return str((base / value).resolve())
+    if key in PATH_SETTING_KEYS:
+        return os.path.expandvars(os.path.expanduser(value))
+    return value
+
+
+def configured_path(cli_value: Path | None, env_value: str | None, default: Path) -> Path:
+    value = cli_value if cli_value is not None else Path(env_value) if env_value else default
+    return Path(os.path.expandvars(os.path.expanduser(str(value))))
 
 
 def run_component_bootstrap(

@@ -53,6 +53,28 @@ class BootstrapComponentsTest(unittest.TestCase):
                 env_path.read_text(encoding="utf-8"),
             )
 
+    def test_write_env_file_preserves_onboarding_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            env_path = root / "defaults.env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        'X07_STUDIO_WORKSPACE_ROOT="/tmp/custom-studio"',
+                        'X07_STUDIO_WEB_ADDR="127.0.0.1:8830"',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            bootstrap.write_env_file(env_path, [])
+            content = env_path.read_text(encoding="utf-8")
+
+            self.assertIn('X07_STUDIO_WORKSPACE_ROOT="/tmp/custom-studio"', content)
+            self.assertIn('X07_STUDIO_WEB_ADDR="127.0.0.1:8830"', content)
+            self.assertIn('X07_STUDIO_DAEMON_ADDR="127.0.0.1:7719"', content)
+
     def test_sibling_source_searches_workspace_ancestors(self) -> None:
         with tempfile.TemporaryDirectory() as raw_root:
             root = Path(raw_root)

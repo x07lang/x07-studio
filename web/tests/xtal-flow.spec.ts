@@ -110,6 +110,12 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Setup readiness')).toContainText('x07-wasm');
 	await expect(page.getByLabel('Setup readiness')).toContainText('x07 platform');
 	await expect(page.getByLabel('Counterexample theater')).toContainText('No counterexample captured');
+	await expect(page.getByLabel('Provider intent polish')).toContainText('Deterministic polish only');
+	await page.getByLabel('Provider intent polish').getByRole('checkbox').check();
+	await expect(page.getByLabel('Provider profile')).toBeEnabled();
+	await page.getByLabel('Provider profile').fill('ollama-local');
+	await expect(page.getByLabel('Provider intent polish')).toContainText('Model suggestions');
+	await page.getByLabel('Provider intent polish').getByRole('checkbox').uncheck();
 
 	await page.getByRole('button', { name: 'Refresh Studio' }).click();
 	await expect(page.getByText('Demo projection active')).toBeVisible();

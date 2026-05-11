@@ -146,6 +146,42 @@ describe('x07 Studio XTAL web model', () => {
 		expect(response.session.op_log.at(-1)?.op).toBe('intent.formalize');
 	});
 
+	it('sends provider profile selection for connected intent polish', async () => {
+		const originalFetch = globalThis.fetch;
+		const api = new StudioApi();
+		const session = demoSession();
+		const intent = createIntentPacket(session, 'Create a sorter.');
+		const logged = appendDemoOp(session, 'intent.formalize', 'succeeded');
+		let requestBody: Record<string, unknown> = {};
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const path = String(input);
+			if (path.endsWith('/v1/health')) {
+				return new Response(JSON.stringify({ ok: true, workspace_root: '/workspace' }), {
+					status: 200
+				});
+			}
+			if (path.includes('/intent/formalize')) {
+				requestBody = JSON.parse(String(init?.body ?? '{}'));
+				return new Response(
+					JSON.stringify({
+						intent,
+						op: logged.op_log[0],
+						session: { ...logged, intent }
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response('not found', { status: 404 });
+		}) as typeof fetch;
+		try {
+			await api.health();
+			await api.formalizeIntent(session, 'Create a sorter.', 'text', [], 'ollama-local');
+			expect(requestBody?.provider_profile_id).toBe('ollama-local');
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	it('keeps the approval gate before realization', () => {
 		const session = demoSession();
 		const intentReady = reduceDemoEvent(

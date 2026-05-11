@@ -12,6 +12,12 @@ from pathlib import Path
 
 
 BINARIES = ("loom-daemon", "x07-studio", "x07-studio-forge")
+SETTING_DEFAULTS = {
+    "X07_STUDIO_WORKSPACE_ROOT": "~/x07-studio-workspace",
+    "X07_STUDIO_DAEMON_ADDR": "127.0.0.1:7719",
+    "X07_STUDIO_DAEMON_URL": "http://127.0.0.1:7719",
+    "X07_STUDIO_WEB_ADDR": "127.0.0.1:7720",
+}
 
 
 def main() -> int:
@@ -154,7 +160,12 @@ def default_env(bundled_components: dict[str, str]) -> str:
     lines = [
         "# Optional local overrides generated for x07 Studio standalone bundles.",
         "# Fill these only when the commands are not available on PATH.",
+        "",
+        "# Onboarding defaults used by standalone launchers.",
     ]
+    for key, value in SETTING_DEFAULTS.items():
+        lines.append(f'{key}="{value}"')
+    lines.extend(["", "# Runtime component overrides."])
     for component_id, relative_path in sorted(bundled_components.items()):
         lines.append(f'{env_by_id[component_id]}="{relative_path}"')
     lines.extend(
@@ -187,6 +198,9 @@ source checkouts when they are available, refreshes `defaults.env`, starts
 `loom-daemon`, serves the static web app on
 `http://{manifest["web_addr"]}`, and proxies `/v1/**` to the daemon. The native
 desktop shell is available at `bin/{binary_name("x07-studio")}`.
+The generated `defaults.env` sets a first-run workspace at
+`~/x07-studio-workspace`, local daemon/web addresses, and any bundled component
+paths.
 
 For a read-only setup check, run:
 

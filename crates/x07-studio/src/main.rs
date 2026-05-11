@@ -20,16 +20,23 @@ use loom_types::mcp::{McpEndpoint, McpHttpEndpoint};
 use loom_types::ops::SessionEvent;
 use loom_types::session::{SessionPhase, SessionSnapshot};
 
+const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:7719";
+const COMPONENT_ENV_KEYS: &[&str] = &[
+    "X07_STUDIO_X07_EXE",
+    "X07_STUDIO_X07_WASM_EXE",
+    "X07_STUDIO_X07LP_EXE",
+];
+
 #[derive(Debug, Parser)]
 #[command(name = "x07-studio")]
 #[command(version)]
 #[command(about = "GUI shell for x07 Studio.")]
 struct Cli {
-    #[arg(long, default_value = "http://127.0.0.1:7719")]
-    daemon_url: String,
+    #[arg(long)]
+    daemon_url: Option<String>,
 
-    #[arg(long, default_value = ".")]
-    root: String,
+    #[arg(long)]
+    root: Option<String>,
 
     #[arg(long, help = "Use the daemon URL without starting an embedded daemon")]
     external_daemon: bool,
@@ -45,8 +52,17 @@ fn main() -> eframe::Result<()> {
     }
     let options = eframe::NativeOptions::default();
     let launch = StudioLaunch {
-        daemon_url: cli.daemon_url.clone(),
-        root: cli.root.clone(),
+        daemon_url: cli
+            .daemon_url
+            .clone()
+            .or_else(|| std::env::var("X07_STUDIO_DAEMON_URL").ok())
+            .unwrap_or_else(|| DEFAULT_DAEMON_URL.to_string()),
+        root: cli
+            .root
+            .clone()
+            .or_else(|| std::env::var("X07_STUDIO_WORKSPACE_ROOT").ok())
+            .map(expand_user_path)
+            .unwrap_or_else(|| ".".to_string()),
         external_daemon: cli.external_daemon,
     };
 
@@ -601,13 +617,28 @@ fn parse_defaults_line(line: &str, base: &StdPath) -> Option<(String, String)> {
         return None;
     }
     let mut value = value.trim().trim_matches('"').to_string();
-    if key.starts_with("X07_STUDIO_") && !value.is_empty() {
+    if COMPONENT_ENV_KEYS.contains(&key) && !value.is_empty() {
         let path = StdPath::new(&value);
         if path.is_relative() {
             value = base.join(path).to_string_lossy().into_owned();
         }
     }
     Some((key.to_string(), value))
+}
+
+fn expand_user_path(value: String) -> String {
+    let Some(rest) = value.strip_prefix("~/") else {
+        return value;
+    };
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|home| {
+            StdPath::new(&home)
+                .join(rest)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .unwrap_or(value)
 }
 
 fn parse_vars_map(input: &str) -> anyhow::Result<BTreeMap<String, String>> {
@@ -633,7 +664,7 @@ fn parse_vars_map(input: &str) -> anyhow::Result<BTreeMap<String, String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_defaults_line;
+    use super::{expand_user_path, parse_defaults_line};
     use std::path::Path;
 
     #[test]
@@ -651,5 +682,25 @@ mod tests {
     #[test]
     fn defaults_env_ignores_comments() {
         assert!(parse_defaults_line("# X07_STUDIO_X07_EXE=\"/tmp/x07\"", Path::new(".")).is_none());
+    }
+
+    #[test]
+    fn defaults_env_keeps_non_component_settings_literal() {
+        let parsed = parse_defaults_line(
+            "X07_STUDIO_WORKSPACE_ROOT=\"~/x07-studio-workspace\"",
+            Path::new("/tmp/x07-studio-bundle"),
+        )
+        .expect("parsed env line");
+
+        assert_eq!(parsed.0, "X07_STUDIO_WORKSPACE_ROOT");
+        assert_eq!(parsed.1, "~/x07-studio-workspace");
+    }
+
+    #[test]
+    fn workspace_root_expands_home_prefix() {
+        let expanded = expand_user_path("~/x07-studio-workspace".to_string());
+
+        assert!(!expanded.starts_with("~/"));
+        assert!(expanded.ends_with("x07-studio-workspace"));
     }
 }

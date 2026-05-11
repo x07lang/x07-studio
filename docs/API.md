@@ -114,7 +114,8 @@ Formalize intent request:
 {
   "raw": "{\"schema_version\":\"x07.x07spec@0.1.0\",\"module_id\":\"toy.sorter\",\"operations\":[{\"id\":\"op.sort_u8_asc.v1\",\"name\":\"toy.sorter.sort_u8_asc\"}]}",
   "input_mode": "spec",
-  "revision_notes": ["Keep the provided spec as the reviewed behavior source."]
+  "revision_notes": ["Keep the provided spec as the reviewed behavior source."],
+  "provider_profile_id": null
 }
 ```
 
@@ -122,6 +123,13 @@ The daemon compiles written plans, voice transcripts, existing `x07.x07spec`
 JSON, and incident notes into a `x07.studio.intent_packet@0.1.0`, applies the
 legal `formalize_intent` lifecycle transition, and appends a visible
 `intent.formalize` operation record with the generated packet in `report_json`.
+When `provider_profile_id` names a configured OpenAI-compatible provider,
+Studio asks that model for concise intent-polish suggestions and merges only
+review metadata such as examples, constraints, ambiguities, assumptions, policy
+implications, and witnesses. Provider output is recorded under
+`report_json.provider_polish`; deterministic intent generation remains the
+fallback when the provider is missing, disabled, unavailable, or returns
+unparseable JSON.
 For `input_mode: "spec"`, the kernel keeps the provided spec as the auditable
 source and derives the target module/entry from `module_id` and the first
 operation name or id. Browser clients should use this endpoint instead of

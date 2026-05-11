@@ -778,6 +778,39 @@ textarea {
 	font-size: 12px;
 }
 
+.provider-polish {
+	display: grid;
+	grid-template-columns: minmax(140px, 0.6fr) minmax(0, 1fr);
+	gap: 6px 8px;
+	align-items: center;
+	margin-top: 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 8px;
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.provider-polish label {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	color: var(--text);
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.provider-polish input[type='checkbox'] {
+	width: 14px;
+	height: 14px;
+	accent-color: var(--accent);
+}
+
+.provider-polish small {
+	grid-column: 1 / -1;
+	color: var(--muted);
+	font-size: 11px;
+}
+
 .approval-banner {
 	display: inline-flex;
 	border: 1px solid rgba(255, 195, 91, 0.42);

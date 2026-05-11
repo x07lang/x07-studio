@@ -89,6 +89,7 @@ pub struct FormalizeIntentRequest {
     pub raw: String,
     pub input_mode: IntentInputMode,
     pub revision_notes: Vec<String>,
+    pub provider_profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

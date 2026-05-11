@@ -58,6 +58,8 @@
 	let inputMode: IntentInputMode = 'text';
 	let revisionText = initialProject.revision;
 	let revisionHistory: string[] = [];
+	let useProviderPolish = false;
+	let providerProfileId = '';
 	let statusLine = 'Starting Studio surface';
 	let handoffStatus = 'No agent handoff generated';
 	let busy = false;
@@ -227,6 +229,8 @@
 	$: visibleAgent =
 		activeAgentProfile?.label ?? (selectedAgentId === 'claude-code' ? 'Claude Code' : 'OpenAI Codex');
 	$: providerSummary = api.isDemoMode ? 'demo projection' : 'Loom daemon';
+	$: defaultProviderProfileId = health.defaults.provider_profile_id || 'ollama-local';
+	$: if (!providerProfileId && defaultProviderProfileId) providerProfileId = defaultProviderProfileId;
 	$: setupComponents = health.components ?? [];
 	$: missingRequiredComponents = setupComponents.filter(
 		(component) => component.required && component.status !== 'available'
@@ -673,10 +677,16 @@
 		if (!selected) return;
 		busy = true;
 		try {
-			const response = await api.formalizeIntent(selected, promptText, inputMode, revisionHistory);
+			const response = await api.formalizeIntent(
+				selected,
+				promptText,
+				inputMode,
+				revisionHistory,
+				selectedProviderPolishProfile()
+			);
 			await replaceSession(response.session);
 			approvalState = 'awaiting';
-			statusLine = `${visibleAgent} polished the plan into an auditable intent packet`;
+			statusLine = `${visibleAgent} polished the plan into an auditable intent packet${useProviderPolish ? ' with provider evidence' : ''}`;
 		} finally {
 			busy = false;
 		}
@@ -817,7 +827,13 @@
 	async function approveSpecSnapshot(session: SessionSnapshot): Promise<SessionSnapshot> {
 		let current = session;
 		if (!current.intent || approvalState === 'changes') {
-			const response = await api.formalizeIntent(current, promptText, inputMode, revisionHistory);
+			const response = await api.formalizeIntent(
+				current,
+				promptText,
+				inputMode,
+				revisionHistory,
+				selectedProviderPolishProfile()
+			);
 			current = response.session;
 		}
 		if (current.phase === 'intent_ready') {
@@ -835,6 +851,11 @@
 		}
 		approvalState = 'approved';
 		return current;
+	}
+
+	function selectedProviderPolishProfile() {
+		if (!useProviderPolish) return undefined;
+		return providerProfileId.trim() || defaultProviderProfileId;
 	}
 </script>
 
@@ -1126,6 +1147,18 @@
 						<div class="revision-lane">
 							<label for="revision">Revision</label>
 							<input id="revision" bind:value={revisionText} />
+						</div>
+						<div class="provider-polish" aria-label="Provider intent polish">
+							<label>
+								<input type="checkbox" bind:checked={useProviderPolish} />
+								<span>Provider polish</span>
+							</label>
+							<input
+								aria-label="Provider profile"
+								bind:value={providerProfileId}
+								disabled={!useProviderPolish}
+							/>
+							<small>{useProviderPolish ? 'Model suggestions are merged as review evidence.' : 'Deterministic polish only.'}</small>
 						</div>
 					</div>
 					<div class="spec-preview" aria-label="Spec approval preview">

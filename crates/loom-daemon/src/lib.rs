@@ -343,12 +343,14 @@ async fn formalize_intent(
 ) -> Result<Json<FormalizeIntentResponse>, (StatusCode, String)> {
     let mut kernel = state.kernel.lock().await;
     let (intent, op, session) = kernel
-        .formalize_intent(
+        .formalize_intent_with_provider(
             session_id,
             &request.raw,
             request.input_mode,
             &request.revision_notes,
+            request.provider_profile_id.as_deref(),
         )
+        .await
         .map_err(conflict_error)?;
     Ok(Json(FormalizeIntentResponse {
         intent,

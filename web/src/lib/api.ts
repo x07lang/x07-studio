@@ -145,7 +145,8 @@ export class StudioApi {
 		session: SessionSnapshot,
 		raw: string,
 		inputMode: IntentInputMode,
-		revisionNotes: string[]
+		revisionNotes: string[],
+		providerProfileId?: string
 	): Promise<FormalizeIntentResponse> {
 		if (!this.demoMode) {
 			try {
@@ -156,7 +157,8 @@ export class StudioApi {
 						body: JSON.stringify({
 							raw,
 							input_mode: inputMode,
-							revision_notes: revisionNotes
+							revision_notes: revisionNotes,
+							provider_profile_id: providerProfileId || null
 						})
 					}
 				);

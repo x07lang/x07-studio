@@ -13,7 +13,7 @@ use loom_adapters::command_runner::{
     now_string, CommandExecution, CommandRunner, CommandStreamUpdate,
 };
 use loom_adapters::mcp::{boxed_client, McpClient};
-use loom_adapters::providers::ProviderProber;
+use loom_adapters::providers::{ProviderIntentPolishRequest, ProviderProber};
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
 use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
@@ -425,13 +425,82 @@ impl WorkspaceKernel {
                 SessionEvent::FormalizeIntent(Box::new(intent.clone())),
             )
             .map_err(|error| anyhow!(error.to_string()))?;
-        let op = intent_formalize_op(session_id, &intent, input_mode, revision_notes);
+        let op = intent_formalize_op(session_id, &intent, input_mode, revision_notes, None);
         let snapshot = self
             .model
             .dispatch(session_id, SessionEvent::AppendOp(Box::new(op.clone())))
             .map_err(|error| anyhow!(error.to_string()))?;
         self.store.save_session(&snapshot)?;
         Ok((intent, op, snapshot))
+    }
+
+    pub async fn formalize_intent_with_provider(
+        &mut self,
+        session_id: Uuid,
+        raw: &str,
+        input_mode: IntentInputMode,
+        revision_notes: &[String],
+        provider_profile_id: Option<&str>,
+    ) -> anyhow::Result<(IntentPacket, OpRecord, SessionSnapshot)> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let mut intent = intent_packet_from_raw(&session, raw, input_mode.clone(), revision_notes);
+        let provider_report = match provider_profile_id.and_then(|id| non_empty(id)) {
+            Some(profile_id) => {
+                let profile = self.provider_profile_by_id(profile_id);
+                let providers = self.providers.clone();
+                Some(
+                    apply_provider_intent_polish(
+                        &providers,
+                        profile,
+                        &mut intent,
+                        raw,
+                        &input_mode,
+                        revision_notes,
+                        profile_id,
+                    )
+                    .await,
+                )
+            }
+            None => None,
+        };
+        if input_mode == IntentInputMode::Incident {
+            persist_manual_incident_bundle(self.root.as_path(), &intent)?;
+        }
+        self.model
+            .dispatch(
+                session_id,
+                SessionEvent::FormalizeIntent(Box::new(intent.clone())),
+            )
+            .map_err(|error| anyhow!(error.to_string()))?;
+        let op = intent_formalize_op(
+            session_id,
+            &intent,
+            input_mode,
+            revision_notes,
+            provider_report,
+        );
+        let snapshot = self
+            .model
+            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op.clone())))
+            .map_err(|error| anyhow!(error.to_string()))?;
+        self.store.save_session(&snapshot)?;
+        Ok((intent, op, snapshot))
+    }
+
+    fn provider_profile_by_id(&self, provider_profile_id: &str) -> Option<ProviderProfile> {
+        self.store
+            .load_provider_profiles()
+            .ok()?
+            .into_iter()
+            .find(|profile| profile.id == provider_profile_id)
+            .or_else(|| {
+                let profile = ProviderProfile::local_ollama();
+                (profile.id == provider_profile_id).then_some(profile)
+            })
     }
 
     pub async fn run_binding(
@@ -1598,6 +1667,132 @@ fn intent_packet_from_raw(
     }
 }
 
+fn non_empty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
+async fn apply_provider_intent_polish(
+    providers: &ProviderProber,
+    profile: Option<ProviderProfile>,
+    intent: &mut IntentPacket,
+    raw: &str,
+    input_mode: &IntentInputMode,
+    revision_notes: &[String],
+    provider_profile_id: &str,
+) -> serde_json::Value {
+    let Some(profile) = profile else {
+        return serde_json::json!({
+            "schema_version": "x07.studio.intent_polish_report@0.1.0",
+            "profile_id": provider_profile_id,
+            "ok": false,
+            "skipped": true,
+            "notes": ["provider profile was not configured; deterministic intent was used"]
+        });
+    };
+    let request = ProviderIntentPolishRequest {
+        raw: raw.to_string(),
+        input_mode: format!("{input_mode:?}"),
+        revision_notes: revision_notes.to_vec(),
+        deterministic_intent: serde_json::to_value(&*intent).unwrap_or_default(),
+    };
+    match providers.polish_intent(&profile, &request).await {
+        Ok(report) => {
+            if let Some(json) = &report.json {
+                merge_provider_intent_polish(intent, json);
+            }
+            serde_json::to_value(report).unwrap_or_else(|error| {
+                serde_json::json!({
+                    "schema_version": "x07.studio.intent_polish_report@0.1.0",
+                    "profile_id": provider_profile_id,
+                    "ok": false,
+                    "notes": [format!("provider report serialization failed: {error}")]
+                })
+            })
+        }
+        Err(error) => serde_json::json!({
+            "schema_version": "x07.studio.intent_polish_report@0.1.0",
+            "profile_id": provider_profile_id,
+            "ok": false,
+            "notes": [format!("provider polish failed: {error}; deterministic intent was used")]
+        }),
+    }
+}
+
+fn merge_provider_intent_polish(intent: &mut IntentPacket, polish: &serde_json::Value) {
+    append_string_array(&mut intent.examples, polish.get("examples"));
+    append_string_array(&mut intent.constraints, polish.get("constraints"));
+    append_string_array(
+        &mut intent.policy_implications,
+        polish.get("policy_implications"),
+    );
+    append_string_array(&mut intent.ambiguities, polish.get("ambiguities"));
+    append_string_array(&mut intent.assumptions, polish.get("assumptions"));
+    append_witnesses(&mut intent.witnesses, polish.get("witnesses"));
+}
+
+fn append_string_array(target: &mut Vec<String>, value: Option<&serde_json::Value>) {
+    let Some(items) = value.and_then(serde_json::Value::as_array) else {
+        return;
+    };
+    for item in items.iter().filter_map(serde_json::Value::as_str).take(16) {
+        append_unique(target, item);
+    }
+}
+
+fn append_unique(target: &mut Vec<String>, item: &str) {
+    let trimmed = item.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let bounded = trimmed.chars().take(512).collect::<String>();
+    if !target.iter().any(|existing| existing == &bounded) {
+        target.push(bounded);
+    }
+}
+
+fn append_witnesses(target: &mut Vec<Witness>, value: Option<&serde_json::Value>) {
+    let Some(items) = value.and_then(serde_json::Value::as_array) else {
+        return;
+    };
+    for item in items.iter().take(16) {
+        let Some(kind) = item
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .and_then(witness_kind_from_str)
+        else {
+            continue;
+        };
+        let Some(text) = item.get("text").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let bounded = trimmed.chars().take(512).collect::<String>();
+        if !target
+            .iter()
+            .any(|existing| existing.kind == kind && existing.text == bounded)
+        {
+            target.push(Witness {
+                kind,
+                text: bounded,
+            });
+        }
+    }
+}
+
+fn witness_kind_from_str(value: &str) -> Option<WitnessKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "desired_behavior" | "desired" => Some(WitnessKind::DesiredBehavior),
+        "forbidden_behavior" | "forbidden" => Some(WitnessKind::ForbiddenBehavior),
+        "policy_requirement" | "policy" => Some(WitnessKind::PolicyRequirement),
+        "incident_report" | "incident" => Some(WitnessKind::IncidentReport),
+        _ => None,
+    }
+}
+
 fn spec_target_from_raw(raw: &str) -> Option<(String, String)> {
     let value: serde_json::Value = serde_json::from_str(raw).ok()?;
     let module_id = value.get("module_id")?.as_str()?.trim();
@@ -1873,6 +2068,7 @@ fn intent_formalize_op(
     intent: &IntentPacket,
     input_mode: IntentInputMode,
     revision_notes: &[String],
+    provider_polish: Option<serde_json::Value>,
 ) -> OpRecord {
     let now = now_string();
     let source = match input_mode {
@@ -1887,6 +2083,17 @@ fn intent_formalize_op(
         artifacts.push(format!("{path}/violation.json"));
         artifacts.push(format!("{path}/repro.json"));
     }
+    let provider_used = provider_polish
+        .as_ref()
+        .and_then(|value| value.get("ok"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let notes = if provider_polish.is_some() {
+        "Formalized human input into a reviewable XTAL intent packet with provider polish evidence."
+            .to_string()
+    } else {
+        "Formalized human input into a reviewable XTAL intent packet.".to_string()
+    };
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
         id: Uuid::new_v4(),
@@ -1904,12 +2111,13 @@ fn intent_formalize_op(
         status: OperationStatus::Succeeded,
         exit_code: Some(0),
         artifacts,
-        notes: Some("Formalized human input into a reviewable XTAL intent packet.".to_string()),
+        notes: Some(notes),
         stdout: Some(format!(
-            "Intent formalized from {source}; {} witnesses, {} constraints, {} revision notes.",
+            "Intent formalized from {source}; {} witnesses, {} constraints, {} revision notes, provider polish: {}.",
             intent.witnesses.len(),
             intent.constraints.len(),
-            revision_notes.len()
+            revision_notes.len(),
+            if provider_used { "applied" } else if provider_polish.is_some() { "recorded" } else { "not requested" }
         )),
         stderr: None,
         stdout_json: None,
@@ -1920,6 +2128,7 @@ fn intent_formalize_op(
             "target": intent.targets.first(),
             "revision_notes": revision_notes,
             "intent": intent,
+            "provider_polish": provider_polish,
         })),
         report_path: None,
     }
@@ -3484,12 +3693,13 @@ fn modified_unix_ms(path: &Utf8Path) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use uuid::Uuid;
 
     use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
     use loom_types::artifacts::{
         AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
-        OperationStatus, TaskType, Witness, WitnessKind,
+        OperationStatus, ProviderProfile, TaskType, Witness, WitnessKind,
     };
     use loom_types::ops::SessionEvent;
     use loom_types::session::SessionSnapshot;
@@ -3647,6 +3857,139 @@ mod tests {
             .op_log
             .iter()
             .any(|item| item.op == "intent.formalize"));
+    }
+
+    #[tokio::test]
+    async fn formalize_intent_with_provider_merges_polish_as_review_evidence() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("test server address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut buffer).await.expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let header_len = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|index| index + 4)
+                .expect("request headers");
+            let header_text = String::from_utf8_lossy(&request[..header_len]);
+            let content_length = header_text
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            while request.len() < header_len + content_length {
+                let read = stream.read(&mut buffer).await.expect("read request body");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let request = String::from_utf8_lossy(&request);
+            assert!(request.starts_with("POST /v1/chat/completions "));
+            assert!(request.contains("\"model\":\"local-polisher\""));
+
+            let content = serde_json::json!({
+                "examples": ["Provider example: [1] -> [1]"],
+                "constraints": ["Provider constraint: keep spec reviewable"],
+                "ambiguities": ["Provider ambiguity: stability examples missing"],
+                "witnesses": [
+                    {
+                        "kind": "forbidden_behavior",
+                        "text": "Provider forbidden: unchecked code generation"
+                    }
+                ]
+            })
+            .to_string();
+            let body = serde_json::json!({
+                "choices": [
+                    {
+                        "message": {
+                            "content": content
+                        }
+                    }
+                ]
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+        });
+
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let mut profile = ProviderProfile::local_ollama();
+        profile.id = "test-polisher".to_string();
+        profile.base_url = format!("http://{addr}/v1");
+        profile.model = Some("local-polisher".to_string());
+        kernel
+            .save_provider_profile(&profile)
+            .expect("save provider profile");
+        let session = kernel
+            .create_session("provider polish", TaskType::NewBehavior)
+            .expect("create session");
+
+        let (intent, op, snapshot) = kernel
+            .formalize_intent_with_provider(
+                session.session_id,
+                "Create a stable sorter with reviewable acceptance examples.",
+                IntentInputMode::Text,
+                &[],
+                Some("test-polisher"),
+            )
+            .await
+            .expect("formalize intent with provider");
+
+        server.await.expect("server task");
+        assert!(intent
+            .examples
+            .iter()
+            .any(|item| item == "Provider example: [1] -> [1]"));
+        assert!(intent
+            .constraints
+            .iter()
+            .any(|item| item == "Provider constraint: keep spec reviewable"));
+        assert!(intent
+            .witnesses
+            .iter()
+            .any(|item| item.text == "Provider forbidden: unchecked code generation"));
+        assert_eq!(op.op, "intent.formalize");
+        assert_eq!(
+            op.report_json
+                .as_ref()
+                .and_then(|value| value.get("provider_polish"))
+                .and_then(|value| value.get("ok"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert!(snapshot
+            .op_log
+            .iter()
+            .any(|item| item.op == "intent.formalize"));
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

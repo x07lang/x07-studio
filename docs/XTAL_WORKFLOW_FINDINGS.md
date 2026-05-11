@@ -362,3 +362,23 @@ This document records friction found while implementing the Studio web surface.
    and execute operations, and `mode: "execute"` checks the configured command
    before appending a supervised `agent.run.*` record. This keeps the UI
    readiness panel and daemon policy aligned.
+
+35. Provider polish should enrich intent review, not replace it.
+
+   Studio's deterministic intent packet is the baseline that keeps the XTAL
+   flow auditable. The new provider-polish lane is therefore opt-in: it sends
+   the deterministic packet and revision notes to a configured
+   OpenAI-compatible provider, accepts only bounded review metadata, and records
+   the provider report under `intent.formalize`. Missing, disabled, failing, or
+   non-JSON providers fall back to the deterministic packet with the failure
+   recorded as evidence instead of silently changing the workflow.
+
+36. Standalone desktop CI must prove onboarding, not only compilation.
+
+   The desktop matrix already built native shells, the Svelte web app, and a
+   bundled `x07-wasm`, but a smooth first-run experience also depends on
+   `defaults.env`, launcher scripts, the archive layout, and component bootstrap
+   discovery. The CI workflow now validates those surfaces after packaging:
+   manifest, static web app, zip contents, first-run workspace/daemon/web
+   defaults, and the bundled `x07-wasm` status reported by the copied bootstrap
+   script.

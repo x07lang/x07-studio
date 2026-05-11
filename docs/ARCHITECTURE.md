@@ -21,13 +21,16 @@ separate product surface:
 - static SvelteKit output from `web/build`
 - launcher and bootstrap scripts under `scripts/`
 - config examples for providers and MCP endpoints
+- `defaults.env` first-run settings for workspace root, daemon/web addresses,
+  and bundled component paths
 
 The native desktop shell starts an embedded local daemon by default, so first
 launch works without a manual background process. The packaged web launcher
 starts `loom-daemon`, serves the built Svelte app, and proxies `/v1/**` to the
 daemon. Both surfaces consume the daemon health component report so onboarding
 can show whether `x07`, `x07-wasm`, `x07lp`, Codex, and Claude Code are
-available, missing, or optional.
+available, missing, or optional. The launcher refreshes component paths without
+discarding user-edited onboarding defaults.
 
 ## Runtime shape
 
@@ -89,6 +92,13 @@ When the human requests changes, Studio marks approval blocked until the agent
 repolishes the revised intent. The approval ledger keeps the source, polish
 step, revision notes, human decision, and write-contract lock visible in the
 Intent room.
+
+Provider-backed intent polish is opt-in. When selected, the daemon sends the
+deterministic intent packet and revision notes to a configured
+OpenAI-compatible provider, accepts only bounded review metadata, merges it into
+the intent packet, and records the provider report under the formalize
+operation. If the provider cannot run or returns non-JSON text, Studio keeps the
+deterministic packet and records the failure as review evidence.
 
 OpenAI Codex and Claude Code are shown as coding-agent lanes with guarded verbs,
 write scopes, and review gates. The current backend provider profile is

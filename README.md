@@ -96,7 +96,9 @@ is the preferred entry point. It detects bundled components, builds missing
 sibling source checkouts when they are present, refreshes `defaults.env`, starts
 the daemon, and opens the Svelte Studio surface with the same onboarding panel.
 The native shell under `bin/x07-studio` also reads the bundle `defaults.env`
-before it starts its embedded daemon.
+before it starts its embedded daemon. The generated defaults choose
+`~/x07-studio-workspace`, local daemon/web addresses, and bundled component
+paths when release automation includes them.
 
 ## Suggested local setup
 
@@ -126,6 +128,8 @@ GitHub Actions builds the Rust workspace, the Svelte web app, Playwright E2E,
 and standalone desktop bundles for Linux, macOS, and Windows 2022. The desktop
 bundle job also builds `x07-wasm` from `x07lang/x07-wasm-backend` and wires it
 into the packaged defaults so Atlas app workflows have a ready WASM component.
+CI validates each bundle's manifest, web app, launcher scripts, first-run
+defaults, zip archive, and bundled `x07-wasm` bootstrap status.
 
 ## Notes
 
