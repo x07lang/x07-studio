@@ -1088,7 +1088,7 @@ fn copy_example_tree(source: &Utf8Path, destination: &Utf8Path) -> anyhow::Resul
 }
 
 fn should_skip_seed_path(name: &str) -> bool {
-    matches!(name, ".git" | "target" | "dist" | "node_modules")
+    matches!(name, ".git" | ".x07" | "target" | "dist" | "node_modules")
 }
 
 fn intent_packet_from_raw(
@@ -2909,15 +2909,20 @@ mod tests {
         let source = temp_root();
         let destination = temp_root();
         std::fs::create_dir_all(source.join("src")).expect("create src");
+        std::fs::create_dir_all(source.join(".x07/deps/stale")).expect("create deps");
         std::fs::create_dir_all(source.join("target")).expect("create target");
         std::fs::write(source.join("x07.json"), "{}").expect("write project");
         std::fs::write(source.join("src/main.x07.json"), "{}").expect("write source");
+        std::fs::write(source.join(".x07/deps/stale/x07-package.json"), "{}").expect("write deps");
         std::fs::write(source.join("target/stale.json"), "{}").expect("write target");
 
         copy_example_tree(source.as_path(), destination.as_path()).expect("copy example");
 
         assert!(destination.join("x07.json").exists());
         assert!(destination.join("src/main.x07.json").exists());
+        assert!(!destination
+            .join(".x07/deps/stale/x07-package.json")
+            .exists());
         assert!(!destination.join("target/stale.json").exists());
 
         std::fs::remove_dir_all(source).ok();

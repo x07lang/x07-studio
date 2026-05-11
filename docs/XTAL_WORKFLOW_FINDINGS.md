@@ -164,3 +164,13 @@ This document records friction found while implementing the Studio web surface.
    workspace targets, with target-level errors surfaced in the review row. The
    remaining gap is richer semantic side-by-side diff tooling for large or
    domain-specific x07AST changes.
+
+17. Docs-example seeding must not copy generated `.x07` state.
+
+   A live Studio ladder run reached the complex `docs/examples/apps/x07-api-gateway`
+   workflow and failed at `test.manifest` because the source example directory
+   had stale local `.x07/deps` material. Studio copied that generated cache into
+   the new workspace, so the test command hydrated `ext-obs@0.1.2` from stale
+   package metadata and saw an `ext-net` version conflict. The seeder now skips
+   `.x07` alongside `target`, `dist`, and `node_modules`, forcing new projects
+   to hydrate dependencies from the current lockfile and registry metadata.
