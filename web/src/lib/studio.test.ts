@@ -29,14 +29,39 @@ describe('x07 Studio XTAL web model', () => {
 		expect(intent.constraints).toContain('Use spec-first XTAL flow.');
 	});
 
-	it('preserves spoken and incident inputs as auditable intent sources', () => {
+	it('preserves spoken, spec, and incident inputs as auditable intent sources', () => {
 		const session = demoSession();
 		const voice = createIntentPacket(session, 'Transcript: make the graph cycle rejection explicit.', 'voice');
+		const spec = createIntentPacket(
+			session,
+			JSON.stringify({
+				schema_version: 'x07.x07spec@0.1.0',
+				module_id: 'toy.sorter',
+				operations: [{ id: 'op.sort_u8_asc.v1', name: 'toy.sorter.sort_u8_asc' }]
+			}),
+			'spec'
+		);
+		const partialPrefixSpec = createIntentPacket(
+			session,
+			JSON.stringify({
+				schema_version: 'x07.x07spec@0.1.0',
+				module_id: 'toy.sort',
+				operations: [{ id: 'op.sort_u8_asc.v1', name: 'toy.sorter.sort_u8_asc' }]
+			}),
+			'spec'
+		);
 		const incident = createIntentPacket(session, 'Runtime cycle report from production.', 'incident', [
 			'Keep repair spec-preserving unless a witness changes.'
 		]);
 
 		expect(voice.source.kind).toBe('voice');
+		expect(spec.source.kind).toBe('spec');
+		expect(spec.targets[0]).toEqual({ module_id: 'toy.sorter', entry: 'sort_u8_asc' });
+		expect(partialPrefixSpec.targets[0]).toEqual({
+			module_id: 'toy.sort',
+			entry: 'toy_sorter_sort_u8_asc'
+		});
+		expect(spec.constraints).toContain('Treat the provided spec as already-authored behavioral intent.');
 		expect(incident.source.kind).toBe('incident');
 		expect(incident.witnesses.map((witness) => witness.kind)).toContain('incident_report');
 		expect(incident.constraints).toContain(

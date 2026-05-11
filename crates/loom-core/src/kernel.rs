@@ -1106,6 +1106,7 @@ fn workflow_template_from_intent(intent: &IntentPacket) -> WorkflowTemplate {
     let raw_source = match &intent.source {
         IntentSource::Text { raw } => raw.as_str(),
         IntentSource::Voice { transcript } => transcript.as_str(),
+        IntentSource::Spec { raw } => raw.as_str(),
         IntentSource::Incident { path } => path.as_str(),
     };
     let haystack = format!("{module_id} {entry} {raw_source}").to_ascii_lowercase();
@@ -1206,22 +1207,32 @@ fn intent_packet_from_raw(
     let is_atlas = lowered.contains("x07_atlas")
         || lowered.contains("x07 atlas")
         || lowered.contains("wasm_showcases/x07_atlas");
-    let (module_id, entry) = if is_sorter {
-        ("toy.sorter", "sort_u8_asc")
-    } else if is_atlas {
-        ("atlas.app", "atlas_dev")
-    } else if is_db_guard {
-        ("db.guard", "verify_drift")
-    } else if is_gateway {
-        ("gateway.core", "route_request_v1")
-    } else if is_crawler {
-        ("crawl.plan", "plan_crawl_v1")
-    } else if is_state_machine {
-        ("workflow.lifecycle", "step_v1")
-    } else if is_incident {
-        ("ops.incident_repair", "classify_and_repair")
+    let spec_target = if input_mode == IntentInputMode::Spec {
+        spec_target_from_raw(normalized)
     } else {
-        ("workflow.graph", "makespan_u32")
+        None
+    };
+    let (module_id, entry) = if let Some((module_id, entry)) = spec_target {
+        (module_id, entry)
+    } else if is_sorter {
+        ("toy.sorter".to_string(), "sort_u8_asc".to_string())
+    } else if is_atlas {
+        ("atlas.app".to_string(), "atlas_dev".to_string())
+    } else if is_db_guard {
+        ("db.guard".to_string(), "verify_drift".to_string())
+    } else if is_gateway {
+        ("gateway.core".to_string(), "route_request_v1".to_string())
+    } else if is_crawler {
+        ("crawl.plan".to_string(), "plan_crawl_v1".to_string())
+    } else if is_state_machine {
+        ("workflow.lifecycle".to_string(), "step_v1".to_string())
+    } else if is_incident {
+        (
+            "ops.incident_repair".to_string(),
+            "classify_and_repair".to_string(),
+        )
+    } else {
+        ("workflow.graph".to_string(), "makespan_u32".to_string())
     };
 
     let mut witnesses = vec![
@@ -1242,6 +1253,11 @@ fn intent_packet_from_raw(
         witnesses.push(Witness {
             kind: WitnessKind::IncidentReport,
             text: normalized.to_string(),
+        });
+    } else if input_mode == IntentInputMode::Spec {
+        witnesses.push(Witness {
+            kind: WitnessKind::PolicyRequirement,
+            text: "Use the provided x07 spec as the canonical behavioral source.".to_string(),
         });
     }
 
@@ -1264,6 +1280,10 @@ fn intent_packet_from_raw(
         "Keep solve worlds deterministic by default.".to_string(),
         "Route spec-changing repairs back to human approval.".to_string(),
     ];
+    if input_mode == IntentInputMode::Spec {
+        constraints
+            .push("Treat the provided spec as already-authored behavioral intent.".to_string());
+    }
     constraints.extend(
         revision_notes
             .iter()
@@ -1277,8 +1297,8 @@ fn intent_packet_from_raw(
         workspace_root: session.root.clone(),
         task_type: session.task_type.clone(),
         targets: vec![IntentTarget {
-            module_id: module_id.to_string(),
-            entry: Some(entry.to_string()),
+            module_id,
+            entry: Some(entry),
         }],
         examples: vec![
             "Input examples become spec examples before implementation.".to_string(),
@@ -1302,11 +1322,49 @@ fn intent_packet_from_raw(
             IntentInputMode::Voice => IntentSource::Voice {
                 transcript: normalized.to_string(),
             },
+            IntentInputMode::Spec => IntentSource::Spec {
+                raw: normalized.to_string(),
+            },
             IntentInputMode::Incident => IntentSource::Incident {
                 path: ".x07/studio/incidents/manual-note.jsonl".to_string(),
             },
         },
     }
+}
+
+fn spec_target_from_raw(raw: &str) -> Option<(String, String)> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let module_id = value.get("module_id")?.as_str()?.trim();
+    if module_id.is_empty() {
+        return None;
+    }
+    let operation = value.get("operations")?.as_array()?.first()?;
+    let operation_name = operation
+        .get("name")
+        .and_then(|item| item.as_str())
+        .or_else(|| operation.get("id").and_then(|item| item.as_str()))
+        .unwrap_or("run_v1");
+    Some((
+        module_id.to_string(),
+        entry_from_spec_operation(module_id, operation_name),
+    ))
+}
+
+fn entry_from_spec_operation(module_id: &str, operation_name: &str) -> String {
+    let mut entry = operation_name.trim();
+    if let Some(stripped) = entry.strip_prefix("op.") {
+        entry = stripped;
+    }
+    if let Some(stripped) = entry
+        .strip_prefix(module_id)
+        .and_then(|item| item.strip_prefix('.'))
+    {
+        entry = stripped;
+    }
+    if let Some(stripped) = entry.strip_suffix(".v1") {
+        entry = stripped;
+    }
+    sanitize_op_name(entry)
 }
 
 fn intent_formalize_op(
@@ -1319,6 +1377,7 @@ fn intent_formalize_op(
     let source = match input_mode {
         IntentInputMode::Text => "text",
         IntentInputMode::Voice => "voice",
+        IntentInputMode::Spec => "spec",
         IntentInputMode::Incident => "incident",
     };
     OpRecord {
@@ -2495,7 +2554,7 @@ mod tests {
     use loom_types::session::SessionSnapshot;
 
     use super::{
-        copy_example_tree, intent_packet_from_raw, should_scaffold_spec,
+        copy_example_tree, entry_from_spec_operation, intent_packet_from_raw, should_scaffold_spec,
         workflow_template_from_intent, xtal_workflow_vars_from_intent, WorkflowTemplate,
         WorkspaceKernel,
     };
@@ -2606,6 +2665,49 @@ mod tests {
 
         assert_eq!(intent.targets[0].module_id, "atlas.app");
         assert_eq!(intent.targets[0].entry.as_deref(), Some("atlas_dev"));
+    }
+
+    #[test]
+    fn formalize_intent_accepts_existing_spec_as_source() {
+        let session = SessionSnapshot::new(
+            Uuid::nil(),
+            "spec",
+            "/workspace".to_string(),
+            TaskType::NewBehavior,
+        );
+        let raw = r#"{
+          "schema_version": "x07.x07spec@0.1.0",
+          "module_id": "toy.sorter",
+          "operations": [
+            {"id": "op.sort_u8_asc.v1", "name": "toy.sorter.sort_u8_asc"}
+          ]
+        }"#;
+
+        let intent = intent_packet_from_raw(&session, raw, IntentInputMode::Spec, &[]);
+
+        assert_eq!(intent.targets[0].module_id, "toy.sorter");
+        assert_eq!(intent.targets[0].entry.as_deref(), Some("sort_u8_asc"));
+        assert!(matches!(intent.source, IntentSource::Spec { .. }));
+        assert!(intent
+            .constraints
+            .iter()
+            .any(|item| item.contains("already-authored behavioral intent")));
+    }
+
+    #[test]
+    fn spec_entry_derivation_requires_exact_module_prefix() {
+        assert_eq!(
+            entry_from_spec_operation("toy.sort", "toy.sort.sort_u8_asc"),
+            "sort_u8_asc"
+        );
+        assert_eq!(
+            entry_from_spec_operation("toy.sort", "toy.sorter.sort_u8_asc"),
+            "toy_sorter_sort_u8_asc"
+        );
+        assert_eq!(
+            entry_from_spec_operation("toy.sort", "op.sort_u8_asc.v1"),
+            "sort_u8_asc"
+        );
     }
 
     #[tokio::test]

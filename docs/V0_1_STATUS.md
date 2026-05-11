@@ -15,7 +15,7 @@
 - session doctrine surfacing for canonical x07 docs, MCP tools, allowed verbs, and handoff prompt context
 - MCP HTTP transport with initialize + session header handling
 - MCP stdio transport with newline-delimited JSON-RPC
-- daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, incident notes, revision notes, and visible intent operation records
+- daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, existing specs, incident notes, revision notes, and visible intent operation records
 - OpenAI-compatible provider probing through `/models`, `/responses`, and `/chat/completions`
 - Axum daemon routes for sessions, bindings, providers, and MCP connections
 - egui GUI shell and ratatui Forge shell over the daemon API

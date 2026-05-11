@@ -53,6 +53,7 @@ pub struct DispatchEventRequest {
 pub enum IntentInputMode {
     Text,
     Voice,
+    Spec,
     Incident,
 }
 

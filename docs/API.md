@@ -111,17 +111,20 @@ Formalize intent request:
 
 ```json
 {
-  "raw": "Transcript: build a workflow graph and reject cycles.",
-  "input_mode": "voice",
-  "revision_notes": ["Keep cycle rejection explicit before spec approval."]
+  "raw": "{\"schema_version\":\"x07.x07spec@0.1.0\",\"module_id\":\"toy.sorter\",\"operations\":[{\"id\":\"op.sort_u8_asc.v1\",\"name\":\"toy.sorter.sort_u8_asc\"}]}",
+  "input_mode": "spec",
+  "revision_notes": ["Keep the provided spec as the reviewed behavior source."]
 }
 ```
 
-The daemon compiles written plans, voice transcripts, and incident notes into a
-`x07.studio.intent_packet@0.1.0`, applies the legal `formalize_intent`
-lifecycle transition, and appends a visible `intent.formalize` operation record
-with the generated packet in `report_json`. Browser clients should use this
-endpoint instead of inventing their own connected-mode intent packet.
+The daemon compiles written plans, voice transcripts, existing `x07.x07spec`
+JSON, and incident notes into a `x07.studio.intent_packet@0.1.0`, applies the
+legal `formalize_intent` lifecycle transition, and appends a visible
+`intent.formalize` operation record with the generated packet in `report_json`.
+For `input_mode: "spec"`, the kernel keeps the provided spec as the auditable
+source and derives the target module/entry from `module_id` and the first
+operation name or id. Browser clients should use this endpoint instead of
+inventing their own connected-mode intent packet.
 
 Run binding request:
 

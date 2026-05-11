@@ -220,3 +220,16 @@ This document records friction found while implementing the Studio web surface.
    rerun verification before widening the spec. A live browser check against an
    empty workspace confirmed that failed `xtal.verify` output is classified into
    this repair surface and still selects the original operation for full audit.
+
+22. Existing specs are an input source, not a post-intent shortcut.
+
+   The product goal allows users to start from an initial plan or an existing
+   spec. Before this pass, Studio only treated written plans, voice transcripts,
+   and incident notes as first-class intent inputs, which meant a pasted
+   `x07.x07spec` lost source provenance or had to be re-described as prose.
+   Studio now has an `Existing Spec` input mode in the browser and daemon. The
+   kernel records the raw spec as the intent source, derives the target module
+   and entry from `module_id` plus the first operation, adds a spec-source
+   witness, and still routes the result through the same human approval gate. A
+   live connected browser check confirmed the spec control, textarea, revision
+   input, room select, tabs, daemon session record, and zero console issues.

@@ -41,6 +41,7 @@ pub struct IntentTarget {
 pub enum IntentSource {
     Text { raw: String },
     Voice { transcript: String },
+    Spec { raw: String },
     Incident { path: String },
 }
 

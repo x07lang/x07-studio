@@ -63,6 +63,12 @@ const projects = [
 	}
 ] as const;
 
+const sorterSpec = JSON.stringify({
+	schema_version: 'x07.x07spec@0.1.0',
+	module_id: 'toy.sorter',
+	operations: [{ id: 'op.sort_u8_asc.v1', name: 'toy.sorter.sort_u8_asc' }]
+});
+
 test('user can create increasingly difficult x07 project sessions and exercise controls', async ({ page }) => {
 	await page.setViewportSize({ width: 1728, height: 972 });
 	await page.goto('/');
@@ -92,6 +98,11 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText('Intent intake prepared')).toBeVisible();
 	await expect(page.getByLabel('Task type')).toHaveValue('new_behavior');
 	await expect(page.getByLabel('Written Plan')).toBeChecked();
+	await page.getByLabel('Existing Spec').click();
+	await expect(page.getByLabel('Existing Spec')).toBeChecked();
+	await page.getByLabel('Initial plan').fill(sorterSpec);
+	await page.getByRole('button', { name: 'Polish Intent' }).click();
+	await expect(page.getByLabel('Spec approval preview')).toContainText('toy.sorter');
 	await page.getByLabel('Active room').selectOption('verify');
 	await expect(page.getByRole('tab', { name: 'Verify' })).toHaveAttribute('aria-selected', 'true');
 	await page.getByLabel('Active room').selectOption('intent');

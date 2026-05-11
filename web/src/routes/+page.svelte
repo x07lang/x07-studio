@@ -939,6 +939,10 @@
 								<input type="radio" bind:group={inputMode} value="voice" />
 								Voice Transcript
 							</label>
+							<label class:active={inputMode === 'spec'}>
+								<input type="radio" bind:group={inputMode} value="spec" />
+								Existing Spec
+							</label>
 							<label class:active={inputMode === 'incident'}>
 								<input type="radio" bind:group={inputMode} value="incident" />
 								Incident Note

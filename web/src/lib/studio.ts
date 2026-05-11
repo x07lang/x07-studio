@@ -33,7 +33,7 @@ export type SessionPhase =
 	| 'human_intervention_required';
 
 export type OperationStatus = 'pending' | 'running' | 'succeeded' | 'failed';
-export type IntentInputMode = 'text' | 'voice' | 'incident';
+export type IntentInputMode = 'text' | 'voice' | 'spec' | 'incident';
 export type ProjectDifficulty =
 	| 'simple'
 	| 'intermediate'
@@ -57,7 +57,11 @@ export interface IntentPacket {
 		kind: 'desired_behavior' | 'forbidden_behavior' | 'policy_requirement' | 'incident_report';
 		text: string;
 	}>;
-	source: { kind: 'text'; raw: string } | { kind: 'voice'; transcript: string } | { kind: 'incident'; path: string };
+	source:
+		| { kind: 'text'; raw: string }
+		| { kind: 'voice'; transcript: string }
+		| { kind: 'spec'; raw: string }
+		| { kind: 'incident'; path: string };
 }
 
 export interface OpRecord {
@@ -529,7 +533,8 @@ export function createIntentPacket(
 		lowered.includes('x07 atlas') ||
 		lowered.includes('wasm_showcases/x07_atlas');
 	const isWorkflowGraph = lowered.includes('workflow graph') || lowered.includes('makespan') || lowered.includes('dag');
-	const moduleId = isSorter
+	const specTarget = inputMode === 'spec' ? specTargetFromRaw(normalized) : null;
+	const moduleId = specTarget?.moduleId ?? (isSorter
 		? 'toy.sorter'
 		: isAtlas
 			? 'atlas.app'
@@ -545,8 +550,8 @@ export function createIntentPacket(
 								? 'ops.incident_repair'
 								: isWorkflowGraph
 									? 'workflow.graph'
-									: 'workflow.graph';
-	const entry = isSorter
+									: 'workflow.graph');
+	const entry = specTarget?.entry ?? (isSorter
 		? 'sort_u8_asc'
 		: isAtlas
 			? 'atlas_dev'
@@ -560,10 +565,19 @@ export function createIntentPacket(
 							? 'step_v1'
 							: isIncident
 								? 'classify_and_repair'
-								: 'makespan_u32';
+								: 'makespan_u32');
 	const incidentWitness =
 		inputMode === 'incident'
 			? [{ kind: 'incident_report' as const, text: normalized }]
+			: [];
+	const specWitness =
+		inputMode === 'spec'
+			? [
+					{
+						kind: 'policy_requirement' as const,
+						text: 'Use the provided x07 spec as the canonical behavioral source.'
+					}
+				]
 			: [];
 	const extraPolicyImplications =
 		isAtlas
@@ -589,6 +603,9 @@ export function createIntentPacket(
 			'Use spec-first XTAL flow.',
 			'Keep solve worlds deterministic by default.',
 			'Route spec-changing repairs back to human approval.',
+			...(inputMode === 'spec'
+				? ['Treat the provided spec as already-authored behavioral intent.']
+				: []),
 			...revisionNotes.map((note) => `Revision request: ${note}`)
 		],
 		policy_implications: [
@@ -607,15 +624,50 @@ export function createIntentPacket(
 			{ kind: 'desired_behavior', text: normalized },
 			{ kind: 'policy_requirement', text: 'All agent work must flow through canonical x07/XTAL bindings.' },
 			{ kind: 'forbidden_behavior', text: 'Do not turn the prompt directly into unchecked source code.' },
+			...specWitness,
 			...incidentWitness
 		],
 		source:
 			inputMode === 'voice'
 				? { kind: 'voice', transcript: normalized }
+				: inputMode === 'spec'
+					? { kind: 'spec', raw: normalized }
 				: inputMode === 'incident'
 					? { kind: 'incident', path: '.x07/studio/incidents/manual-note.jsonl' }
 					: { kind: 'text', raw: normalized }
 	};
+}
+
+function specTargetFromRaw(raw: string): { moduleId: string; entry: string } | null {
+	try {
+		const value = JSON.parse(raw) as {
+			module_id?: unknown;
+			operations?: Array<{ name?: unknown; id?: unknown }>;
+		};
+		const moduleId = typeof value.module_id === 'string' ? value.module_id.trim() : '';
+		const operation = value.operations?.[0];
+		const operationName =
+			typeof operation?.name === 'string'
+				? operation.name
+				: typeof operation?.id === 'string'
+					? operation.id
+					: '';
+		if (!moduleId || !operationName) return null;
+		return {
+			moduleId,
+			entry: entryFromSpecOperation(moduleId, operationName)
+		};
+	} catch {
+		return null;
+	}
+}
+
+function entryFromSpecOperation(moduleId: string, operationName: string): string {
+	let entry = operationName.trim();
+	if (entry.startsWith('op.')) entry = entry.slice(3);
+	if (entry.startsWith(`${moduleId}.`)) entry = entry.slice(moduleId.length + 1);
+	if (entry.endsWith('.v1')) entry = entry.slice(0, -3);
+	return entry.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'run_v1';
 }
 
 export function demoSession(): SessionSnapshot {
