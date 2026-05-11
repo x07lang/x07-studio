@@ -50,12 +50,8 @@ pub fn apply_event(
                 session_id: session.session_id,
                 workspace_root: session.root.clone(),
                 global_doctrine: GlobalDoctrine {
-                    mcp_tools: vec![
-                        "x07.search_v1".to_string(),
-                        "x07.context_pack_v1".to_string(),
-                        "x07.exec_v1".to_string(),
-                    ],
-                    doc_refs: vec!["x07://trust/formal-verification".to_string()],
+                    mcp_tools: canonical_mcp_tools(),
+                    doc_refs: canonical_doc_refs(),
                 },
                 project_doctrine: ProjectDoctrine {
                     xtal_manifest: "arch/xtal/xtal.json".to_string(),
@@ -229,6 +225,32 @@ pub fn allowed_verbs_for_phase(phase: &SessionPhase) -> Vec<AllowedVerb> {
     }
 }
 
+fn canonical_mcp_tools() -> Vec<String> {
+    [
+        "x07.search_v1",
+        "x07.doc_v1",
+        "x07.context_pack_v1",
+        "x07.exec_v1",
+        "x07.patch_apply_v1",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn canonical_doc_refs() -> Vec<String> {
+    [
+        "x07/docs/getting-started/agent-quickstart.md",
+        "x07/docs/getting-started/available-skills.md",
+        "x07/docs/guides",
+        "x07/docs/examples",
+        "x07/docs/trust",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
@@ -269,6 +291,15 @@ mod tests {
         assert_eq!(contract.workspace_root, "/workspace");
         assert!(!contract.project_doctrine.write_policy.agent_write_specs);
         assert_eq!(contract.allowed_verbs, vec![AllowedVerb::ImplSync]);
+        assert!(contract
+            .global_doctrine
+            .doc_refs
+            .iter()
+            .any(|item| item.ends_with("agent-quickstart.md")));
+        assert!(contract
+            .global_doctrine
+            .mcp_tools
+            .contains(&"x07.doc_v1".to_string()));
 
         apply_event(&mut session, SessionEvent::ProposeRealization).expect("realization proposal");
         assert_eq!(session.phase, SessionPhase::RealizationProposed);

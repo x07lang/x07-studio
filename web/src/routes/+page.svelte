@@ -4,6 +4,8 @@
 	import { StudioApi } from '$lib/api';
 	import {
 		agentLanes,
+		canonicalDocRefs,
+		canonicalMcpTools,
 		defaultPrompt,
 		lifecycle,
 		nextPrimaryAction,
@@ -187,6 +189,15 @@
 		}
 	];
 	$: operationRows = worklog.length ? worklog : [placeholderOp];
+	$: doctrineDocRefs = selected?.contract?.global_doctrine.doc_refs.length
+		? selected.contract.global_doctrine.doc_refs
+		: canonicalDocRefs;
+	$: doctrineMcpTools = selected?.contract?.global_doctrine.mcp_tools.length
+		? selected.contract.global_doctrine.mcp_tools
+		: canonicalMcpTools;
+	$: doctrineAllowedVerbs = selected?.contract?.allowed_verbs.length
+		? selected.contract.allowed_verbs
+		: selected?.allowed_verbs ?? [];
 
 	onMount(async () => {
 		await refresh();
@@ -1040,6 +1051,33 @@
 						<span>{item.label}</span>
 						<strong>{item.value}</strong>
 					</div>
+				{/each}
+			</div>
+		</section>
+
+		<section class="panel doctrine-panel" aria-label="Session doctrine">
+			<div class="panel-head">
+				<div>
+					<p class="eyebrow">Session Doctrine</p>
+					<h2>{selected?.contract ? 'Locked' : 'Prepared'}</h2>
+				</div>
+			</div>
+			<div class="doctrine-block">
+				<span>Allowed verbs</span>
+				{#each doctrineAllowedVerbs.slice(0, 5) as verb}
+					<code>{verb}</code>
+				{/each}
+			</div>
+			<div class="doctrine-block">
+				<span>MCP tools</span>
+				{#each doctrineMcpTools.slice(0, 5) as tool}
+					<code>{tool}</code>
+				{/each}
+			</div>
+			<div class="doctrine-block">
+				<span>Canonical docs</span>
+				{#each doctrineDocRefs.slice(0, 5) as docRef}
+					<code>{docRef}</code>
 				{/each}
 			</div>
 		</section>

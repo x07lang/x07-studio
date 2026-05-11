@@ -808,6 +808,31 @@ textarea {
 	font-size: 12px;
 }
 
+.doctrine-panel {
+	gap: 10px;
+}
+
+.doctrine-block {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 9px;
+	background: rgba(255, 255, 255, 0.04);
+	display: grid;
+	gap: 5px;
+	min-width: 0;
+}
+
+.doctrine-block span {
+	color: var(--muted);
+	font-size: 11px;
+	text-transform: uppercase;
+}
+
+.doctrine-block code {
+	font-size: 11px;
+	overflow-wrap: anywhere;
+}
+
 .agent-actions {
 	margin-top: 5px;
 }

@@ -1414,6 +1414,15 @@ fn render_agent_handoff_prompt(
     }
     if let Some(contract) = &session.contract {
         out.push_str("\n## Session Contract\n\n");
+        out.push_str("Canonical docs:\n");
+        for doc_ref in &contract.global_doctrine.doc_refs {
+            out.push_str(&format!("- `{doc_ref}`\n"));
+        }
+        out.push_str("\nContract MCP tools:\n");
+        for tool in &contract.global_doctrine.mcp_tools {
+            out.push_str(&format!("- `{tool}`\n"));
+        }
+        out.push('\n');
         out.push_str(&format!(
             "- XTAL manifest: `{}`\n",
             contract.project_doctrine.xtal_manifest

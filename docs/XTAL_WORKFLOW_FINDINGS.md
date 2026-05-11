@@ -42,8 +42,11 @@ This document records friction found while implementing the Studio web surface.
 
    `x07/docs/getting-started/agent-quickstart.md`,
    `available-skills.md`, and the guides explain canonical loops, skills, and
-   `x07 run`. Studio should compile those into session doctrine automatically
-   and display the selected references in the session contract.
+   `x07 run`. Studio now compiles those into approved session doctrine,
+   includes the selected refs and MCP tools in coding-agent handoff prompts, and
+   renders the doctrine in the browser right rail. The remaining improvement is
+   live doc resolution/snippet previews through `x07.doc_v1` or the docs index
+   instead of showing refs only.
 
 6. The API docs had a stale event envelope example.
 

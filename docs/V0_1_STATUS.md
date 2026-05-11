@@ -7,6 +7,7 @@
 - structured stdout/stderr capture for x07-platform bindings
 - streaming stdout/stderr updates for supervised coding-agent commands
 - binding coverage for XTAL authoring, test generation, implementation sync, verify/repair/certify/ingest/improve, core checks, web-ui, device, workload, topology, deploy-plan, and selected platform query/control reads
+- session doctrine surfacing for canonical x07 docs, MCP tools, allowed verbs, and handoff prompt context
 - MCP HTTP transport with initialize + session header handling
 - MCP stdio transport with newline-delimited JSON-RPC
 - daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, incident notes, revision notes, and visible intent operation records

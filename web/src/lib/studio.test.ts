@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { StudioApi } from './api';
 import {
 	appendDemoOp,
+	canonicalDocRefs,
+	canonicalMcpTools,
 	createIntentPacket,
 	defaultAgentProfiles,
 	demoBindings,
@@ -73,6 +75,8 @@ describe('x07 Studio XTAL web model', () => {
 		expect(specDraft.phase).toBe('spec_draft');
 		expect(approved.phase).toBe('spec_approved');
 		expect(approved.contract?.project_doctrine.write_policy.agent_write_specs).toBe(false);
+		expect(approved.contract?.global_doctrine.doc_refs).toEqual(canonicalDocRefs);
+		expect(approved.contract?.global_doctrine.mcp_tools).toEqual(canonicalMcpTools);
 		expect(workflowChecklist(approved).find((item) => item.label === 'Human spec approval')?.state).toBe(
 			'done'
 		);

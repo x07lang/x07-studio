@@ -115,6 +115,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 
 	await page.getByRole('button', { name: 'Approve Spec' }).click();
 	await expect(page.getByText('Spec approved; realization lane is unlocked')).toBeVisible();
+	await expect(page.getByLabel('Session doctrine')).toContainText('x07.doc_v1');
+	await expect(page.getByLabel('Session doctrine')).toContainText('x07/docs/getting-started/agent-quickstart.md');
 
 	await page.getByRole('tab', { name: 'Agents' }).click();
 	await page.getByRole('button', { name: 'Generate Claude Code Handoff' }).click();

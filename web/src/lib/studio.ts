@@ -305,6 +305,22 @@ export const defaultAgentProfiles: AgentProfile[] = [
 	}
 ];
 
+export const canonicalMcpTools = [
+	'x07.search_v1',
+	'x07.doc_v1',
+	'x07.context_pack_v1',
+	'x07.exec_v1',
+	'x07.patch_apply_v1'
+];
+
+export const canonicalDocRefs = [
+	'x07/docs/getting-started/agent-quickstart.md',
+	'x07/docs/getting-started/available-skills.md',
+	'x07/docs/guides',
+	'x07/docs/examples',
+	'x07/docs/trust'
+];
+
 export const defaultPrompt =
 	'Build a certifiable workflow graph optimizer. A human gives task durations and dependency edges. The project must compute a deterministic makespan, reject cycles, prove the pure core, and keep all agent actions visible before implementation.';
 
@@ -584,8 +600,8 @@ export function reduceDemoEvent(session: SessionSnapshot, event: string, payload
 				schema_version: 'x07.studio.session_contract@0.1.0',
 				allowed_verbs: next.allowed_verbs,
 				global_doctrine: {
-					mcp_tools: ['x07.search_v1', 'x07.context_pack_v1', 'x07.exec_v1'],
-					doc_refs: ['x07/docs/getting-started/agent-quickstart.md', 'x07/docs/getting-started/available-skills.md']
+					mcp_tools: canonicalMcpTools,
+					doc_refs: canonicalDocRefs
 				},
 				project_doctrine: {
 					xtal_manifest: 'arch/xtal/xtal.json',
