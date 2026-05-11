@@ -276,3 +276,15 @@ This document records friction found while implementing the Studio web surface.
    without ever extracting current implementation behavior. Studio now runs
    `spec.extract` during the `spec_draft` phase for `brownfield_extract`
    sessions and only locks the session contract after that operation succeeds.
+
+27. Incident notes must become canonical XTAL incident artifacts before improve.
+
+   `x07 xtal ingest` does not accept arbitrary prose; it accepts XTAL violation
+   bundles, contract repros, or recovery-event JSONL. The Studio incident form
+   previously captured an incident note but pointed `xtal.ingest` and
+   `xtal.improve` at a prose placeholder, so the visible runtime-improve lane
+   could not be run by the canonical x07 tools. Studio now persists each manual
+   incident note as a session-scoped `x07.xtal.violation@0.1.0` bundle with a
+   matching `x07.contract.repro@0.1.0`, ensures an `arch/xtal/xtal.json`
+   manifest exists when needed, and runs `xtal.ingest --normalize-only` followed
+   by `xtal.improve` from the approval/run path.

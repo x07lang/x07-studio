@@ -140,6 +140,13 @@ For `brownfield_extract` sessions, the browser approval path runs
 so existing implementation behavior becomes reviewable spec evidence instead
 of being skipped by a normal scaffold path.
 
+For `incident_repair` sessions, the daemon converts the approved incident note
+into a session-scoped XTAL violation bundle before any runtime-improve command
+runs. The approval/run path then ensures an XTAL manifest exists and records the
+canonical `xtal.ingest --normalize-only` and `xtal.improve` operations, so
+manual incidents enter the same artifact and worklog lane as runtime-captured
+violations.
+
 After spec approval, the daemon can run the visible XTAL workflow through
 `POST /v1/sessions/{session_id}/xtal/run`. That path derives binding variables
 from the intent packet, initializes an `xtal-pure` project only when `x07.json`

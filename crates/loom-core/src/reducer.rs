@@ -145,7 +145,11 @@ pub fn apply_event(
         SessionEvent::IngestIncident => {
             ensure_phase(
                 &session.phase,
-                &[SessionPhase::Certified, SessionPhase::IncidentIngesting],
+                &[
+                    SessionPhase::SpecApproved,
+                    SessionPhase::Certified,
+                    SessionPhase::IncidentIngesting,
+                ],
                 "ingest_incident",
             )?;
             session.phase = SessionPhase::IncidentIngesting;

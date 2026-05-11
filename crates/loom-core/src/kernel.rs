@@ -5,6 +5,7 @@ use std::time::UNIX_EPOCH;
 
 use anyhow::{anyhow, Context};
 use camino::{Utf8Path, Utf8PathBuf};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use loom_adapters::command_runner::{
@@ -25,7 +26,7 @@ use loom_types::artifacts::{
 };
 use loom_types::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use loom_types::ops::SessionEvent;
-use loom_types::session::{SessionPhase, SessionSnapshot};
+use loom_types::session::{Room, SessionPhase, SessionSnapshot};
 use tokio::sync::mpsc;
 
 use crate::workspace::WorkspaceModel;
@@ -336,6 +337,9 @@ impl WorkspaceKernel {
             .cloned()
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
         let intent = intent_packet_from_raw(&session, raw, input_mode.clone(), revision_notes);
+        if input_mode == IntentInputMode::Incident {
+            persist_manual_incident_bundle(self.root.as_path(), &intent)?;
+        }
         self.model
             .dispatch(
                 session_id,
@@ -388,6 +392,12 @@ impl WorkspaceKernel {
             .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
         let template = workflow_template_from_intent(intent);
         let vars = xtal_workflow_vars_from_intent(intent);
+
+        if matches!(intent.source, IntentSource::Incident { .. }) {
+            return self
+                .run_incident_improve_workflow(session_id, intent, &vars)
+                .await;
+        }
 
         if !self.root.join("x07.json").exists() {
             let snapshot = if let Some(example_path) = template.example_path() {
@@ -487,6 +497,60 @@ impl WorkspaceKernel {
             }
         }
         self.finish_verification(session_id, true)
+    }
+
+    async fn run_incident_improve_workflow(
+        &mut self,
+        session_id: Uuid,
+        intent: &IntentPacket,
+        vars: &BTreeMap<String, String>,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let incident_input = incident_input_path(intent)
+            .ok_or_else(|| anyhow!("incident workflow has no incident input artifact"))?;
+
+        if !self.root.join("x07.json").exists() {
+            let snapshot = self
+                .run_binding(session_id, "project.init.xtal-pure", &BTreeMap::new())
+                .await?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        }
+
+        let snapshot = self.ensure_incident_xtal_manifest(session_id, intent)?;
+        if last_op_failed(&snapshot) {
+            return Ok(snapshot);
+        }
+
+        self.dispatch_event(session_id, SessionEvent::IngestIncident)?;
+        let mut incident_vars = vars.clone();
+        incident_vars.insert("input".to_string(), incident_input.to_string());
+        for binding_id in ["xtal.ingest", "xtal.improve"] {
+            let current = self
+                .run_binding(session_id, binding_id, &incident_vars)
+                .await?;
+            if last_op_failed(&current) {
+                return self.dispatch_event(session_id, SessionEvent::MoveRoom(Room::Repair));
+            }
+        }
+        self.dispatch_event(session_id, SessionEvent::MoveRoom(Room::Trust))
+    }
+
+    fn ensure_incident_xtal_manifest(
+        &mut self,
+        session_id: Uuid,
+        intent: &IntentPacket,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let path = self.root.join("arch/xtal/xtal.json");
+        let op = if path.exists() {
+            xtal_manifest_ensure_op(session_id, false, None)
+        } else {
+            match write_incident_xtal_manifest(path.as_path(), intent) {
+                Ok(()) => xtal_manifest_ensure_op(session_id, true, None),
+                Err(error) => xtal_manifest_ensure_op(session_id, true, Some(error)),
+            }
+        };
+        self.append_op(session_id, op)
     }
 
     fn ensure_verify_phase(&mut self, session_id: Uuid) -> anyhow::Result<()> {
@@ -1297,8 +1361,8 @@ fn intent_packet_from_raw(
         workspace_root: session.root.clone(),
         task_type: session.task_type.clone(),
         targets: vec![IntentTarget {
-            module_id,
-            entry: Some(entry),
+            module_id: module_id.clone(),
+            entry: Some(entry.clone()),
         }],
         examples: vec![
             "Input examples become spec examples before implementation.".to_string(),
@@ -1326,7 +1390,12 @@ fn intent_packet_from_raw(
                 raw: normalized.to_string(),
             },
             IntentInputMode::Incident => IntentSource::Incident {
-                path: ".x07/studio/incidents/manual-note.jsonl".to_string(),
+                path: manual_incident_bundle_path(
+                    session.session_id,
+                    normalized,
+                    &module_id,
+                    &entry,
+                ),
             },
         },
     }
@@ -1367,6 +1436,241 @@ fn entry_from_spec_operation(module_id: &str, operation_name: &str) -> String {
     sanitize_op_name(entry)
 }
 
+fn incident_input_path(intent: &IntentPacket) -> Option<&str> {
+    match &intent.source {
+        IntentSource::Incident { path } => Some(path.as_str()),
+        _ => None,
+    }
+}
+
+fn manual_incident_bundle_path(
+    session_id: Uuid,
+    note: &str,
+    module_id: &str,
+    entry: &str,
+) -> String {
+    let id = manual_incident_id(session_id, note, module_id, entry);
+    format!(".x07/studio/incidents/{id}")
+}
+
+fn manual_incident_id(session_id: Uuid, note: &str, module_id: &str, entry: &str) -> String {
+    let repro = manual_incident_repro(session_id, note, module_id, entry);
+    let bytes =
+        serde_json::to_vec_pretty(&repro).expect("manual incident repro JSON should serialize");
+    sha256_hex(&bytes)
+}
+
+fn persist_manual_incident_bundle(root: &Utf8Path, intent: &IntentPacket) -> anyhow::Result<()> {
+    let Some(input_path) = incident_input_path(intent) else {
+        return Ok(());
+    };
+    let target = intent
+        .targets
+        .first()
+        .ok_or_else(|| anyhow!("incident intent has no target"))?;
+    let entry = target.entry.as_deref().unwrap_or("classify_and_repair");
+    let note = incident_note_text(intent);
+    let repro = manual_incident_repro(intent.session_id, &note, &target.module_id, entry);
+    let repro_bytes = serde_json::to_vec_pretty(&repro)?;
+    let incident_id = sha256_hex(&repro_bytes);
+    let expected_path = format!(".x07/studio/incidents/{incident_id}");
+    if input_path != expected_path {
+        return Err(anyhow!(
+            "incident input path `{input_path}` does not match repro digest `{expected_path}`"
+        ));
+    }
+
+    let bundle_dir = safe_artifact_path(root, input_path)?;
+    fs::create_dir_all(bundle_dir.as_path())?;
+    let repro_path = bundle_dir.join("repro.json");
+    fs::write(repro_path.as_path(), &repro_bytes)?;
+
+    let violation = serde_json::json!({
+        "schema_version": "x07.xtal.violation@0.1.0",
+        "kind": "contract_violation",
+        "id": incident_id,
+        "clause_id": "studio_manual_incident",
+        "world": "solve-pure",
+        "source": {
+            "mode": "studio",
+            "test_entry": format!("{}.{}", target.module_id, entry),
+        },
+        "repro": {
+            "path": "repro.json",
+            "sha256": incident_id,
+            "bytes_len": repro_bytes.len(),
+        },
+        "original_repro_path": format!("{input_path}/repro.json"),
+        "generated_at": "2000-01-01T00:00:00Z",
+    });
+    fs::write(
+        bundle_dir.join("violation.json").as_path(),
+        serde_json::to_vec_pretty(&violation)?,
+    )?;
+    Ok(())
+}
+
+fn manual_incident_repro(
+    session_id: Uuid,
+    note: &str,
+    module_id: &str,
+    entry: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "x07.contract.repro@0.1.0",
+        "tool": {
+            "x07_version": "studio",
+            "x07c_version": "studio",
+        },
+        "source": {
+            "mode": "x07run",
+            "target_kind": "project",
+            "target_path": "x07.json",
+        },
+        "world": "solve-pure",
+        "runner": {
+            "solve_fuel": 0,
+            "max_memory_bytes": 0,
+            "max_output_bytes": 0,
+            "cpu_time_limit_seconds": 0,
+            "debug_borrow_checks": false,
+        },
+        "input_bytes_b64": "",
+        "contract": {
+            "contract_kind": "requires",
+            "fn": format!("{module_id}.{entry}"),
+            "clause_id": "studio_manual_incident",
+            "clause_index": 0,
+            "clause_ptr": "/studio/manual_incident",
+            "witness": [{
+                "ty": "text",
+                "note": note,
+                "studio_session_id": session_id.to_string(),
+            }],
+        },
+    })
+}
+
+fn incident_note_text(intent: &IntentPacket) -> String {
+    intent
+        .witnesses
+        .iter()
+        .find(|witness| witness.kind == WitnessKind::IncidentReport)
+        .or_else(|| intent.witnesses.first())
+        .map(|witness| witness.text.clone())
+        .unwrap_or_else(|| "Manual incident note captured by Studio.".to_string())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn write_incident_xtal_manifest(path: &Utf8Path, intent: &IntentPacket) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let target = intent.targets.first();
+    let module_id = target
+        .map(|item| item.module_id.as_str())
+        .unwrap_or("ops.incident_repair");
+    let entry = target
+        .and_then(|item| item.entry.as_deref())
+        .unwrap_or("classify_and_repair");
+    let manifest = serde_json::json!({
+        "schema_version": "x07.xtal.manifest@0.1.0",
+        "xtal_version": "1.0",
+        "spec_roots": ["spec/"],
+        "impl_roots": ["src/"],
+        "entrypoints": [{
+            "name": format!("{module_id}.{entry}"),
+            "kind": "defn",
+        }],
+        "profiles": {
+            "dev_world": "solve-pure",
+            "ci_world": "solve-pure",
+            "prod_world": "solve-pure",
+        },
+        "trust": {
+            "review_gates": ["incident_improve"],
+            "cert_profile": "arch/trust/profiles/studio.json",
+        },
+        "autonomy": {
+            "agent_write_paths": ["src/", "tests/"],
+            "agent_write_specs": false,
+            "agent_write_arch": false,
+            "max_repair_iters": 1,
+        },
+    });
+    fs::write(path, serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(())
+}
+
+fn xtal_manifest_ensure_op(
+    session_id: Uuid,
+    wrote_manifest: bool,
+    error: Option<anyhow::Error>,
+) -> OpRecord {
+    let now = now_string();
+    let failed = error.is_some();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "xtal.manifest.ensure".to_string(),
+        backend: "studio".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "xtal".to_string(),
+            "manifest".to_string(),
+            "ensure".to_string(),
+            "arch/xtal/xtal.json".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: if failed {
+            OperationStatus::Failed
+        } else {
+            OperationStatus::Succeeded
+        },
+        exit_code: Some(if failed { 1 } else { 0 }),
+        artifacts: if failed {
+            Vec::new()
+        } else {
+            vec!["arch/xtal/xtal.json".to_string()]
+        },
+        notes: Some(if failed {
+            "Failed to prepare XTAL manifest for incident improvement.".to_string()
+        } else if wrote_manifest {
+            "Prepared XTAL manifest so incident ingest can resolve recovery evidence.".to_string()
+        } else {
+            "Existing XTAL manifest kept for incident improvement.".to_string()
+        }),
+        stdout: if failed {
+            None
+        } else if wrote_manifest {
+            Some("Wrote arch/xtal/xtal.json for incident improvement.".to_string())
+        } else {
+            Some("Using existing arch/xtal/xtal.json.".to_string())
+        },
+        stderr: error.as_ref().map(ToString::to_string),
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.xtal_manifest_ensure@0.1.0",
+            "ok": !failed,
+            "path": "arch/xtal/xtal.json",
+            "wrote": wrote_manifest && !failed,
+            "error": error.as_ref().map(ToString::to_string),
+        })),
+        report_path: None,
+    }
+}
+
 fn intent_formalize_op(
     session_id: Uuid,
     intent: &IntentPacket,
@@ -1380,6 +1684,12 @@ fn intent_formalize_op(
         IntentInputMode::Spec => "spec",
         IntentInputMode::Incident => "incident",
     };
+    let mut artifacts = vec![format!(".x07/studio/sessions/{session_id}.json")];
+    if let Some(path) = incident_input_path(intent) {
+        artifacts.push(path.to_string());
+        artifacts.push(format!("{path}/violation.json"));
+        artifacts.push(format!("{path}/repro.json"));
+    }
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
         id: Uuid::new_v4(),
@@ -1396,7 +1706,7 @@ fn intent_formalize_op(
         finished_at: Some(now),
         status: OperationStatus::Succeeded,
         exit_code: Some(0),
-        artifacts: vec![format!(".x07/studio/sessions/{session_id}.json")],
+        artifacts,
         notes: Some("Formalized human input into a reviewable XTAL intent packet.".to_string()),
         stdout: Some(format!(
             "Intent formalized from {source}; {} witnesses, {} constraints, {} revision notes.",
@@ -2651,9 +2961,9 @@ mod tests {
     use loom_types::session::SessionSnapshot;
 
     use super::{
-        copy_example_tree, entry_from_spec_operation, intent_packet_from_raw, should_scaffold_spec,
-        workflow_template_from_intent, xtal_workflow_vars_from_intent, WorkflowTemplate,
-        WorkspaceKernel,
+        copy_example_tree, entry_from_spec_operation, intent_packet_from_raw, sha256_hex,
+        should_scaffold_spec, workflow_template_from_intent, xtal_workflow_vars_from_intent,
+        WorkflowTemplate, WorkspaceKernel,
     };
 
     #[test]
@@ -2694,7 +3004,8 @@ mod tests {
                 text: "failed verify".to_string(),
             }],
             source: IntentSource::Incident {
-                path: ".x07/studio/incidents/manual-note.jsonl".to_string(),
+                path: ".x07/studio/incidents/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_string(),
             },
         };
 
@@ -2741,6 +3052,49 @@ mod tests {
             .op_log
             .iter()
             .any(|item| item.op == "intent.formalize"));
+    }
+
+    #[test]
+    fn formalize_incident_persists_ingestable_violation_bundle() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("incident workflow", TaskType::IncidentRepair)
+            .expect("create session");
+
+        let (intent, op, _snapshot) = kernel
+            .formalize_intent(
+                session.session_id,
+                "Incident note: runtime verify found a cycle handling failure.",
+                IntentInputMode::Incident,
+                &[],
+            )
+            .expect("formalize incident");
+
+        let IntentSource::Incident { path } = intent.source else {
+            panic!("expected incident source");
+        };
+        assert!(path.starts_with(".x07/studio/incidents/"));
+        assert!(op.artifacts.contains(&format!("{path}/violation.json")));
+        assert!(op.artifacts.contains(&format!("{path}/repro.json")));
+
+        let violation_path = root.join(&path).join("violation.json");
+        let repro_path = root.join(&path).join("repro.json");
+        assert!(violation_path.is_file(), "missing {violation_path}");
+        assert!(repro_path.is_file(), "missing {repro_path}");
+
+        let repro_bytes = std::fs::read(repro_path).expect("read repro");
+        let violation: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(violation_path).expect("read violation"))
+                .expect("parse violation");
+        assert_eq!(violation["schema_version"], "x07.xtal.violation@0.1.0");
+        assert_eq!(violation["id"], sha256_hex(&repro_bytes));
+        assert_eq!(violation["repro"]["sha256"], sha256_hex(&repro_bytes));
+        assert_eq!(violation["clause_id"], "studio_manual_incident");
+        assert_eq!(violation["world"], "solve-pure");
+        assert_eq!(violation["generated_at"], "2000-01-01T00:00:00Z");
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

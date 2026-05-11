@@ -65,6 +65,9 @@ describe('x07 Studio XTAL web model', () => {
 		});
 		expect(spec.constraints).toContain('Treat the provided spec as already-authored behavioral intent.');
 		expect(incident.source.kind).toBe('incident');
+		if (incident.source.kind === 'incident') {
+			expect(incident.source.path).toMatch(/^\.x07\/studio\/incidents\/st-demo/);
+		}
 		expect(incident.witnesses.map((witness) => witness.kind)).toContain('incident_report');
 		expect(incident.constraints).toContain(
 			'Revision request: Keep repair spec-preserving unless a witness changes.'

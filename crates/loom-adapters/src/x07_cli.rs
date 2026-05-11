@@ -974,7 +974,7 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
         id: "xtal.ingest",
         category: "xtal/runtime",
         program: ProgramKey::X07,
-        args: &["xtal", "ingest", "--input", "{input}"],
+        args: &["xtal", "ingest", "--input", "{input}", "--normalize-only"],
         artifacts: &["target/xtal/ingest/summary.json"],
         notes: "Normalize runtime incidents into XTAL inputs.",
         machine_json: MachineJsonMode::ReportFile,

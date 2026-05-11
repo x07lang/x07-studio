@@ -197,6 +197,13 @@ starter workspaces with no `x07.json`, it initializes an `xtal-pure` project,
 then records visible operation records for `spec.scaffold`, `spec.check`,
 `tests.gen.write`, `impl.sync.write`, `impl.check`, and `xtal.verify`.
 
+For `incident_repair` sessions, `intent/formalize` persists the user's incident
+note as a session-scoped XTAL violation bundle under `.x07/studio/incidents/`.
+After approval, `xtal/run` initializes the project if needed, ensures
+`arch/xtal/xtal.json` exists for incident resolution, records
+`xtal.ingest --normalize-only`, and then records `xtal.improve` against that
+bundle. These operations stay in the normal session worklog and artifacts list.
+
 When the approved intent maps to a supported docs example, Studio seeds that
 example first and then runs its canonical workflow:
 

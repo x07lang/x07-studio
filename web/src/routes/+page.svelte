@@ -673,9 +673,14 @@
 			current = await api.runXtalWorkflow(current);
 			const failed = current.op_log.at(-1)?.status === 'failed';
 			await replaceSession(current);
-			statusLine = failed
-				? `${current.op_log.at(-1)?.op ?? 'XTAL workflow'} failed; repair review required`
-				: 'Verify passed and trust review opened';
+			statusLine =
+				current.intent?.source.kind === 'incident'
+					? failed
+						? `${current.op_log.at(-1)?.op ?? 'Incident improve'} failed; repair review required`
+						: 'Incident ingest/improve evidence recorded'
+					: failed
+						? `${current.op_log.at(-1)?.op ?? 'XTAL workflow'} failed; repair review required`
+						: 'Verify passed and trust review opened';
 		} finally {
 			busy = false;
 		}

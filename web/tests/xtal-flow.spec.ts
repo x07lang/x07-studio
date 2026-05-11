@@ -107,6 +107,14 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText('Incident improve intake prepared')).toBeVisible();
 	await expect(page.getByLabel('Task type')).toHaveValue('incident_repair');
 	await expect(page.getByLabel('Incident Note')).toBeChecked();
+	await page.getByRole('button', { name: 'New Session', exact: true }).click();
+	await expect(page.getByText('Created incident project: Incident improvement loop')).toBeVisible();
+	await page.getByRole('button', { name: 'Polish Intent' }).click();
+	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Approve and Run' }).click();
+	await expect(page.getByText('Incident ingest/improve evidence recorded')).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'xtal.ingest' })).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'xtal.improve' })).toBeVisible();
 	await page.getByRole('button', { name: 'Intent', exact: true }).click();
 	await expect(page.getByText('Intent intake prepared')).toBeVisible();
 	await expect(page.getByLabel('Task type')).toHaveValue('new_behavior');

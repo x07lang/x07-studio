@@ -218,6 +218,21 @@ export class StudioApi {
 		}
 
 		let current = session;
+		if (current.intent?.source.kind === 'incident') {
+			current = appendDemoOp(current, 'project.init.xtal-pure', 'succeeded');
+			current = appendDemoOp(current, 'xtal.manifest.ensure', 'succeeded', [
+				'studio',
+				'xtal',
+				'manifest',
+				'ensure',
+				'arch/xtal/xtal.json'
+			]);
+			current = reduceDemoEvent(current, 'ingest_incident');
+			current = appendDemoOp(current, 'xtal.ingest', 'succeeded');
+			current = appendDemoOp(current, 'xtal.improve', 'succeeded');
+			this.replaceDemo(current);
+			return current;
+		}
 		for (const bindingId of [
 			'project.init.xtal-pure',
 			'spec.scaffold',
@@ -425,7 +440,11 @@ function bindingVars(session: SessionSnapshot, bindingId: string): Record<string
 		patchset_out: 'target/xtal/impl-sync.patchset.json'
 	};
 	if (bindingId === 'xtal.ingest' || bindingId === 'xtal.improve') {
-		return { ...common, input: '.x07/studio/incidents/manual-note.jsonl' };
+		const incidentInput =
+			session.intent?.source.kind === 'incident'
+				? session.intent.source.path
+				: '.x07/studio/incidents/manual';
+		return { ...common, input: incidentInput };
 	}
 	return common;
 }

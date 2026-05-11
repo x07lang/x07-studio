@@ -845,7 +845,7 @@ export function createIntentPacket(
 				: inputMode === 'spec'
 					? { kind: 'spec', raw: normalized }
 				: inputMode === 'incident'
-					? { kind: 'incident', path: '.x07/studio/incidents/manual-note.jsonl' }
+					? { kind: 'incident', path: `.x07/studio/incidents/${session.session_id}` }
 					: { kind: 'text', raw: normalized }
 	};
 }
@@ -1030,6 +1030,11 @@ export function reduceDemoEvent(session: SessionSnapshot, event: string, payload
 			next.room = 'ops';
 			next.allowed_verbs = ['incident_ingest', 'improve_run'];
 			return next;
+		case 'ingest_incident':
+			next.phase = 'incident_ingesting';
+			next.room = 'ops';
+			next.allowed_verbs = ['incident_ingest', 'improve_run'];
+			return next;
 		default:
 			return next;
 	}
@@ -1083,6 +1088,12 @@ function demoArtifactsFor(bindingId: string): string[] {
 			return ['target/xtal/repair/summary.json', 'target/xtal/repair/patchset.json'];
 		case 'xtal.certify':
 			return ['target/xtal/cert/summary.json', 'target/xtal/cert/bundle.json'];
+		case 'xtal.ingest':
+			return ['target/xtal/ingest/summary.json'];
+		case 'xtal.improve':
+			return ['target/xtal/improve/summary.json', 'target/xtal/improve/tests.shadow.json'];
+		case 'xtal.manifest.ensure':
+			return ['arch/xtal/xtal.json'];
 		default:
 			return [`target/xtal/${bindingId.replaceAll('.', '/')}/summary.json`];
 	}
