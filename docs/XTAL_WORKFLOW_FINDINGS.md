@@ -184,3 +184,12 @@ This document records friction found while implementing the Studio web surface.
    Studio now maps `crawl.plan` to `docs/examples/apps/x07crawl`, prepares
    `out/`, runs the crawler replay command with explicit sandbox fallback when
    needed, and bundles `dist/x07crawl`.
+
+19. Full-stack app showcases need app-pipeline bindings, not web-ui-only bindings.
+
+   `x07_atlas` exercises `x07-wasm app` profile validation, app build, trace
+   replay, release packing, provenance, deploy planning, and SLO evaluation.
+   Studio now maps `atlas.app` prompts to
+   `docs/examples/wasm_showcases/x07_atlas` and runs the app-pipeline lane with
+   fixed Atlas artifact paths so agents can create and verify the full-stack
+   example from the same XTAL workflow control.

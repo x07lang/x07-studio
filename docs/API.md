@@ -160,11 +160,14 @@ example first and then runs its canonical workflow:
 - `gateway.core`: `docs/examples/apps/x07-api-gateway`
 - `crawl.plan`: `docs/examples/apps/x07crawl`
 - `db.guard`: `docs/examples/apps/x07dbguard`
+- `atlas.app`: `docs/examples/wasm_showcases/x07_atlas`
 
 Each seeded workflow appends its `project.seed.*`, generation, arch/package,
-test, run, bundle, and verification records to the same session worklog. If
-`X07_VM_VZ_GUEST_BUNDLE` is not declared, sandbox examples use the explicit
-OS-backed sandbox bindings with `--i-accept-weaker-isolation`.
+test, run, bundle, and verification records to the same session worklog. Atlas
+also records app profile validation, app trace replay, release pack verification,
+provenance, deploy-plan, and SLO evidence. If `X07_VM_VZ_GUEST_BUNDLE` is not
+declared, sandbox examples use the explicit OS-backed sandbox bindings with
+`--i-accept-weaker-isolation`.
 
 ## Providers
 

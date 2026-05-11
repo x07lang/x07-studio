@@ -34,7 +34,13 @@ export type SessionPhase =
 
 export type OperationStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 export type IntentInputMode = 'text' | 'voice' | 'incident';
-export type ProjectDifficulty = 'simple' | 'intermediate' | 'advanced' | 'complex' | 'expert';
+export type ProjectDifficulty =
+	| 'simple'
+	| 'intermediate'
+	| 'advanced'
+	| 'complex'
+	| 'expert'
+	| 'atlas';
 
 export interface IntentPacket {
 	schema_version: 'x07.studio.intent_packet@0.1.0';
@@ -459,6 +465,31 @@ export const projectTemplates: ProjectTemplate[] = [
 			'arch/budgets/index.x07budgets.json',
 			'tests/fixtures/replay/rr/verify_ok.rrbin'
 		]
+	},
+	{
+		id: 'atlas',
+		label: 'Atlas',
+		title: 'Full-stack WASM app',
+		taskType: 'new_behavior',
+		prompt:
+			'Use docs/examples/wasm_showcases/x07_atlas as the model. Build the x07 Atlas full-stack WASM app with frontend and backend x07 projects, app profile validation, deterministic app trace replay, release pack verification, provenance attestation, deploy planning, and SLO evaluation.',
+		revision:
+			'Require the Studio run to prove profile validation, app build, smoke serve, checked-in regression replay, release pack verification, provenance, deploy plan, and SLO evidence.',
+		sourcePath: 'x07/docs/examples/wasm_showcases/x07_atlas',
+		riskProfile: 'full-stack x07-wasm app + provenance + SLO',
+		canonicalCommands: [
+			'x07-wasm app profile validate --profile atlas_dev',
+			'x07-wasm app build --profile atlas_dev --out-dir dist/showcase_fullstack/app.atlas_dev --clean',
+			'x07-wasm app test --dir dist/showcase_fullstack/app.atlas_dev --trace tests/traces/happy_path.trace.json',
+			'x07-wasm app pack --bundle-manifest dist/showcase_fullstack/app.atlas_release/app.bundle.json --profile-id atlas_release --out-dir dist/showcase_fullstack/pack.atlas_release',
+			'x07-wasm provenance verify --attestation dist/showcase_fullstack/pack.atlas_release/app.provenance.dsse.json --pack-dir dist/showcase_fullstack/pack.atlas_release --trusted-public-key arch/provenance/dev.ed25519.public_key.b64'
+		],
+		artifacts: [
+			'arch/app/index.x07app.json',
+			'dist/showcase_fullstack/app.atlas_dev/app.bundle.json',
+			'dist/showcase_fullstack/pack.atlas_release/app.pack.json',
+			'dist/showcase_fullstack/deploy.atlas_release'
+		]
 	}
 ];
 
@@ -476,41 +507,53 @@ export function createIntentPacket(
 	const isGateway = lowered.includes('api gateway') || lowered.includes('x07-api-gateway');
 	const isCrawler = lowered.includes('crawler') || lowered.includes('x07crawl');
 	const isDbGuard = lowered.includes('db migration') || lowered.includes('x07dbguard') || lowered.includes('drift guard');
+	const isAtlas =
+		lowered.includes('x07_atlas') ||
+		lowered.includes('x07 atlas') ||
+		lowered.includes('wasm_showcases/x07_atlas');
 	const isWorkflowGraph = lowered.includes('workflow graph') || lowered.includes('makespan') || lowered.includes('dag');
 	const moduleId = isSorter
 		? 'toy.sorter'
-		: isDbGuard
-			? 'db.guard'
-			: isGateway
-				? 'gateway.core'
-				: isCrawler
-					? 'crawl.plan'
-					: isStateMachine
-						? 'workflow.lifecycle'
-						: isIncident
-							? 'ops.incident_repair'
-							: isWorkflowGraph
-								? 'workflow.graph'
-								: 'workflow.graph';
+		: isAtlas
+			? 'atlas.app'
+			: isDbGuard
+				? 'db.guard'
+				: isGateway
+					? 'gateway.core'
+					: isCrawler
+						? 'crawl.plan'
+						: isStateMachine
+							? 'workflow.lifecycle'
+							: isIncident
+								? 'ops.incident_repair'
+								: isWorkflowGraph
+									? 'workflow.graph'
+									: 'workflow.graph';
 	const entry = isSorter
 		? 'sort_u8_asc'
-		: isDbGuard
-			? 'verify_drift'
-			: isGateway
-				? 'route_request_v1'
-				: isCrawler
-					? 'plan_crawl_v1'
-					: isStateMachine
-						? 'step_v1'
-						: isIncident
-							? 'classify_and_repair'
-							: 'makespan_u32';
+		: isAtlas
+			? 'atlas_dev'
+			: isDbGuard
+				? 'verify_drift'
+				: isGateway
+					? 'route_request_v1'
+					: isCrawler
+						? 'plan_crawl_v1'
+						: isStateMachine
+							? 'step_v1'
+							: isIncident
+								? 'classify_and_repair'
+								: 'makespan_u32';
 	const incidentWitness =
 		inputMode === 'incident'
 			? [{ kind: 'incident_report' as const, text: normalized }]
 			: [];
 	const extraPolicyImplications =
-		isGateway || isCrawler || isDbGuard
+		isAtlas
+			? [
+					'Full-stack WASM app, provenance signing material, deploy planning, and SLO gates require explicit trust review.'
+				]
+			: isGateway || isCrawler || isDbGuard
 			? ['RR fixtures, sandbox policy, and OS/network/db capability widening require explicit review.']
 			: isStateMachine
 				? ['Generated outputs, arch contracts, and budget profiles require drift evidence before certify.']
@@ -597,6 +640,26 @@ export function demoBindings(): BindingDescriptor[] {
 		{ id: 'bundle.dbguard.sandbox.os', category: 'x07/bundle', program: 'x07', notes: 'Bundle DB guard with OS-backed sandbox isolation.' },
 		{ id: 'run.x07crawl.sandbox.os', category: 'x07/run', program: 'x07', notes: 'Run x07crawl replay with OS-backed sandbox isolation.' },
 		{ id: 'bundle.x07crawl.sandbox.os', category: 'x07/bundle', program: 'x07', notes: 'Bundle x07crawl with OS-backed sandbox isolation.' },
+		{ id: 'pkg.lock.atlas.frontend', category: 'x07/package', program: 'x07', notes: 'Resolve the x07 Atlas frontend lockfile.' },
+		{ id: 'wasm.app.profile.validate.atlas_dev', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Validate the x07 Atlas app profile.' },
+		{ id: 'wasm.app.contracts.validate', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Validate app contracts.' },
+		{ id: 'wasm.web_ui.contracts.validate', category: 'x07/wasm/web-ui', program: 'x07-wasm', notes: 'Validate web-ui contracts.' },
+		{ id: 'wasm.http.contracts.validate', category: 'x07/wasm/http', program: 'x07-wasm', notes: 'Validate HTTP reducer contracts.' },
+		{ id: 'wasm.caps.validate.atlas_release', category: 'x07/wasm/caps', program: 'x07-wasm', notes: 'Validate x07 Atlas release capabilities.' },
+		{ id: 'wasm.ops.validate', category: 'x07/wasm/ops', program: 'x07-wasm', notes: 'Validate app ops profiles.' },
+		{ id: 'wasm.slo.validate.atlas', category: 'x07/wasm/slo', program: 'x07-wasm', notes: 'Validate x07 Atlas SLO profile.' },
+		{ id: 'wasm.app.build.atlas_dev', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Build the x07 Atlas development app.' },
+		{ id: 'wasm.app.serve.smoke.atlas_dev', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Smoke-serve the x07 Atlas development app.' },
+		{ id: 'wasm.app.test.happy_path', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Replay the x07 Atlas happy-path trace.' },
+		{ id: 'wasm.app.test.validation_error', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Replay the x07 Atlas validation trace.' },
+		{ id: 'wasm.app.test.regress.atlas_incident', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Replay the x07 Atlas incident regression.' },
+		{ id: 'wasm.app.build.atlas_release', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Build the x07 Atlas release app.' },
+		{ id: 'wasm.app.pack.atlas_release', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Pack the x07 Atlas release app.' },
+		{ id: 'wasm.app.verify.atlas_release', category: 'x07/wasm/app', program: 'x07-wasm', notes: 'Verify the x07 Atlas release app pack.' },
+		{ id: 'wasm.provenance.attest.atlas_release', category: 'x07/wasm/provenance', program: 'x07-wasm', notes: 'Attest the x07 Atlas release pack.' },
+		{ id: 'wasm.provenance.verify.atlas_release', category: 'x07/wasm/provenance', program: 'x07-wasm', notes: 'Verify the x07 Atlas release pack provenance.' },
+		{ id: 'wasm.deploy.plan.atlas_release', category: 'x07/wasm/deploy', program: 'x07-wasm', notes: 'Generate the x07 Atlas release deploy plan.' },
+		{ id: 'wasm.slo.eval.atlas_canary_ok', category: 'x07/wasm/slo', program: 'x07-wasm', notes: 'Evaluate x07 Atlas canary SLO metrics.' },
 		{ id: 'impl.check', category: 'xtal/impl', program: 'x07', notes: 'Inspect realization drift.' },
 		{ id: 'impl.sync.write', category: 'xtal/impl', program: 'x07', notes: 'Synchronize implementation.' },
 		{ id: 'impl.sync.patchset', category: 'xtal/impl', program: 'x07', notes: 'Generate implementation patchset.' },

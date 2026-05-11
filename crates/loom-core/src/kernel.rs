@@ -502,7 +502,7 @@ impl WorkspaceKernel {
     ) -> anyhow::Result<SessionSnapshot> {
         let op = match find_examples_root()
             .map(|root| root.join(example_path))
-            .filter(|path| path.join("x07.json").exists())
+            .filter(|path| template.source_exists(path.as_path()))
         {
             Some(source) => match copy_example_tree(source.as_path(), self.root.as_path()) {
                 Ok(()) => seeded_example_op(session_id, template, source.as_path()),
@@ -914,6 +914,7 @@ enum WorkflowTemplate {
     ApiGateway,
     X07Crawl,
     DbGuard,
+    X07Atlas,
 }
 
 impl WorkflowTemplate {
@@ -925,6 +926,7 @@ impl WorkflowTemplate {
             Self::ApiGateway => "x07-api-gateway",
             Self::X07Crawl => "x07crawl",
             Self::DbGuard => "x07dbguard",
+            Self::X07Atlas => "x07_atlas",
         }
     }
 
@@ -936,6 +938,18 @@ impl WorkflowTemplate {
             Self::ApiGateway => Some("apps/x07-api-gateway"),
             Self::X07Crawl => Some("apps/x07crawl"),
             Self::DbGuard => Some("apps/x07dbguard"),
+            Self::X07Atlas => Some("wasm_showcases/x07_atlas"),
+        }
+    }
+
+    fn source_exists(self, source: &Utf8Path) -> bool {
+        match self {
+            Self::X07Atlas => {
+                source.join("arch/app/index.x07app.json").exists()
+                    && source.join("frontend/x07.json").exists()
+                    && source.join("backend/x07.json").exists()
+            }
+            _ => source.join("x07.json").exists(),
         }
     }
 
@@ -1002,6 +1016,27 @@ impl WorkflowTemplate {
                 "run.sandbox.stdin.os",
                 "bundle.dbguard.sandbox.os",
             ],
+            Self::X07Atlas => &[
+                "pkg.lock.atlas.frontend",
+                "wasm.app.profile.validate.atlas_dev",
+                "wasm.web_ui.contracts.validate",
+                "wasm.http.contracts.validate",
+                "wasm.caps.validate.atlas_release",
+                "wasm.ops.validate",
+                "wasm.slo.validate.atlas",
+                "wasm.app.build.atlas_dev",
+                "wasm.app.serve.smoke.atlas_dev",
+                "wasm.app.test.happy_path",
+                "wasm.app.test.validation_error",
+                "wasm.app.test.regress.atlas_incident",
+                "wasm.app.build.atlas_release",
+                "wasm.app.pack.atlas_release",
+                "wasm.app.verify.atlas_release",
+                "wasm.provenance.attest.atlas_release",
+                "wasm.provenance.verify.atlas_release",
+                "wasm.deploy.plan.atlas_release",
+                "wasm.slo.eval.atlas_canary_ok",
+            ],
         }
     }
 
@@ -1021,6 +1056,12 @@ impl WorkflowTemplate {
             (Self::X07Crawl, "run.x07crawl.sandbox.os") => Some("out/"),
             (Self::DbGuard, "run.sandbox.stdin") => Some("out/"),
             (Self::DbGuard, "run.sandbox.stdin.os") => Some("out/"),
+            (Self::X07Atlas, "wasm.app.pack.atlas_release") => {
+                Some("dist/showcase_fullstack/pack.atlas_release/")
+            }
+            (Self::X07Atlas, "wasm.deploy.plan.atlas_release") => {
+                Some("dist/showcase_fullstack/deploy.atlas_release/")
+            }
             _ => None,
         }
     }
@@ -1040,7 +1081,10 @@ fn workflow_template_from_intent(intent: &IntentPacket) -> WorkflowTemplate {
         IntentSource::Incident { path } => path.as_str(),
     };
     let haystack = format!("{module_id} {entry} {raw_source}").to_ascii_lowercase();
-    if haystack.contains("x07dbguard") || module_id == "db.guard" {
+    if haystack.contains("x07_atlas") || haystack.contains("x07 atlas") || module_id == "atlas.app"
+    {
+        WorkflowTemplate::X07Atlas
+    } else if haystack.contains("x07dbguard") || module_id == "db.guard" {
         WorkflowTemplate::DbGuard
     } else if haystack.contains("x07-api-gateway") || module_id == "gateway.core" {
         WorkflowTemplate::ApiGateway
@@ -1131,8 +1175,13 @@ fn intent_packet_from_raw(
     let is_db_guard = lowered.contains("db migration")
         || lowered.contains("x07dbguard")
         || lowered.contains("drift guard");
+    let is_atlas = lowered.contains("x07_atlas")
+        || lowered.contains("x07 atlas")
+        || lowered.contains("wasm_showcases/x07_atlas");
     let (module_id, entry) = if is_sorter {
         ("toy.sorter", "sort_u8_asc")
+    } else if is_atlas {
+        ("atlas.app", "atlas_dev")
     } else if is_db_guard {
         ("db.guard", "verify_drift")
     } else if is_gateway {
@@ -2353,10 +2402,12 @@ mod tests {
         AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
         OperationStatus, TaskType, Witness, WitnessKind,
     };
+    use loom_types::session::SessionSnapshot;
 
     use super::{
-        copy_example_tree, should_scaffold_spec, workflow_template_from_intent,
-        xtal_workflow_vars_from_intent, WorkflowTemplate, WorkspaceKernel,
+        copy_example_tree, intent_packet_from_raw, should_scaffold_spec,
+        workflow_template_from_intent, xtal_workflow_vars_from_intent, WorkflowTemplate,
+        WorkspaceKernel,
     };
 
     #[test]
@@ -2444,6 +2495,27 @@ mod tests {
             .op_log
             .iter()
             .any(|item| item.op == "intent.formalize"));
+    }
+
+    #[test]
+    fn formalize_intent_maps_atlas_prompts_to_app_pipeline() {
+        let root = temp_root();
+        let session = SessionSnapshot::new(
+            Uuid::nil(),
+            "atlas",
+            root.to_string(),
+            TaskType::NewBehavior,
+        );
+
+        let intent = intent_packet_from_raw(
+            &session,
+            "Use docs/examples/wasm_showcases/x07_atlas to build x07 Atlas.",
+            IntentInputMode::Text,
+            &[],
+        );
+
+        assert_eq!(intent.targets[0].module_id, "atlas.app");
+        assert_eq!(intent.targets[0].entry.as_deref(), Some("atlas_dev"));
     }
 
     #[tokio::test]
@@ -2865,6 +2937,16 @@ mod tests {
             },
             ..workflow.clone()
         };
+        let atlas = IntentPacket {
+            targets: vec![IntentTarget {
+                module_id: "atlas.app".to_string(),
+                entry: Some("atlas_dev".to_string()),
+            }],
+            source: IntentSource::Text {
+                raw: "Use docs/examples/wasm_showcases/x07_atlas".to_string(),
+            },
+            ..workflow.clone()
+        };
 
         assert_eq!(
             workflow_template_from_intent(&workflow),
@@ -2913,6 +2995,10 @@ mod tests {
             WorkflowTemplate::X07Crawl
         );
         assert_eq!(
+            workflow_template_from_intent(&atlas),
+            WorkflowTemplate::X07Atlas
+        );
+        assert_eq!(
             WorkflowTemplate::X07Crawl.workflow_steps_for_environment(false),
             &[
                 "pkg.lock",
@@ -2922,8 +3008,36 @@ mod tests {
             ]
         );
         assert_eq!(
+            WorkflowTemplate::X07Atlas.workflow_steps(),
+            &[
+                "pkg.lock.atlas.frontend",
+                "wasm.app.profile.validate.atlas_dev",
+                "wasm.web_ui.contracts.validate",
+                "wasm.http.contracts.validate",
+                "wasm.caps.validate.atlas_release",
+                "wasm.ops.validate",
+                "wasm.slo.validate.atlas",
+                "wasm.app.build.atlas_dev",
+                "wasm.app.serve.smoke.atlas_dev",
+                "wasm.app.test.happy_path",
+                "wasm.app.test.validation_error",
+                "wasm.app.test.regress.atlas_incident",
+                "wasm.app.build.atlas_release",
+                "wasm.app.pack.atlas_release",
+                "wasm.app.verify.atlas_release",
+                "wasm.provenance.attest.atlas_release",
+                "wasm.provenance.verify.atlas_release",
+                "wasm.deploy.plan.atlas_release",
+                "wasm.slo.eval.atlas_canary_ok"
+            ]
+        );
+        assert_eq!(
             WorkflowTemplate::X07Crawl.directory_for_step("run.x07crawl.sandbox.os"),
             Some("out/")
+        );
+        assert_eq!(
+            WorkflowTemplate::X07Atlas.directory_for_step("wasm.app.pack.atlas_release"),
+            Some("dist/showcase_fullstack/pack.atlas_release/")
         );
         assert_eq!(
             WorkflowTemplate::StateMachineArch.stdin_for_step("run.stdin"),
@@ -2973,6 +3087,22 @@ mod tests {
 
         std::fs::remove_dir_all(source).ok();
         std::fs::remove_dir_all(destination).ok();
+    }
+
+    #[test]
+    fn atlas_seed_source_uses_multi_project_root_markers() {
+        let source = temp_root();
+        std::fs::create_dir_all(source.join("arch/app")).expect("create app arch");
+        std::fs::create_dir_all(source.join("frontend")).expect("create frontend");
+        std::fs::create_dir_all(source.join("backend")).expect("create backend");
+        std::fs::write(source.join("arch/app/index.x07app.json"), "{}").expect("write app index");
+        std::fs::write(source.join("frontend/x07.json"), "{}").expect("write frontend project");
+        std::fs::write(source.join("backend/x07.json"), "{}").expect("write backend project");
+
+        assert!(WorkflowTemplate::X07Atlas.source_exists(source.as_path()));
+        assert!(!WorkflowTemplate::WorkflowGraph.source_exists(source.as_path()));
+
+        std::fs::remove_dir_all(source).ok();
     }
 
     fn temp_root() -> camino::Utf8PathBuf {

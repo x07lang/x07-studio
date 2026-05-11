@@ -256,6 +256,9 @@ describe('x07 Studio XTAL web model', () => {
 		expect(ids).toContain('run.sandbox.os');
 		expect(ids).toContain('run.sandbox.stdin.os');
 		expect(ids).toContain('impl.sync.write');
+		expect(ids).toContain('wasm.app.build.atlas_dev');
+		expect(ids).toContain('wasm.app.verify.atlas_release');
+		expect(ids).toContain('wasm.slo.eval.atlas_canary_ok');
 	});
 
 	it('models Codex and Claude Code as coding-agent profiles', () => {
@@ -278,12 +281,14 @@ describe('x07 Studio XTAL web model', () => {
 			'intermediate',
 			'advanced',
 			'complex',
-			'expert'
+			'expert',
+			'atlas'
 		]);
 		expect(projectTemplates[0].sourcePath).toContain('agent-gate/xtal/toy-sorter');
 		expect(projectTemplates[1].canonicalCommands).toContain('x07 xtal verify --project x07.json');
 		expect(projectTemplates[2].sourcePath).toContain('x07-sm-arch-contracts-smoke');
 		expect(projectTemplates[4].taskType).toBe('incident_repair');
+		expect(projectTemplates[5].sourcePath).toContain('wasm_showcases/x07_atlas');
 		expect(createIntentPacket(demoSession(), projectTemplates[2].prompt).targets[0]).toEqual({
 			module_id: 'workflow.lifecycle',
 			entry: 'step_v1'
@@ -295,6 +300,10 @@ describe('x07 Studio XTAL web model', () => {
 		expect(createIntentPacket(demoSession(), projectTemplates[4].prompt).targets[0]).toEqual({
 			module_id: 'db.guard',
 			entry: 'verify_drift'
+		});
+		expect(createIntentPacket(demoSession(), projectTemplates[5].prompt).targets[0]).toEqual({
+			module_id: 'atlas.app',
+			entry: 'atlas_dev'
 		});
 	});
 });

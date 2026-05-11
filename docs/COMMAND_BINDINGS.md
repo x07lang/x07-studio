@@ -28,12 +28,31 @@ Loom treats CLI execution as a rendered binding, not as free-form shell text.
 - `patch.apply`
 - `check.ast`
 - `check.project`
+- `pkg.lock.atlas.frontend`
 
 ### x07-wasm
 
+- `wasm.app.profile.validate.atlas_dev`
+- `wasm.app.contracts.validate`
+- `wasm.app.build.atlas_dev`
+- `wasm.app.serve.smoke.atlas_dev`
+- `wasm.app.test.happy_path`
+- `wasm.app.test.validation_error`
+- `wasm.app.test.regress.atlas_incident`
+- `wasm.app.build.atlas_release`
+- `wasm.app.pack.atlas_release`
+- `wasm.app.verify.atlas_release`
 - `wasm.web_ui.build`
 - `wasm.web_ui.serve`
 - `wasm.web_ui.test`
+- `wasm.web_ui.contracts.validate`
+- `wasm.http.contracts.validate`
+- `wasm.caps.validate.atlas_release`
+- `wasm.ops.validate`
+- `wasm.slo.validate.atlas`
+- `wasm.slo.eval.atlas_canary_ok`
+- `wasm.provenance.attest.atlas_release`
+- `wasm.provenance.verify.atlas_release`
 - `wasm.device.build`
 - `wasm.device.verify`
 - `wasm.device.package`
@@ -44,6 +63,7 @@ Loom treats CLI execution as a rendered binding, not as free-form shell text.
 - `wasm.workload.inspect`
 - `wasm.topology.preview`
 - `wasm.deploy.plan`
+- `wasm.deploy.plan.atlas_release`
 
 ### x07-platform
 

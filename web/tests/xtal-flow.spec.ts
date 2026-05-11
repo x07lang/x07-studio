@@ -50,6 +50,16 @@ const projects = [
 		source: 'x07/docs/examples/apps/x07dbguard',
 		prompt:
 			'Incident note: use docs/examples/apps/x07dbguard to build a DB migration and drift guard with deterministic fingerprints, policy-gated apply, solve-rr drift verification, and certification evidence.'
+	},
+	{
+		difficulty: 'atlas',
+		label: 'Atlas',
+		title: 'x07 Atlas full-stack app project',
+		taskType: 'new_behavior',
+		mode: 'Written Plan',
+		source: 'x07/docs/examples/wasm_showcases/x07_atlas',
+		prompt:
+			'Use docs/examples/wasm_showcases/x07_atlas to build the x07 Atlas full-stack WASM app with app profile validation, trace replay, release pack verification, provenance, deploy planning, and SLO evidence.'
 	}
 ] as const;
 
@@ -106,7 +116,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
-	await expect(page.getByText('incident report:', { exact: false })).toBeVisible();
+	await expect(page.getByLabel('Spec approval preview')).toContainText('atlas.app');
 	await expect(page.locator('code').filter({ hasText: 'intent.formalize' })).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeEnabled();
 
