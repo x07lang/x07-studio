@@ -34,7 +34,7 @@ export type SessionPhase =
 
 export type OperationStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 export type IntentInputMode = 'text' | 'voice' | 'incident';
-export type ProjectDifficulty = 'simple' | 'intermediate' | 'complex';
+export type ProjectDifficulty = 'simple' | 'intermediate' | 'advanced' | 'complex' | 'expert';
 
 export interface IntentPacket {
 	schema_version: 'x07.studio.intent_packet@0.1.0';
@@ -189,6 +189,10 @@ export interface ProjectTemplate {
 	taskType: TaskType;
 	prompt: string;
 	revision: string;
+	sourcePath: string;
+	riskProfile: string;
+	canonicalCommands: string[];
+	artifacts: string[];
 }
 
 export const rooms: Array<{ id: Room; label: string }> = [
@@ -297,28 +301,111 @@ export const projectTemplates: ProjectTemplate[] = [
 	{
 		id: 'simple',
 		label: 'Simple',
-		title: 'Stable sorter',
+		title: 'XTAL toy sorter',
 		taskType: 'new_behavior',
 		prompt:
-			'Build a deterministic integer sorter. It accepts a list of signed integers, returns ascending order, rejects empty input, and includes one reviewable example before implementation.',
-		revision: 'Keep the operation pure and make the empty-input rejection explicit.'
+			'Use docs/examples/agent-gate/xtal/toy-sorter as the model. Build a deterministic integer sorter with spec/toy.sorter.x07spec.json, reviewable examples, generated tests under gen/xtal, and x07 xtal verify evidence before implementation is trusted.',
+		revision: 'Keep the operation pure and make the empty-input rejection explicit.',
+		sourcePath: 'x07/docs/examples/agent-gate/xtal/toy-sorter',
+		riskProfile: 'solve-pure XTAL',
+		canonicalCommands: [
+			'x07 xtal verify --project x07.json',
+			'x07 gen verify --index arch/gen/index.x07gen.json',
+			'x07 xtal impl check --project x07.json'
+		],
+		artifacts: [
+			'spec/toy.sorter.x07spec.json',
+			'gen/xtal/tests.json',
+			'target/xtal/verify/summary.json'
+		]
 	},
 	{
 		id: 'intermediate',
 		label: 'Intermediate',
-		title: 'Workflow graph optimizer',
+		title: 'XTAL workflow graph',
 		taskType: 'new_behavior',
-		prompt: defaultPrompt,
-		revision: 'Tighten examples, make proof boundary explicit, keep OS access off by default.'
+		prompt:
+			`${defaultPrompt} Follow docs/examples/agent-gate/xtal/workflow-graph: generate tests from spec, verify generated drift, run the generated manifest, check impl/spec alignment, and keep the manual smoke suite separate from XTAL evidence.`,
+		revision: 'Tighten examples, make proof boundary explicit, keep OS access off by default.',
+		sourcePath: 'x07/docs/examples/agent-gate/xtal/workflow-graph',
+		riskProfile: 'solve-pure XTAL with generated properties',
+		canonicalCommands: [
+			'x07 xtal tests gen-from-spec --project x07.json --write',
+			'x07 gen verify --index arch/gen/index.x07gen.json',
+			'x07 test --all --no-fail-fast --manifest gen/xtal/tests.json',
+			'x07 xtal dev --project x07.json',
+			'x07 xtal verify --project x07.json'
+		],
+		artifacts: [
+			'spec/workflow.graph.x07spec.json',
+			'gen/xtal/workflow/graph/tests.x07.json',
+			'target/xtal/verify/summary.json'
+		]
+	},
+	{
+		id: 'advanced',
+		label: 'Advanced',
+		title: 'State machine arch contracts',
+		taskType: 'new_behavior',
+		prompt:
+			'Use docs/examples/readiness-checks/x07-sm-arch-contracts-smoke as the model. Build a lifecycle state-machine project where x07 sm gen creates the deterministic step function and tests, x07 arch check enforces contracts_v1.sm and generated outputs stay up to date, and budget.scope_from_arch_v1 wraps the hot path.',
+		revision: 'Require generated-output drift checks, arch contract lock evidence, and step-level budget profile evidence.',
+		sourcePath: 'x07/docs/examples/readiness-checks/x07-sm-arch-contracts-smoke',
+		riskProfile: 'solve-pure + arch contract generation',
+		canonicalCommands: [
+			'x07 sm gen --input arch/sm/specs/lifecycle.sm.json --out gen/sm --write',
+			'x07 test --manifest gen/sm/tests.manifest.json',
+			'x07 arch check --write-lock',
+			'x07 test --manifest tests/tests.json'
+		],
+		artifacts: [
+			'arch/sm/index.x07sm.json',
+			'arch/manifest.x07arch.json',
+			'gen/sm/tests.manifest.json'
+		]
 	},
 	{
 		id: 'complex',
 		label: 'Complex',
-		title: 'Incident repair control plane',
+		title: 'Replayable API gateway',
+		taskType: 'new_behavior',
+		prompt:
+			'Use docs/examples/apps/x07-api-gateway as the model. Build a production-shaped API gateway with a deterministic solve-pure routing core, a solve-rr replay adapter for upstream HTTP, sandbox policy, rr cassette fixtures, review artifacts, and CI trust scripts.',
+		revision: 'Keep pure routing separate from RR replay and require committed cassette evidence before trust review.',
+		sourcePath: 'x07/docs/examples/apps/x07-api-gateway',
+		riskProfile: 'solve-pure + solve-rr + sandbox',
+		canonicalCommands: [
+			'x07 test --manifest tests/tests.json',
+			'x07 run --profile sandbox',
+			'x07 bundle --profile sandbox --out dist/x07-api-gateway'
+		],
+		artifacts: [
+			'arch/rr/index.x07rr.json',
+			'tests/fixtures/replay/rr/upstream_example.rrbin',
+			'ci/trust.sh'
+		]
+	},
+	{
+		id: 'expert',
+		label: 'Expert',
+		title: 'DB drift guard',
 		taskType: 'incident_repair',
 		prompt:
-			'Build an incident repair workflow for a policy-backed x07 service. It ingests a failed verification bundle, classifies whether the repair is spec-preserving, proposes a patchset, requires human approval before widening policy or architecture, reruns xtal.verify, and emits certification evidence for runtime ops.',
-		revision: 'Require separate evidence for incident classification, policy widening, and certification.'
+			'Use docs/examples/apps/x07dbguard as the model. Build a DB migration and drift guard that fingerprints arch/db migration plans deterministically, applies migrations through run-os or run-os-sandboxed, verifies drift from solve-rr fixtures, and emits trust/review artifacts.',
+		revision: 'Require separate evidence for deterministic plan fingerprinting, policy-gated apply, RR drift verification, and certification.',
+		sourcePath: 'x07/docs/examples/apps/x07dbguard',
+		riskProfile: 'solve-pure + solve-rr + run-os-sandboxed',
+		canonicalCommands: [
+			'x07 pkg lock --project x07.json',
+			'x07 test --manifest tests/tests.json',
+			'x07 run --profile sandbox -- verify',
+			'x07 bundle --profile sandbox --out dist/x07dbguard'
+		],
+		artifacts: [
+			'arch/db/index.x07db.json',
+			'arch/budgets/index.x07budgets.json',
+			'tests/fixtures/replay/rr/verify_ok.rrbin'
+		]
 	}
 ];
 
@@ -332,12 +419,49 @@ export function createIntentPacket(
 	const lowered = normalized.toLowerCase();
 	const isSorter = lowered.includes('sort');
 	const isIncident = lowered.includes('incident') || lowered.includes('repair');
-	const moduleId = isSorter ? 'app.sorter' : isIncident ? 'ops.incident_repair' : 'workflow.graph';
-	const entry = isSorter ? 'sort_ascending' : isIncident ? 'classify_and_repair' : 'makespan_u32';
+	const isStateMachine = lowered.includes('state machine') || lowered.includes('x07 sm');
+	const isGateway = lowered.includes('api gateway') || lowered.includes('x07-api-gateway');
+	const isCrawler = lowered.includes('crawler') || lowered.includes('x07crawl');
+	const isDbGuard = lowered.includes('db migration') || lowered.includes('x07dbguard') || lowered.includes('drift guard');
+	const isWorkflowGraph = lowered.includes('workflow graph') || lowered.includes('makespan') || lowered.includes('dag');
+	const moduleId = isSorter
+		? 'toy.sorter'
+		: isDbGuard
+			? 'db.guard'
+			: isGateway
+				? 'gateway.core'
+				: isCrawler
+					? 'crawl.plan'
+					: isStateMachine
+						? 'workflow.lifecycle'
+						: isIncident
+							? 'ops.incident_repair'
+							: isWorkflowGraph
+								? 'workflow.graph'
+								: 'workflow.graph';
+	const entry = isSorter
+		? 'sort_ascending'
+		: isDbGuard
+			? 'verify_drift'
+			: isGateway
+				? 'route_request_v1'
+				: isCrawler
+					? 'plan_crawl_v1'
+					: isStateMachine
+						? 'step_v1'
+						: isIncident
+							? 'classify_and_repair'
+							: 'makespan_u32';
 	const incidentWitness =
 		inputMode === 'incident'
 			? [{ kind: 'incident_report' as const, text: normalized }]
 			: [];
+	const extraPolicyImplications =
+		isGateway || isCrawler || isDbGuard
+			? ['RR fixtures, sandbox policy, and OS/network/db capability widening require explicit review.']
+			: isStateMachine
+				? ['Generated outputs, arch contracts, and budget profiles require drift evidence before certify.']
+				: [];
 	return {
 		schema_version: 'x07.studio.intent_packet@0.1.0',
 		session_id: session.session_id,
@@ -354,7 +478,10 @@ export function createIntentPacket(
 			'Route spec-changing repairs back to human approval.',
 			...revisionNotes.map((note) => `Revision request: ${note}`)
 		],
-		policy_implications: ['OS worlds, network, budget, and trust widening require explicit review.'],
+		policy_implications: [
+			'OS worlds, network, budget, and trust widening require explicit review.',
+			...extraPolicyImplications
+		],
 		ambiguities: [
 			'Acceptance examples need final human approval.',
 			'Proof strictness should be selected before certify.'

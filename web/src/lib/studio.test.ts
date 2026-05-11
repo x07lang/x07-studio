@@ -20,7 +20,7 @@ describe('x07 Studio XTAL web model', () => {
 		const intent = createIntentPacket(session, 'Create a stable sorter and reject empty input.');
 
 		expect(intent.schema_version).toBe('x07.studio.intent_packet@0.1.0');
-		expect(intent.targets[0].module_id).toBe('app.sorter');
+		expect(intent.targets[0].module_id).toBe('toy.sorter');
 		expect(intent.witnesses.map((witness) => witness.kind)).toContain('policy_requirement');
 		expect(intent.constraints).toContain('Use spec-first XTAL flow.');
 	});
@@ -146,13 +146,25 @@ describe('x07 Studio XTAL web model', () => {
 		expect(projectTemplates.map((template) => template.id)).toEqual([
 			'simple',
 			'intermediate',
-			'complex'
+			'advanced',
+			'complex',
+			'expert'
 		]);
-		expect(projectTemplates[0].prompt).toContain('integer sorter');
-		expect(projectTemplates[2].taskType).toBe('incident_repair');
+		expect(projectTemplates[0].sourcePath).toContain('agent-gate/xtal/toy-sorter');
+		expect(projectTemplates[1].canonicalCommands).toContain('x07 xtal verify --project x07.json');
+		expect(projectTemplates[2].sourcePath).toContain('x07-sm-arch-contracts-smoke');
+		expect(projectTemplates[4].taskType).toBe('incident_repair');
 		expect(createIntentPacket(demoSession(), projectTemplates[2].prompt).targets[0]).toEqual({
-			module_id: 'ops.incident_repair',
-			entry: 'classify_and_repair'
+			module_id: 'workflow.lifecycle',
+			entry: 'step_v1'
+		});
+		expect(createIntentPacket(demoSession(), projectTemplates[3].prompt).targets[0]).toEqual({
+			module_id: 'gateway.core',
+			entry: 'route_request_v1'
+		});
+		expect(createIntentPacket(demoSession(), projectTemplates[4].prompt).targets[0]).toEqual({
+			module_id: 'db.guard',
+			entry: 'verify_drift'
 		});
 	});
 });

@@ -4,28 +4,52 @@ const projects = [
 	{
 		difficulty: 'simple',
 		label: 'Simple',
-		title: 'Sorter smoke project',
+		title: 'XTAL toy sorter project',
 		taskType: 'new_behavior',
 		mode: 'Written Plan',
-		prompt: 'Sort signed integers in ascending order, reject empty input, and keep the operation pure.'
+		source: 'x07/docs/examples/agent-gate/xtal/toy-sorter',
+		prompt:
+			'Use docs/examples/agent-gate/xtal/toy-sorter to create a spec-first sorter with generated tests and xtal.verify evidence.'
 	},
 	{
 		difficulty: 'intermediate',
 		label: 'Intermediate',
-		title: 'Workflow graph project',
+		title: 'XTAL workflow graph project',
 		taskType: 'behavior_change',
 		mode: 'Voice Transcript',
+		source: 'x07/docs/examples/agent-gate/xtal/workflow-graph',
 		prompt:
-			'Transcript: compute workflow makespan from task durations and dependency edges, reject cycles, and expose reviewable examples.'
+			'Transcript: follow docs/examples/agent-gate/xtal/workflow-graph, compute workflow makespan from task durations and dependency edges, reject cycles, generate tests from spec, and run xtal.verify.'
+	},
+	{
+		difficulty: 'advanced',
+		label: 'Advanced',
+		title: 'State machine contracts project',
+		taskType: 'new_behavior',
+		mode: 'Written Plan',
+		source: 'x07/docs/examples/readiness-checks/x07-sm-arch-contracts-smoke',
+		prompt:
+			'Use docs/examples/readiness-checks/x07-sm-arch-contracts-smoke to generate a lifecycle step function with x07 sm gen, arch contracts, drift checks, and budget-scoped tests.'
 	},
 	{
 		difficulty: 'complex',
 		label: 'Complex',
-		title: 'Incident repair project',
+		title: 'Replayable API gateway project',
+		taskType: 'new_behavior',
+		mode: 'Voice Transcript',
+		source: 'x07/docs/examples/apps/x07-api-gateway',
+		prompt:
+			'Transcript: use docs/examples/apps/x07-api-gateway to build a replayable API gateway with solve-pure routing, solve-rr upstream replay, sandbox policy, cassettes, and trust scripts.'
+	},
+	{
+		difficulty: 'expert',
+		label: 'Expert',
+		title: 'DB drift guard project',
 		taskType: 'incident_repair',
 		mode: 'Incident Note',
+		source: 'x07/docs/examples/apps/x07dbguard',
 		prompt:
-			'Incident note: verification failed after a policy change. Classify the repair, preserve the spec unless a witness changes, rerun verification, and certify evidence.'
+			'Incident note: use docs/examples/apps/x07dbguard to build a DB migration and drift guard with deterministic fingerprints, policy-gated apply, solve-rr drift verification, and certification evidence.'
 	}
 ] as const;
 
@@ -39,6 +63,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByLabel('Active room').selectOption('verify');
 	await expect(page.getByRole('tab', { name: 'Verify' })).toHaveAttribute('aria-selected', 'true');
 	await page.getByLabel('Active room').selectOption('intent');
+	await expect(page.getByLabel('Example-backed XTAL template').getByText('x07/docs/examples/agent-gate/xtal/toy-sorter')).toBeVisible();
 
 	for (const room of ['Spec', 'Realize', 'Verify', 'Repair', 'Trust', 'Ops', 'Agents', 'Intent']) {
 		await page.getByRole('tab', { name: room }).click();
@@ -59,6 +84,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 		await page.getByLabel('Project difficulty').selectOption(project.difficulty);
 		await page.getByRole('button', { name: 'Load Brief', exact: true }).click();
 		await expect(page.getByText(`${project.label} project brief loaded`)).toBeVisible();
+		await expect(page.getByLabel('Example-backed XTAL template')).toContainText(project.source);
 
 		await page.getByLabel('Project title').fill(project.title);
 		await page.getByLabel('Task type').selectOption(project.taskType);

@@ -556,6 +556,28 @@
 					New Session
 				</button>
 			</div>
+			<div class="template-meta" aria-label="Example-backed XTAL template">
+				<div>
+					<span>Source example</span>
+					<strong>{selectedProjectTemplate.sourcePath}</strong>
+				</div>
+				<div>
+					<span>Risk profile</span>
+					<strong>{selectedProjectTemplate.riskProfile}</strong>
+				</div>
+				<div class="template-commands">
+					<span>Canonical loop</span>
+					{#each selectedProjectTemplate.canonicalCommands.slice(0, 4) as command}
+						<code>{command}</code>
+					{/each}
+				</div>
+				<div class="template-commands">
+					<span>Expected artifacts</span>
+					{#each selectedProjectTemplate.artifacts as artifact}
+						<code>{artifact}</code>
+					{/each}
+				</div>
+			</div>
 		</section>
 
 		<section class="lifecycle" aria-label="XTAL lifecycle">

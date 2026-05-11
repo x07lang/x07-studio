@@ -55,6 +55,7 @@
 .eyebrow,
 .field label,
 .mode-row label,
+.template-meta span,
 .evidence-list span,
 .provider span,
 .provider small,
@@ -312,6 +313,39 @@ button:focus-visible {
 	flex-wrap: wrap;
 	gap: 8px;
 	justify-content: flex-end;
+}
+
+.template-meta {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.55fr) minmax(260px, 1fr) minmax(260px, 1fr);
+	gap: 9px;
+	padding-top: 2px;
+}
+
+.template-meta > div {
+	border: 1px solid rgba(85, 214, 231, 0.17);
+	border-radius: var(--radius);
+	background: rgba(255, 255, 255, 0.035);
+	padding: 9px;
+	display: grid;
+	gap: 5px;
+	min-width: 0;
+}
+
+.template-meta strong,
+.template-meta code {
+	overflow-wrap: anywhere;
+}
+
+.template-meta code {
+	color: var(--cyan);
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.template-commands {
+	align-content: start;
 }
 
 .lifecycle {
@@ -1010,7 +1044,8 @@ textarea {
 
 	.topbar,
 	.project-form,
-	.intent-spec-grid {
+	.intent-spec-grid,
+	.template-meta {
 		grid-template-columns: 1fr;
 	}
 
