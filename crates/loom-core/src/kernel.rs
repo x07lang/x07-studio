@@ -17,8 +17,8 @@ use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
 use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
 use loom_types::api::{
-    ArtifactPreviewResponse, PatchsetPreview, PatchsetTargetPreview, WorkspacePathState,
-    WorkspaceRadarResponse,
+    ArtifactPreviewResponse, DocPreviewEntry, DocPreviewResponse, PatchsetPreview,
+    PatchsetTargetPreview, WorkspacePathState, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
@@ -192,6 +192,84 @@ impl WorkspaceKernel {
             text,
             json,
             patchset_preview,
+        })
+    }
+
+    pub fn preview_doc(
+        &self,
+        session_id: Uuid,
+        doc_ref: &str,
+    ) -> anyhow::Result<DocPreviewResponse> {
+        const MAX_DOC_PREVIEW_BYTES: u64 = 16 * 1024;
+        const MAX_DOC_ENTRIES: usize = 12;
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let normalized = normalize_doc_ref(doc_ref)?;
+        let docs_root = find_docs_root(self.root.as_path())
+            .ok_or_else(|| anyhow!("x07 docs root was not found"))?;
+        let rel = normalized
+            .strip_prefix("x07/docs/")
+            .ok_or_else(|| anyhow!("doc ref `{normalized}` must start with `x07/docs/`"))?;
+        let target = safe_doc_ref_path(docs_root.as_path(), rel)?;
+
+        if target.is_dir() {
+            let (entries, truncated) =
+                doc_directory_entries(target.as_path(), &normalized, MAX_DOC_ENTRIES)?;
+            let snippet = if entries.is_empty() {
+                "No previewable docs found in this directory.".to_string()
+            } else {
+                entries
+                    .iter()
+                    .map(|entry| format!("{} ({})", entry.path, entry.kind))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            return Ok(DocPreviewResponse {
+                schema_version: "x07.studio.doc_preview@0.1.0".to_string(),
+                doc_ref: normalized,
+                resolved_path: target.to_string(),
+                title: doc_title_from_ref(&target, doc_ref),
+                media_kind: "directory".to_string(),
+                bytes_read: 0,
+                truncated,
+                snippet,
+                entries,
+            });
+        }
+
+        if !target.is_file() {
+            return Err(anyhow!(
+                "doc ref `{normalized}` is not a readable file or directory"
+            ));
+        }
+
+        let size = fs::metadata(&target)
+            .with_context(|| format!("metadata: {target}"))?
+            .len();
+        let mut file = fs::File::open(&target).with_context(|| format!("open: {target}"))?;
+        let mut bytes = Vec::new();
+        file.by_ref()
+            .take(MAX_DOC_PREVIEW_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("read: {target}"))?;
+        let truncated = size > MAX_DOC_PREVIEW_BYTES || bytes.len() as u64 > MAX_DOC_PREVIEW_BYTES;
+        if truncated {
+            bytes.truncate(MAX_DOC_PREVIEW_BYTES as usize);
+        }
+        let text = String::from_utf8(bytes)
+            .with_context(|| format!("doc ref `{normalized}` is not UTF-8 text"))?;
+        let title = markdown_title(&text).unwrap_or_else(|| doc_title_from_ref(&target, doc_ref));
+        Ok(DocPreviewResponse {
+            schema_version: "x07.studio.doc_preview@0.1.0".to_string(),
+            doc_ref: normalized,
+            resolved_path: target.to_string(),
+            title,
+            media_kind: doc_media_kind(target.as_path()).to_string(),
+            bytes_read: size.min(MAX_DOC_PREVIEW_BYTES),
+            truncated,
+            snippet: doc_snippet(&text),
+            entries: Vec::new(),
         })
     }
 
@@ -1935,6 +2013,177 @@ fn safe_artifact_path(root: &Utf8Path, artifact: &str) -> anyhow::Result<Utf8Pat
     Ok(root.join(rel))
 }
 
+fn normalize_doc_ref(doc_ref: &str) -> anyhow::Result<String> {
+    let normalized = doc_ref.trim().trim_end_matches('/').to_string();
+    if normalized.is_empty() || normalized.contains('\0') {
+        return Err(anyhow!("doc ref is empty or invalid"));
+    }
+    if !normalized.starts_with("x07/docs/") {
+        return Err(anyhow!(
+            "doc ref `{normalized}` must start with `x07/docs/`"
+        ));
+    }
+    let rel = Utf8Path::new(
+        normalized
+            .strip_prefix("x07/docs/")
+            .expect("prefix checked above"),
+    );
+    if rel.is_absolute() {
+        return Err(anyhow!("doc ref must be relative"));
+    }
+    if rel.components().any(|component| {
+        matches!(
+            component,
+            camino::Utf8Component::ParentDir | camino::Utf8Component::Prefix(_)
+        )
+    }) {
+        return Err(anyhow!("doc ref must stay inside x07 docs"));
+    }
+    Ok(normalized)
+}
+
+fn safe_doc_ref_path(docs_root: &Utf8Path, rel: &str) -> anyhow::Result<Utf8PathBuf> {
+    let root = canonical_utf8_path(docs_root)?;
+    let candidate = root.join(rel);
+    let target = canonical_utf8_path(candidate.as_path())?;
+    if !target.starts_with(root.as_path()) {
+        return Err(anyhow!("doc ref must stay inside x07 docs"));
+    }
+    Ok(target)
+}
+
+fn canonical_utf8_path(path: &Utf8Path) -> anyhow::Result<Utf8PathBuf> {
+    Utf8PathBuf::from_path_buf(
+        fs::canonicalize(path).with_context(|| format!("canonicalize: {path}"))?,
+    )
+    .map_err(|path| anyhow!("path is not UTF-8: {}", path.display()))
+}
+
+fn find_docs_root(root: &Utf8Path) -> Option<Utf8PathBuf> {
+    if let Ok(value) = std::env::var("X07_STUDIO_X07_DOCS_ROOT") {
+        let path = Utf8PathBuf::from(value);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    let mut candidates = vec![
+        root.join("x07/docs"),
+        root.join("../x07/docs"),
+        root.join("../../x07/docs"),
+    ];
+    if let Ok(cwd) = std::env::current_dir().and_then(|path| {
+        Utf8PathBuf::from_path_buf(path).map_err(|path| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("current dir is not UTF-8: {}", path.display()),
+            )
+        })
+    }) {
+        candidates.extend([
+            cwd.join("x07/docs"),
+            cwd.join("../x07/docs"),
+            cwd.join("../../x07/docs"),
+        ]);
+    }
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+fn doc_directory_entries(
+    directory: &Utf8Path,
+    doc_ref: &str,
+    limit: usize,
+) -> anyhow::Result<(Vec<DocPreviewEntry>, bool)> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(directory.as_std_path())
+        .with_context(|| format!("read docs directory: {directory}"))?
+    {
+        let entry = entry?;
+        let path = Utf8PathBuf::from_path_buf(entry.path())
+            .map_err(|path| anyhow!("doc path is not UTF-8: {}", path.display()))?;
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let kind = if path.is_dir() {
+            "directory"
+        } else if is_previewable_doc_file(path.as_path()) {
+            "file"
+        } else {
+            continue;
+        };
+        entries.push(DocPreviewEntry {
+            path: format!("{doc_ref}/{name}"),
+            title: doc_title_from_ref(path.as_path(), name),
+            kind: kind.to_string(),
+        });
+    }
+    entries.sort_by(|left, right| {
+        let left_rank = if left.kind == "directory" { 0 } else { 1 };
+        let right_rank = if right.kind == "directory" { 0 } else { 1 };
+        left_rank
+            .cmp(&right_rank)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    let truncated = entries.len() > limit;
+    entries.truncate(limit);
+    Ok((entries, truncated))
+}
+
+fn is_previewable_doc_file(path: &Utf8Path) -> bool {
+    matches!(
+        path.extension(),
+        Some("md" | "json" | "toml" | "yaml" | "yml")
+    )
+}
+
+fn doc_title_from_ref(path: &Utf8Path, fallback: &str) -> String {
+    path.file_stem()
+        .or_else(|| path.file_name())
+        .unwrap_or(fallback)
+        .replace(['-', '_'], " ")
+}
+
+fn doc_media_kind(path: &Utf8Path) -> &'static str {
+    match path.extension() {
+        Some("md") => "markdown",
+        Some("json") => "json",
+        _ => "text",
+    }
+}
+
+fn markdown_title(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("# "))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+}
+
+fn doc_snippet(text: &str) -> String {
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("# ") {
+            continue;
+        }
+        lines.push(trimmed.to_string());
+        if lines.len() == 8 {
+            break;
+        }
+    }
+    if lines.is_empty() {
+        text.lines()
+            .take(8)
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        lines.join("\n")
+    }
+}
+
 fn is_reviewable_patchset_target(path: &str) -> bool {
     let rel = Utf8Path::new(path);
     if rel.components().any(|component| match component {
@@ -3398,6 +3647,64 @@ mod tests {
         assert_eq!(blocked_again.op.op, "agent.approval.echo-agent");
         assert_eq!(blocked_again.op.status, OperationStatus::Pending);
         assert!(blocked_again.command.is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn preview_doc_resolves_bounded_file_and_directory() {
+        let root = temp_root();
+        let quickstart = root.join("x07/docs/getting-started/agent-quickstart.md");
+        let examples = root.join("x07/docs/examples");
+        std::fs::create_dir_all(quickstart.parent().expect("quickstart parent"))
+            .expect("create quickstart dir");
+        std::fs::create_dir_all(examples.join("apps")).expect("create examples dir");
+        std::fs::write(
+            &quickstart,
+            "# Agent quickstart\n\nUse x07 run as the canonical execution front door.\n\nKeep evidence visible.",
+        )
+        .expect("write quickstart");
+        std::fs::write(
+            examples.join("README.md"),
+            "# Examples\n\nRunnable examples.",
+        )
+        .expect("write examples readme");
+
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("doc preview", TaskType::NewBehavior)
+            .expect("create session");
+
+        let preview = kernel
+            .preview_doc(
+                session.session_id,
+                "x07/docs/getting-started/agent-quickstart.md",
+            )
+            .expect("preview doc");
+        assert_eq!(preview.schema_version, "x07.studio.doc_preview@0.1.0");
+        assert_eq!(preview.title, "Agent quickstart");
+        assert_eq!(preview.media_kind, "markdown");
+        assert!(preview.snippet.contains("x07 run"));
+        assert!(preview.entries.is_empty());
+
+        let directory = kernel
+            .preview_doc(session.session_id, "x07/docs/examples")
+            .expect("preview docs directory");
+        assert_eq!(directory.media_kind, "directory");
+        assert!(directory
+            .entries
+            .iter()
+            .any(|entry| entry.path == "x07/docs/examples/README.md"));
+        assert!(directory
+            .entries
+            .iter()
+            .any(|entry| entry.path == "x07/docs/examples/apps"));
+
+        let rejected = kernel
+            .preview_doc(session.session_id, "x07/docs/../Cargo.toml")
+            .expect_err("parent traversal should be rejected")
+            .to_string();
+        assert!(rejected.contains("inside x07 docs"), "{rejected}");
 
         std::fs::remove_dir_all(root).ok();
     }

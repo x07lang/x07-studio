@@ -13,6 +13,7 @@ import {
 	type ApprovalDecision,
 	type ArtifactPreviewResponse,
 	type BindingDescriptor,
+	type DocPreviewResponse,
 	type FormalizeIntentResponse,
 	type HealthResponse,
 	type IntentInputMode,
@@ -204,6 +205,19 @@ export class StudioApi {
 			);
 		}
 		return demoArtifactPreview(artifact);
+	}
+
+	async previewDoc(session: SessionSnapshot, docRef: string): Promise<DocPreviewResponse> {
+		if (!this.demoMode) {
+			return await request<DocPreviewResponse>(
+				`/v1/sessions/${session.session_id}/docs/preview`,
+				{
+					method: 'POST',
+					body: JSON.stringify({ doc_ref: docRef })
+				}
+			);
+		}
+		return demoDocPreview(docRef);
 	}
 
 	async runXtalWorkflow(session: SessionSnapshot): Promise<SessionSnapshot> {
@@ -508,6 +522,36 @@ function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
 					]
 				}
 			: null
+	};
+}
+
+function demoDocPreview(docRef: string): DocPreviewResponse {
+	const isDirectory = !docRef.endsWith('.md') && !docRef.endsWith('.json');
+	const entries = isDirectory
+		? [
+				{
+					path: `${docRef}/agent-quickstart.md`,
+					title: 'agent quickstart',
+					kind: 'file' as const
+				},
+				{
+					path: `${docRef}/workflow-graph`,
+					title: 'workflow graph',
+					kind: 'directory' as const
+				}
+			]
+		: [];
+	return {
+		schema_version: 'x07.studio.doc_preview@0.1.0',
+		doc_ref: docRef,
+		resolved_path: `/workspace/${docRef}`,
+		title: docRef.split('/').at(-1)?.replaceAll('-', ' ').replace(/\.(md|json)$/u, '') || docRef,
+		media_kind: isDirectory ? 'directory' : docRef.endsWith('.json') ? 'json' : 'markdown',
+		bytes_read: isDirectory ? 0 : 768,
+		truncated: false,
+		snippet:
+			'Use x07 run as the canonical execution front door. Keep the edit, format, lint, and run loop visible before handoff.',
+		entries
 	};
 }
 

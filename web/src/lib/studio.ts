@@ -111,6 +111,24 @@ export interface PatchsetTargetPreview {
 	truncated: boolean;
 }
 
+export interface DocPreviewEntry {
+	path: string;
+	title: string;
+	kind: 'file' | 'directory';
+}
+
+export interface DocPreviewResponse {
+	schema_version: 'x07.studio.doc_preview@0.1.0';
+	doc_ref: string;
+	resolved_path: string;
+	title: string;
+	media_kind: 'markdown' | 'json' | 'text' | 'directory';
+	bytes_read: number;
+	truncated: boolean;
+	snippet: string;
+	entries: DocPreviewEntry[];
+}
+
 export interface SessionSnapshot {
 	schema_version: string;
 	session_id: string;

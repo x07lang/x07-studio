@@ -47,9 +47,9 @@ This document records friction found while implementing the Studio web surface.
    `available-skills.md`, and the guides explain canonical loops, skills, and
    `x07 run`. Studio now compiles those into approved session doctrine,
    includes the selected refs and MCP tools in coding-agent handoff prompts, and
-   renders the doctrine in the browser right rail. The remaining improvement is
-   live doc resolution/snippet previews through `x07.doc_v1` or the docs index
-   instead of showing refs only.
+   renders the doctrine in the browser right rail. The right rail now resolves
+   those refs through a bounded daemon docs-preview endpoint, showing file
+   snippets or directory entries for `x07/docs/...` refs before agent handoff.
 
 6. The API docs had a stale event envelope example.
 

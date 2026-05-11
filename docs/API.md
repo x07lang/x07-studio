@@ -72,6 +72,7 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions/{session_id}/intent/formalize`
 - `POST /sessions/{session_id}/bindings/run`
 - `POST /sessions/{session_id}/artifacts/preview`
+- `POST /sessions/{session_id}/docs/preview`
 - `POST /sessions/{session_id}/xtal/run`
 
 Create session request:
@@ -185,6 +186,36 @@ project surfaces such as `src/`, `tests/`, `spec/`, `arch/`, `gen/`,
 `policy/`, `policies/`, `wit/`, `x07.json`, and `x07.lock.json`. Target-level
 read, policy, or patch failures are returned as `apply_error` rows instead of
 failing the whole artifact preview.
+
+Documentation preview request:
+
+```json
+{
+  "doc_ref": "x07/docs/getting-started/agent-quickstart.md"
+}
+```
+
+Documentation preview response:
+
+```json
+{
+  "schema_version": "x07.studio.doc_preview@0.1.0",
+  "doc_ref": "x07/docs/getting-started/agent-quickstart.md",
+  "resolved_path": "/path/to/x07/docs/getting-started/agent-quickstart.md",
+  "title": "Agent quickstart",
+  "media_kind": "markdown",
+  "bytes_read": 8192,
+  "truncated": false,
+  "snippet": "Use x07 run as the canonical execution front door.",
+  "entries": []
+}
+```
+
+The daemon resolves only `x07/docs/...` refs under the local x07 docs root,
+rejects parent traversal, caps file snippets, and returns bounded directory
+entries for docs indexes such as `x07/docs/examples`. Browser clients use this
+to show the same canonical documentation context that the session doctrine and
+agent handoff already name.
 
 Run XTAL workflow request:
 

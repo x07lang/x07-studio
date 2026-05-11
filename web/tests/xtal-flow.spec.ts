@@ -190,6 +190,12 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText('Spec approved; realization lane is unlocked')).toBeVisible();
 	await expect(page.getByLabel('Session doctrine')).toContainText('x07.doc_v1');
 	await expect(page.getByLabel('Session doctrine')).toContainText('x07/docs/getting-started/agent-quickstart.md');
+	await page
+		.getByLabel('Session doctrine')
+		.getByRole('button', { name: 'Preview x07/docs/getting-started/agent-quickstart.md' })
+		.click();
+	await expect(page.getByLabel('Documentation preview')).toContainText('agent quickstart');
+	await expect(page.getByLabel('Documentation preview')).toContainText('x07 run');
 
 	await page.getByRole('tab', { name: 'Agents' }).click();
 	await page.getByRole('button', { name: 'Generate Claude Code Handoff' }).click();

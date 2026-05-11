@@ -26,6 +26,7 @@
 		type AgentProfile,
 		type ArtifactPreviewResponse,
 		type BindingDescriptor,
+		type DocPreviewResponse,
 		type HealthResponse,
 		type IntentInputMode,
 		type OpRecord,
@@ -66,6 +67,9 @@
 	let artifactPreviewKey = '';
 	let artifactPreviewStatus = 'No artifact preview loaded';
 	let selectedArtifactPreview: ArtifactPreviewResponse | null = null;
+	let docPreviewKey = '';
+	let docPreviewStatus = 'No documentation preview loaded';
+	let selectedDocPreview: DocPreviewResponse | null = null;
 	let workspaceRadar: WorkspaceRadarResponse | null = null;
 
 	const placeholderOp: OpRecord = {
@@ -465,6 +469,29 @@
 			if (artifactPreviewKey !== key) return;
 			selectedArtifactPreview = null;
 			artifactPreviewStatus = error instanceof Error ? error.message : 'Artifact preview failed';
+		}
+	}
+
+	async function loadDocPreview(docRef: string) {
+		if (!selected) return;
+		const key = `${selected.session_id}|${docRef}`;
+		if (docPreviewKey === key && selectedDocPreview) return;
+		docPreviewKey = key;
+		selectedDocPreview = null;
+		docPreviewStatus = `Loading ${docRef}`;
+		try {
+			const preview = await api.previewDoc(selected, docRef);
+			if (docPreviewKey !== key) return;
+			selectedDocPreview = preview;
+			docPreviewStatus = preview.truncated
+				? preview.media_kind === 'directory'
+					? `Preview truncated to ${preview.entries.length} entries`
+					: `Preview truncated at ${preview.bytes_read} bytes`
+				: `Preview loaded from ${preview.doc_ref}`;
+		} catch (error) {
+			if (docPreviewKey !== key) return;
+			selectedDocPreview = null;
+			docPreviewStatus = error instanceof Error ? error.message : 'Documentation preview failed';
 		}
 	}
 
@@ -1496,8 +1523,34 @@
 			<div class="doctrine-block">
 				<span>Canonical docs</span>
 				{#each doctrineDocRefs.slice(0, 5) as docRef}
-					<code>{docRef}</code>
+					<button
+						class="doc-ref-button"
+						type="button"
+						aria-label={`Preview ${docRef}`}
+						on:click={() => loadDocPreview(docRef)}
+						disabled={!selected}
+					>
+						<code>{docRef}</code>
+					</button>
 				{/each}
+				{#if selectedDocPreview}
+					<div class="doc-preview" aria-label="Documentation preview">
+						<strong>{selectedDocPreview.title}</strong>
+						<code>{selectedDocPreview.doc_ref}</code>
+						<p>{selectedDocPreview.snippet}</p>
+						{#if selectedDocPreview.entries.length}
+							<div class="doc-preview-entries">
+								{#each selectedDocPreview.entries.slice(0, 6) as entry}
+									<span>{entry.kind}</span>
+									<code>{entry.path}</code>
+								{/each}
+							</div>
+						{/if}
+						<small>{docPreviewStatus}</small>
+					</div>
+				{:else}
+					<small class="doc-preview-status">{docPreviewStatus}</small>
+				{/if}
 			</div>
 		</section>
 

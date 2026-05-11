@@ -233,6 +233,24 @@ describe('x07 Studio XTAL web model', () => {
 		);
 	});
 
+	it('loads demo documentation previews for doctrine refs', async () => {
+		const api = new StudioApi();
+		await api.health();
+		const preview = await api.previewDoc(
+			demoSession(),
+			'x07/docs/getting-started/agent-quickstart.md'
+		);
+		const directory = await api.previewDoc(demoSession(), 'x07/docs/examples');
+
+		expect(preview.schema_version).toBe('x07.studio.doc_preview@0.1.0');
+		expect(preview.title).toContain('agent quickstart');
+		expect(preview.snippet).toContain('x07 run');
+		expect(directory.media_kind).toBe('directory');
+		expect(directory.entries.map((entry) => entry.path)).toContain(
+			'x07/docs/examples/workflow-graph'
+		);
+	});
+
 	it('does not replace connected artifact preview failures with demo content', async () => {
 		const originalFetch = globalThis.fetch;
 		const api = new StudioApi();

@@ -83,6 +83,31 @@ pub struct ArtifactPreviewRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocPreviewRequest {
+    pub doc_ref: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocPreviewResponse {
+    pub schema_version: String,
+    pub doc_ref: String,
+    pub resolved_path: String,
+    pub title: String,
+    pub media_kind: String,
+    pub bytes_read: u64,
+    pub truncated: bool,
+    pub snippet: String,
+    pub entries: Vec<DocPreviewEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocPreviewEntry {
+    pub path: String,
+    pub title: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactPreviewResponse {
     pub schema_version: String,
     pub artifact: String,

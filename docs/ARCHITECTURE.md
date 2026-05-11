@@ -82,6 +82,10 @@ Approved sessions carry a compiled doctrine surface: canonical x07 doc refs,
 MCP tools, allowed verbs, write roots, focus paths, and baseline evidence refs.
 The browser renders that doctrine in the right rail so humans can see the same
 operating contract that handoff prompts give to coding agents.
+Doctrine doc refs are also previewable through a bounded daemon endpoint. The
+kernel resolves only `x07/docs/...` refs under the local x07 docs root, rejects
+path traversal, caps snippets, and returns directory entries for docs indexes so
+humans can inspect canonical context before handing work to an agent.
 
 Studio also exposes command-capable coding agents through
 `x07.studio.agent_profile@0.1.0`. The daemon returns default Codex and Claude

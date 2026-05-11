@@ -966,6 +966,62 @@ textarea {
 	overflow-wrap: anywhere;
 }
 
+.doc-ref-button {
+	width: 100%;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: var(--radius);
+	padding: 6px;
+	background: rgba(255, 255, 255, 0.03);
+	text-align: left;
+}
+
+.doc-ref-button:hover,
+.doc-ref-button:focus-visible {
+	border-color: rgba(91, 140, 255, 0.6);
+	background: rgba(91, 140, 255, 0.1);
+}
+
+.doc-preview {
+	display: grid;
+	gap: 6px;
+	border-top: 1px solid var(--border);
+	margin-top: 4px;
+	padding-top: 8px;
+	min-width: 0;
+}
+
+.doc-preview strong {
+	font-size: 13px;
+}
+
+.doc-preview p {
+	margin: 0;
+	color: var(--text);
+	font-size: 12px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.doc-preview small,
+.doc-preview-status {
+	color: var(--muted);
+	font-size: 11px;
+	overflow-wrap: anywhere;
+}
+
+.doc-preview-entries {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	gap: 4px 7px;
+	align-items: baseline;
+}
+
+.doc-preview-entries span {
+	text-transform: uppercase;
+	font-size: 10px;
+}
+
 .agent-actions {
 	margin-top: 5px;
 }

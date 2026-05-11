@@ -6,8 +6,8 @@ use loom_types::api::{
     AgentApprovalRequest, AgentApprovalResponse, AgentRunRequest, AgentRunResponse,
     ArtifactPreviewRequest, ArtifactPreviewResponse, BindingDescriptor, CallMcpToolRequest,
     ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest,
-    HealthResponse, McpCallResponse, ProbeProviderRequest, ProviderProbeResponse,
-    ResolveApprovalRequest, RunBindingRequest, SaveProviderProfileRequest,
+    DocPreviewRequest, DocPreviewResponse, HealthResponse, McpCallResponse, ProbeProviderRequest,
+    ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest, SaveProviderProfileRequest,
 };
 use loom_types::artifacts::ProviderProfile;
 use loom_types::mcp::McpToolDescriptor;
@@ -80,6 +80,20 @@ impl DaemonClient {
             &format!("/v1/sessions/{session_id}/artifacts/preview"),
             &ArtifactPreviewRequest {
                 artifact: artifact.to_string(),
+            },
+        )
+        .await
+    }
+
+    pub async fn preview_doc(
+        &self,
+        session_id: Uuid,
+        doc_ref: &str,
+    ) -> anyhow::Result<DocPreviewResponse> {
+        self.post(
+            &format!("/v1/sessions/{session_id}/docs/preview"),
+            &DocPreviewRequest {
+                doc_ref: doc_ref.to_string(),
             },
         )
         .await
