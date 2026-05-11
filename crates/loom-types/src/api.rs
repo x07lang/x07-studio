@@ -16,6 +16,33 @@ use crate::session::SessionSnapshot;
 pub struct HealthResponse {
     pub ok: bool,
     pub workspace_root: String,
+    pub defaults: StudioDefaults,
+    pub components: Vec<RuntimeComponentStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StudioDefaults {
+    pub daemon_addr: String,
+    pub provider_profile_id: String,
+    pub platform_state_dir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeComponentState {
+    Available,
+    Missing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeComponentStatus {
+    pub id: String,
+    pub label: String,
+    pub command: String,
+    pub required: bool,
+    pub status: RuntimeComponentState,
+    pub source: Option<String>,
+    pub install_hint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

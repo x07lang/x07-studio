@@ -88,6 +88,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Generated tests');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Last verify');
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Provider');
+	await expect(page.getByLabel('Setup readiness')).toContainText('x07-wasm');
+	await expect(page.getByLabel('Setup readiness')).toContainText('x07 platform');
 	await expect(page.getByLabel('Counterexample theater')).toContainText('No counterexample captured');
 
 	await page.getByRole('button', { name: 'Refresh Studio' }).click();
@@ -218,35 +220,30 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
-	await expect(page.getByLabel('Trust review signals')).toContainText('Verify evidence');
-	await expect(page.getByLabel('Trust review signals')).toContainText('Implementation write');
-	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Implementation write/ }).click();
-	await expect(page.getByLabel('Selected operation inspector')).toContainText('impl.sync.write');
-	await expect(page.getByLabel('Visual patch review')).toContainText('Write gate: implementation paths');
-	await expect(page.getByLabel('Visual patch review')).toContainText('src/');
-	await expect(page.getByLabel('Visual patch review')).toContainText('src/main.x07.json');
-	await expect(page.getByLabel('Visual patch review')).toContainText('add 1, replace 1');
-	await expect(page.getByLabel('Visual patch review')).toContainText('Before');
-	await expect(page.getByLabel('Visual patch review')).toContainText('After');
-	await expect(page.getByLabel('Visual patch review')).toContainText('todo');
-	await expect(page.getByLabel('Visual patch review')).toContainText('ok');
-	await expect(page.getByLabel('Visual patch review')).toContainText('target/xtal/impl-sync.patchset.json');
+	await expect(page.getByLabel('Trust review signals')).toContainText('Local platform delivery');
+	await expect(page.getByLabel('Trust review signals')).toContainText('SLO evidence');
+	await expect(page.getByLabel('Trust review signals')).toContainText('Release evidence');
+	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Local platform delivery/ }).click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('lp.deploy.status.local');
+	await expect(page.getByLabel('Operation artifacts')).toContainText('.x07/platform');
 	await expect(page.getByText('Agent Visible Worklog')).toBeVisible();
+	await page.getByLabel('Worklog filter').selectOption('claude');
 	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.event.claude-code.artifact' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.approval.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.supervise.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.handoff.claude-code' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'project.init.xtal-pure' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'impl.sync.write' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'xtal.verify' })).toBeVisible();
-	await page.getByRole('button', { name: /Inspect xtal\.verify/ }).first().click();
-	await expect(page.getByLabel('Selected operation inspector')).toContainText('xtal.verify');
+	await page.getByLabel('Worklog filter').selectOption('all');
+	await expect(page.locator('code').filter({ hasText: 'wasm.app.verify.atlas_release' })).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'lp.deploy.accept.local' })).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'lp.deploy.status.local' })).toBeVisible();
+	await page.getByRole('button', { name: /Inspect lp\.deploy\.status\.local/ }).first().click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('lp.deploy.status.local');
 	await expect(page.getByLabel('Operation artifacts')).toContainText(
-		'target/xtal/verify/summary.json'
+		'.x07/platform'
 	);
-	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Verify evidence/ }).click();
-	await expect(page.getByLabel('Selected operation inspector')).toContainText('xtal.verify');
+	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review SLO evidence/ }).click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('wasm.slo.eval.atlas_canary_ok');
 
 	await page.getByLabel('Worklog filter').selectOption('claude');
 	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();

@@ -82,6 +82,10 @@ The local deployment bindings target the current `x07lp` driver surface:
 `accept`, `run`, `query`, `status`, `incident-list`, `regress-from-incident`,
 and `ui-serve`. They are intended to sit after `wasm.app.pack`,
 `wasm.app.verify`, and `wasm.deploy.plan` in an end-to-end Studio lane.
+Studio's Atlas workflow renders absolute `*_arg` command paths for `x07lp`
+while recording relative artifacts such as `.x07/platform` in the session log,
+so direct source checkouts of `x07-platform/scripts/x07lp-driver` can consume
+project artifacts without breaking Studio artifact previews.
 
 ## Machine-output policy
 
@@ -93,3 +97,7 @@ and `ui-serve`. They are intended to sit after `wasm.app.pack`,
 - `X07_STUDIO_X07_EXE`
 - `X07_STUDIO_X07_WASM_EXE`
 - `X07_STUDIO_X07LP_EXE`
+
+If `X07_STUDIO_X07LP_EXE` is unset, Studio looks for a sibling
+`x07-platform/scripts/x07lp-driver` checkout before falling back to `x07lp` on
+`PATH`.

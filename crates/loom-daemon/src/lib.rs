@@ -1,9 +1,12 @@
+use std::ffi::OsString;
 use std::net::SocketAddr;
+use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::routing::{delete, get, post};
 use axum::{http::StatusCode, Json, Router};
+use camino::{Utf8Path, Utf8PathBuf};
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -16,8 +19,9 @@ use loom_types::api::{
     CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest,
     DispatchEventRequest, DocPreviewRequest, DocPreviewResponse, FormalizeIntentRequest,
     FormalizeIntentResponse, HealthResponse, McpCallResponse, ProbeProviderRequest,
-    ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest, SaveAgentProfileRequest,
-    SaveProviderProfileRequest, WorkspaceRadarResponse,
+    ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest, RuntimeComponentState,
+    RuntimeComponentStatus, SaveAgentProfileRequest, SaveProviderProfileRequest, StudioDefaults,
+    WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -80,6 +84,13 @@ pub fn router(state: ApiState) -> Router {
 
 pub async fn serve(addr: SocketAddr, state: ApiState) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    serve_listener(listener, state).await
+}
+
+pub async fn serve_listener(
+    listener: tokio::net::TcpListener,
+    state: ApiState,
+) -> anyhow::Result<()> {
     axum::serve(listener, router(state)).await?;
     Ok(())
 }
@@ -90,11 +101,168 @@ pub fn default_state(root: impl Into<camino::Utf8PathBuf>) -> anyhow::Result<Api
     })
 }
 
+fn runtime_components(root: &Utf8Path) -> Vec<RuntimeComponentStatus> {
+    vec![
+        component_status(
+            root,
+            "x07",
+            "x07 CLI",
+            "x07",
+            Some("X07_STUDIO_X07_EXE"),
+            true,
+            &["x07/target/release/x07", "x07/target/debug/x07"],
+            "Install the x07 toolchain, build the sibling x07 repo, or set X07_STUDIO_X07_EXE.",
+        ),
+        component_status(
+            root,
+            "x07-wasm",
+            "x07-wasm",
+            "x07-wasm",
+            Some("X07_STUDIO_X07_WASM_EXE"),
+            true,
+            &[
+                "x07-wasm-backend/target/release/x07-wasm",
+                "x07-wasm-backend/target/debug/x07-wasm",
+            ],
+            "Install x07-wasm, build the sibling x07-wasm-backend repo, or set X07_STUDIO_X07_WASM_EXE.",
+        ),
+        component_status(
+            root,
+            "x07lp",
+            "x07 platform",
+            "x07lp",
+            Some("X07_STUDIO_X07LP_EXE"),
+            true,
+            &["x07-platform/scripts/x07lp-driver"],
+            "Install x07lp, place x07-platform beside Studio, or set X07_STUDIO_X07LP_EXE.",
+        ),
+        component_status(
+            root,
+            "codex",
+            "OpenAI Codex",
+            "codex",
+            None,
+            false,
+            &[],
+            "Install Codex CLI when supervised Codex handoffs should execute locally.",
+        ),
+        component_status(
+            root,
+            "claude-code",
+            "Claude Code",
+            "claude",
+            None,
+            false,
+            &[],
+            "Install Claude Code when supervised Claude handoffs should execute locally.",
+        ),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn component_status(
+    root: &Utf8Path,
+    id: &str,
+    label: &str,
+    command: &str,
+    env_var: Option<&str>,
+    required: bool,
+    sibling_candidates: &[&str],
+    install_hint: &str,
+) -> RuntimeComponentStatus {
+    let source = env_var
+        .and_then(env_component_source)
+        .or_else(|| sibling_component_source(root, sibling_candidates))
+        .or_else(|| path_component_source(command));
+    let status = if source.is_some() {
+        RuntimeComponentState::Available
+    } else {
+        RuntimeComponentState::Missing
+    };
+    RuntimeComponentStatus {
+        id: id.to_string(),
+        label: label.to_string(),
+        command: command.to_string(),
+        required,
+        status,
+        source,
+        install_hint: install_hint.to_string(),
+    }
+}
+
+fn env_component_source(env_var: &str) -> Option<String> {
+    let value = std::env::var(env_var).ok()?;
+    if value.trim().is_empty() {
+        return None;
+    }
+    if executable_path_exists(StdPath::new(&value)) {
+        Some(format!("{env_var}={value}"))
+    } else {
+        None
+    }
+}
+
+fn sibling_component_source(root: &Utf8Path, candidates: &[&str]) -> Option<String> {
+    for base in component_search_bases(root) {
+        for ancestor in base.ancestors().take(8) {
+            for candidate in candidates {
+                let path = ancestor.join(candidate);
+                if executable_path_exists(path.as_std_path()) {
+                    return Some(path.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn component_search_bases(root: &Utf8Path) -> Vec<Utf8PathBuf> {
+    let mut bases = vec![root.to_owned()];
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Ok(cwd) = Utf8PathBuf::from_path_buf(cwd) {
+            bases.push(cwd);
+        }
+    }
+    bases
+}
+
+fn path_component_source(command: &str) -> Option<String> {
+    let paths = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&paths) {
+        for executable in executable_names(command) {
+            let path = dir.join(&executable);
+            if executable_path_exists(&path) {
+                return Some(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+fn executable_names(command: &str) -> Vec<OsString> {
+    let mut names = vec![OsString::from(command)];
+    if cfg!(windows) && !command.ends_with(".exe") {
+        names.push(OsString::from(format!("{command}.exe")));
+    }
+    names
+}
+
+fn executable_path_exists(path: &StdPath) -> bool {
+    path.is_file()
+}
+
 async fn health(State(state): State<ApiState>) -> Json<HealthResponse> {
     let kernel = state.kernel.lock().await;
+    let workspace_root = kernel.workspace_root().to_string();
     Json(HealthResponse {
         ok: true,
-        workspace_root: kernel.workspace_root().to_string(),
+        workspace_root,
+        defaults: StudioDefaults {
+            daemon_addr: "127.0.0.1:7719".to_string(),
+            provider_profile_id: "ollama-local".to_string(),
+            platform_state_dir: ".x07/platform".to_string(),
+        },
+        components: runtime_components(kernel.workspace_root()),
     })
 }
 
@@ -409,4 +577,58 @@ fn conflict_error(error: impl ToString) -> (StatusCode, String) {
 
 fn not_found() -> (StatusCode, String) {
     (StatusCode::NOT_FOUND, "not found".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{runtime_components, sibling_component_source};
+
+    #[test]
+    fn runtime_components_include_required_x07_wasm_and_platform_tools() {
+        let root = temp_root();
+        let components = runtime_components(root.as_path());
+        let required = components
+            .iter()
+            .filter(|component| component.required)
+            .map(|component| component.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(required.contains(&"x07"));
+        assert!(required.contains(&"x07-wasm"));
+        assert!(required.contains(&"x07lp"));
+        assert!(components
+            .iter()
+            .any(|component| component.id == "codex" && !component.required));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn sibling_component_source_searches_workspace_ancestors() {
+        let root = temp_root();
+        let project = root.join("workspace/x07-studio/test-project");
+        let driver = root.join("workspace/x07-platform/scripts/x07lp-driver");
+        std::fs::create_dir_all(driver.parent().expect("driver parent"))
+            .expect("create driver dir");
+        std::fs::create_dir_all(&project).expect("create project dir");
+        std::fs::write(&driver, "#!/usr/bin/env bash\n").expect("write driver");
+
+        assert_eq!(
+            sibling_component_source(project.as_path(), &["x07-platform/scripts/x07lp-driver"])
+                .as_deref(),
+            Some(driver.as_str())
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    fn temp_root() -> camino::Utf8PathBuf {
+        camino::Utf8PathBuf::from_path_buf(std::env::temp_dir())
+            .expect("utf8 temp")
+            .join(format!(
+                "x07-studio-daemon-test-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4()
+            ))
+    }
 }

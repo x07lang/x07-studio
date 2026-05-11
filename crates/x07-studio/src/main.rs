@@ -1,14 +1,17 @@
 use std::collections::BTreeMap;
+use std::net::{SocketAddr, TcpListener};
 
 use clap::Parser;
 use eframe::egui;
 use serde_json::Value;
 use tokio::runtime::Runtime;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use loom_client::DaemonClient;
 use loom_types::api::{
-    ConnectMcpRequest, CreateSessionRequest, DispatchEventRequest, RunBindingRequest,
+    ConnectMcpRequest, CreateSessionRequest, DispatchEventRequest, HealthResponse,
+    RunBindingRequest, RuntimeComponentState,
 };
 use loom_types::artifacts::{IntentPacket, ProviderProfile, TaskType};
 use loom_types::mcp::{McpEndpoint, McpHttpEndpoint};
@@ -22,23 +25,66 @@ use loom_types::session::{SessionPhase, SessionSnapshot};
 struct Cli {
     #[arg(long, default_value = "http://127.0.0.1:7719")]
     daemon_url: String,
+
+    #[arg(long, default_value = ".")]
+    root: String,
+
+    #[arg(long, help = "Use the daemon URL without starting an embedded daemon")]
+    external_daemon: bool,
 }
 
 fn main() -> eframe::Result<()> {
     let cli = Cli::parse();
     let options = eframe::NativeOptions::default();
-    let daemon_url = cli.daemon_url.clone();
+    let launch = StudioLaunch {
+        daemon_url: cli.daemon_url.clone(),
+        root: cli.root.clone(),
+        external_daemon: cli.external_daemon,
+    };
 
     eframe::run_native(
         "x07 Studio",
         options,
-        Box::new(move |_| Ok(Box::new(StudioApp::new(daemon_url.clone())?))),
+        Box::new(move |_| Ok(Box::new(StudioApp::new(launch.clone())?))),
     )
+}
+
+#[derive(Clone)]
+struct StudioLaunch {
+    daemon_url: String,
+    root: String,
+    external_daemon: bool,
+}
+
+struct ManagedDaemon {
+    url: String,
+    task: JoinHandle<()>,
+}
+
+fn start_managed_daemon(rt: &Runtime, root: &str) -> anyhow::Result<ManagedDaemon> {
+    let std_listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr: SocketAddr = std_listener.local_addr()?;
+    std_listener.set_nonblocking(true)?;
+    let _guard = rt.enter();
+    let listener = tokio::net::TcpListener::from_std(std_listener)?;
+    let state = loom_daemon::default_state(camino::Utf8PathBuf::from(root))?;
+    let task = rt.spawn(async move {
+        if let Err(error) = loom_daemon::serve_listener(listener, state).await {
+            eprintln!("managed loom daemon stopped: {error}");
+        }
+    });
+    Ok(ManagedDaemon {
+        url: format!("http://{addr}"),
+        task,
+    })
 }
 
 struct StudioApp {
     rt: Runtime,
     client: DaemonClient,
+    managed_daemon: Option<JoinHandle<()>>,
+    health: Option<loom_types::api::HealthResponse>,
+    daemon_url: String,
     sessions: Vec<SessionSnapshot>,
     selected_session: Option<Uuid>,
     new_session_title: String,
@@ -56,12 +102,24 @@ struct StudioApp {
 }
 
 impl StudioApp {
-    fn new(daemon_url: String) -> anyhow::Result<Self> {
+    fn new(launch: StudioLaunch) -> anyhow::Result<Self> {
         let rt = Runtime::new()?;
-        let client = DaemonClient::new(daemon_url);
+        let managed = if launch.external_daemon {
+            None
+        } else {
+            Some(start_managed_daemon(&rt, &launch.root)?)
+        };
+        let daemon_url = managed
+            .as_ref()
+            .map(|daemon| daemon.url.clone())
+            .unwrap_or(launch.daemon_url);
+        let client = DaemonClient::new(daemon_url.clone());
         let mut app = Self {
             rt,
             client,
+            managed_daemon: managed.map(|daemon| daemon.task),
+            health: None,
+            daemon_url,
             sessions: Vec::new(),
             selected_session: None,
             new_session_title: "New session".to_string(),
@@ -86,6 +144,10 @@ impl StudioApp {
     }
 
     fn refresh(&mut self) {
+        match self.rt.block_on(self.client.health()) {
+            Ok(health) => self.health = Some(health),
+            Err(error) => self.set_error(error),
+        }
         match self.rt.block_on(self.client.list_sessions()) {
             Ok(sessions) => {
                 self.sessions = sessions;
@@ -276,6 +338,12 @@ impl eframe::App for StudioApp {
         egui::Panel::top("header").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("x07 Studio");
+                let daemon_mode = if self.managed_daemon.is_some() {
+                    "embedded daemon"
+                } else {
+                    "external daemon"
+                };
+                ui.label(format!("{daemon_mode} · {}", self.daemon_url));
                 if ui.button("Refresh").clicked() {
                     self.refresh();
                 }
@@ -297,6 +365,9 @@ impl eframe::App for StudioApp {
             });
             if let Some(error) = &self.error {
                 ui.colored_label(egui::Color32::RED, error);
+            }
+            if let Some(health) = &self.health {
+                component_summary(ui, health);
             }
         });
 
@@ -430,6 +501,49 @@ impl eframe::App for StudioApp {
                 }
             });
     }
+}
+
+fn component_summary(ui: &mut egui::Ui, health: &HealthResponse) {
+    let missing_required = health
+        .components
+        .iter()
+        .filter(|component| {
+            component.required && component.status != RuntimeComponentState::Available
+        })
+        .count();
+    let label = if missing_required == 0 {
+        "Setup ready".to_string()
+    } else {
+        format!("{missing_required} required component(s) missing")
+    };
+    ui.collapsing(label, |ui| {
+        ui.label(format!(
+            "Workspace: {} · platform state: {}",
+            health.workspace_root, health.defaults.platform_state_dir
+        ));
+        for component in &health.components {
+            ui.horizontal_wrapped(|ui| {
+                let marker = match component.status {
+                    RuntimeComponentState::Available => "ready",
+                    RuntimeComponentState::Missing => "missing",
+                };
+                let color = match component.status {
+                    RuntimeComponentState::Available => egui::Color32::from_rgb(88, 210, 150),
+                    RuntimeComponentState::Missing if component.required => egui::Color32::YELLOW,
+                    RuntimeComponentState::Missing => egui::Color32::GRAY,
+                };
+                ui.colored_label(color, marker);
+                ui.strong(&component.label);
+                ui.monospace(&component.command);
+                ui.label(
+                    component
+                        .source
+                        .as_deref()
+                        .unwrap_or(component.install_hint.as_str()),
+                );
+            });
+        }
+    });
 }
 
 fn parse_vars_map(input: &str) -> anyhow::Result<BTreeMap<String, String>> {

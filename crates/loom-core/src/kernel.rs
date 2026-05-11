@@ -574,6 +574,47 @@ impl WorkspaceKernel {
                 return self.finish_verification(session_id, false);
             }
         }
+        if template == WorkflowTemplate::X07Atlas {
+            return self.run_atlas_platform_delivery(session_id).await;
+        }
+        self.finish_verification(session_id, true)
+    }
+
+    async fn run_atlas_platform_delivery(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let accept_vars = atlas_platform_delivery_vars(self.root.as_path(), None);
+        let accepted = self
+            .run_binding(session_id, "lp.deploy.accept.local", &accept_vars)
+            .await?;
+        if last_op_failed(&accepted) {
+            return self.finish_verification(session_id, false);
+        }
+
+        let Some(deployment_id) = platform_deployment_id_from_snapshot(&accepted) else {
+            let snapshot = self.append_op(session_id, platform_delivery_decode_op(session_id))?;
+            if last_op_failed(&snapshot) {
+                return self.finish_verification(session_id, false);
+            }
+            return self.finish_verification(session_id, false);
+        };
+
+        let delivery_vars =
+            atlas_platform_delivery_vars(self.root.as_path(), Some(deployment_id.as_str()));
+        for binding_id in WorkflowTemplate::X07Atlas
+            .platform_delivery_steps()
+            .iter()
+            .copied()
+            .filter(|step| *step != "lp.deploy.accept.local")
+        {
+            let snapshot = self
+                .run_binding(session_id, binding_id, &delivery_vars)
+                .await?;
+            if last_op_failed(&snapshot) {
+                return self.finish_verification(session_id, false);
+            }
+        }
         self.finish_verification(session_id, true)
     }
 
@@ -1076,6 +1117,68 @@ pub fn xtal_workflow_vars_from_intent(intent: &IntentPacket) -> BTreeMap<String,
     ])
 }
 
+fn atlas_platform_delivery_vars(
+    root: &Utf8Path,
+    deployment_id: Option<&str>,
+) -> BTreeMap<String, String> {
+    let pack_dir = "dist/showcase_fullstack/pack.atlas_release";
+    let pack_manifest = "dist/showcase_fullstack/pack.atlas_release/app.pack.json";
+    let deploy_plan = "dist/showcase_fullstack/deploy.atlas_release/deploy.plan.json";
+    let metrics_dir = "tests/fixtures/metrics";
+    let state_dir = ".x07/platform";
+
+    let mut vars = BTreeMap::from([
+        ("pack_dir".to_string(), pack_dir.to_string()),
+        ("pack_dir_arg".to_string(), workspace_arg(root, pack_dir)),
+        ("pack_manifest".to_string(), pack_manifest.to_string()),
+        (
+            "pack_manifest_arg".to_string(),
+            workspace_arg(root, pack_manifest),
+        ),
+        ("plan".to_string(), deploy_plan.to_string()),
+        ("plan_arg".to_string(), workspace_arg(root, deploy_plan)),
+        ("metrics_dir".to_string(), metrics_dir.to_string()),
+        (
+            "metrics_dir_arg".to_string(),
+            workspace_arg(root, metrics_dir),
+        ),
+        ("state_dir".to_string(), state_dir.to_string()),
+        ("state_dir_arg".to_string(), workspace_arg(root, state_dir)),
+    ]);
+    if let Some(deployment_id) = deployment_id {
+        vars.insert("deployment_id".to_string(), deployment_id.to_string());
+    }
+    vars
+}
+
+fn workspace_arg(root: &Utf8Path, relative: &str) -> String {
+    root.join(relative.trim_end_matches('/')).to_string()
+}
+
+fn platform_deployment_id_from_snapshot(snapshot: &SessionSnapshot) -> Option<String> {
+    snapshot
+        .op_log
+        .last()
+        .and_then(|op| op.report_json.as_ref())
+        .and_then(platform_deployment_id_from_report)
+}
+
+fn platform_deployment_id_from_report(report: &serde_json::Value) -> Option<String> {
+    json_string_at(report, &["exec_id"])
+        .or_else(|| json_string_at(report, &["deployment_id"]))
+        .or_else(|| json_string_at(report, &["result", "exec_id"]))
+        .or_else(|| json_string_at(report, &["result", "deployment_id"]))
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn json_string_at(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str().map(ToOwned::to_owned)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkflowTemplate {
     XtalPure,
@@ -1125,6 +1228,18 @@ impl WorkflowTemplate {
 
     fn workflow_steps(self) -> &'static [&'static str] {
         self.workflow_steps_for_environment(sandbox_vm_guest_bundle_declared())
+    }
+
+    fn platform_delivery_steps(self) -> &'static [&'static str] {
+        match self {
+            Self::X07Atlas => &[
+                "lp.deploy.accept.local",
+                "lp.deploy.run.local.metrics",
+                "lp.deploy.query.local",
+                "lp.deploy.status.local",
+            ],
+            _ => &[],
+        }
     }
 
     fn workflow_steps_for_environment(self, has_vm_guest_bundle: bool) -> &'static [&'static str] {
@@ -1953,6 +2068,41 @@ fn failed_directory_op(session_id: Uuid, directory: &str, error: anyhow::Error) 
             "ok": false,
             "directory": directory,
             "error": error.to_string(),
+        })),
+        report_path: None,
+    }
+}
+
+fn platform_delivery_decode_op(session_id: Uuid) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "lp.deploy.accept.decode".to_string(),
+        backend: "studio".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "platform".to_string(),
+            "deployment-id".to_string(),
+            "decode".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Failed,
+        exit_code: Some(1),
+        artifacts: Vec::new(),
+        notes: Some("Failed to read the platform deployment id from accept output.".to_string()),
+        stdout: None,
+        stderr: Some(
+            "x07lp accept did not return result.exec_id or result.deployment_id".to_string(),
+        ),
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.platform_delivery_decode@0.1.0",
+            "ok": false,
+            "expected": ["exec_id", "deployment_id", "result.exec_id", "result.deployment_id"],
         })),
         report_path: None,
     }
@@ -3256,7 +3406,8 @@ mod tests {
     use loom_types::session::SessionSnapshot;
 
     use super::{
-        copy_example_tree, entry_from_spec_operation, intent_packet_from_raw, sha256_hex,
+        atlas_platform_delivery_vars, copy_example_tree, entry_from_spec_operation,
+        intent_packet_from_raw, platform_deployment_id_from_report, sha256_hex,
         should_scaffold_spec, workflow_template_from_intent, xtal_workflow_vars_from_intent,
         WorkflowTemplate, WorkspaceKernel,
     };
@@ -3315,6 +3466,66 @@ mod tests {
             Some("classify_and_repair")
         );
         assert_eq!(vars.get("result").map(String::as_str), Some("bytes"));
+    }
+
+    #[test]
+    fn atlas_platform_delivery_vars_keep_artifacts_relative_and_commands_absolute() {
+        let root = temp_root();
+        let vars = atlas_platform_delivery_vars(root.as_path(), Some("lpexec_atlas"));
+
+        assert_eq!(
+            vars.get("pack_manifest").map(String::as_str),
+            Some("dist/showcase_fullstack/pack.atlas_release/app.pack.json")
+        );
+        assert_eq!(
+            vars.get("state_dir").map(String::as_str),
+            Some(".x07/platform")
+        );
+        assert_eq!(
+            vars.get("deployment_id").map(String::as_str),
+            Some("lpexec_atlas")
+        );
+        assert!(vars
+            .get("pack_manifest_arg")
+            .expect("pack manifest arg")
+            .starts_with(root.as_str()));
+        assert!(vars
+            .get("plan_arg")
+            .expect("plan arg")
+            .ends_with("dist/showcase_fullstack/deploy.atlas_release/deploy.plan.json"));
+        assert!(vars
+            .get("state_dir_arg")
+            .expect("state dir arg")
+            .ends_with(".x07/platform"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn platform_deployment_id_parses_direct_and_wrapped_accept_reports() {
+        let direct = serde_json::json!({
+            "schema_version": "lp.deploy.accept.stage@0.1.0",
+            "run_id": "lprun_demo",
+            "exec_id": "lpexec_direct",
+            "decision_id": "lpdec_demo"
+        });
+        assert_eq!(
+            platform_deployment_id_from_report(&direct).as_deref(),
+            Some("lpexec_direct")
+        );
+
+        let wrapped = serde_json::json!({
+            "schema_version": "lp.cli.report@0.1.0",
+            "command": "deploy accept",
+            "ok": true,
+            "result": {
+                "deployment_id": "lpexec_wrapped"
+            }
+        });
+        assert_eq!(
+            platform_deployment_id_from_report(&wrapped).as_deref(),
+            Some("lpexec_wrapped")
+        );
     }
 
     #[test]
@@ -4079,6 +4290,15 @@ mod tests {
                 "wasm.provenance.verify.atlas_release",
                 "wasm.deploy.plan.atlas_release",
                 "wasm.slo.eval.atlas_canary_ok"
+            ]
+        );
+        assert_eq!(
+            WorkflowTemplate::X07Atlas.platform_delivery_steps(),
+            &[
+                "lp.deploy.accept.local",
+                "lp.deploy.run.local.metrics",
+                "lp.deploy.query.local",
+                "lp.deploy.status.local"
             ]
         );
         assert_eq!(

@@ -298,6 +298,17 @@ This document records friction found while implementing the Studio web surface.
    rollback, and rollout status, but the command shapes had drifted from the
    current platform driver. The platform surface now exposes `release-query`,
    `release-rollback`, and local `accept`/`run`/`query`/`status`/incident
-   bindings. The next integration step should be a typed delivery lane, not a
-   static command chain: `accept` returns the deployment execution id that the
-   following `run`, `query`, status, and incident commands need.
+   bindings. Atlas now uses a typed delivery lane instead of a static command
+   chain: `accept` returns the deployment execution id that the following
+   `run`, `query`, and status commands need.
+
+29. Platform paths need two representations in Studio.
+
+   The direct `x07-platform/scripts/x07lp-driver` resolves relative inputs from
+   the platform checkout, while Studio runs inside the generated project
+   workspace. Local platform delivery therefore needs absolute command arguments
+   for pack, plan, metrics, and state paths, but relative artifacts in the
+   Studio session log so artifact preview and trust review remain scoped to the
+   user project. Studio also resolves a sibling
+   `x07-platform/scripts/x07lp-driver` when `x07lp` is not installed on `PATH`,
+   because that is the common local multi-repo development layout.

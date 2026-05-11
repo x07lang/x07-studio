@@ -171,6 +171,42 @@ function reviewSignalFromOp(op: OpRecord): ReviewSignal | null {
 			artifact
 		);
 	}
+	if (op.op.startsWith('wasm.app.verify') || op.op.startsWith('wasm.provenance.verify')) {
+		return reviewSignal(
+			op,
+			'Release evidence',
+			op.status === 'succeeded' ? 'Release verification succeeded' : detail,
+			op.status === 'succeeded' ? 'ok' : 'warn',
+			artifact
+		);
+	}
+	if (op.op.startsWith('wasm.slo.eval')) {
+		return reviewSignal(
+			op,
+			'SLO evidence',
+			op.status === 'succeeded' ? 'SLO evaluation succeeded' : detail,
+			op.status === 'succeeded' ? 'ok' : 'warn',
+			artifact
+		);
+	}
+	if (op.op.startsWith('wasm.deploy.plan')) {
+		return reviewSignal(
+			op,
+			'Deploy plan',
+			op.status === 'succeeded' ? 'Deploy plan generated' : detail,
+			op.status === 'succeeded' ? 'ok' : 'warn',
+			artifact
+		);
+	}
+	if (op.op.startsWith('lp.deploy.')) {
+		return reviewSignal(
+			op,
+			'Local platform delivery',
+			op.status === 'succeeded' ? 'Local platform step succeeded' : detail,
+			op.status === 'succeeded' ? 'ok' : 'warn',
+			artifact
+		);
+	}
 	return null;
 }
 

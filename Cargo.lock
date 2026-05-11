@@ -5960,10 +5960,12 @@ name = "x07-studio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "camino",
  "clap",
  "eframe",
  "egui",
  "loom-client",
+ "loom-daemon",
  "loom-types",
  "serde_json",
  "tokio",

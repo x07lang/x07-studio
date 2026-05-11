@@ -146,7 +146,7 @@ impl CliAdapter {
             }
         }
 
-        let program = resolve_program(binding.program);
+        let program = resolve_program(binding.program, self.root.as_path());
         let execution = if let Some(stdin) = vars.get("stdin") {
             self.runner
                 .run_with_stdin(
@@ -193,16 +193,36 @@ fn interpolate(template: &str, vars: &BTreeMap<String, String>) -> String {
     out
 }
 
-fn resolve_program(key: ProgramKey) -> String {
+fn resolve_program(key: ProgramKey, root: &Utf8Path) -> String {
     match key {
         ProgramKey::X07 => env::var("X07_STUDIO_X07_EXE").unwrap_or_else(|_| "x07".to_string()),
         ProgramKey::X07Wasm => {
             env::var("X07_STUDIO_X07_WASM_EXE").unwrap_or_else(|_| "x07-wasm".to_string())
         }
-        ProgramKey::X07lp => {
-            env::var("X07_STUDIO_X07LP_EXE").unwrap_or_else(|_| "x07lp".to_string())
+        ProgramKey::X07lp => env::var("X07_STUDIO_X07LP_EXE")
+            .ok()
+            .or_else(|| find_nearby_x07lp_driver(root))
+            .unwrap_or_else(|| "x07lp".to_string()),
+    }
+}
+
+fn find_nearby_x07lp_driver(root: &Utf8Path) -> Option<String> {
+    let mut bases = vec![root.to_owned()];
+    if let Ok(cwd) = env::current_dir() {
+        if let Ok(cwd) = Utf8PathBuf::from_path_buf(cwd) {
+            bases.push(cwd);
         }
     }
+
+    for base in bases {
+        for ancestor in base.ancestors().take(8) {
+            let candidate = ancestor.join("x07-platform/scripts/x07lp-driver");
+            if candidate.is_file() {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn program_name(key: ProgramKey) -> &'static str {
@@ -1295,11 +1315,11 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
             "--target",
             "__local__",
             "--pack-manifest",
-            "{pack_manifest}",
+            "{pack_manifest_arg}",
             "--pack-dir",
-            "{pack_dir}",
+            "{pack_dir_arg}",
             "--state-dir",
-            "{state_dir}",
+            "{state_dir_arg}",
         ],
         artifacts: &["{state_dir}"],
         notes: "Accept a local deployment candidate from a verified pack manifest.",
@@ -1316,9 +1336,9 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
             "--deployment",
             "{deployment_id}",
             "--plan",
-            "{plan}",
+            "{plan_arg}",
             "--state-dir",
-            "{state_dir}",
+            "{state_dir_arg}",
         ],
         artifacts: &["{state_dir}"],
         notes: "Run an accepted deployment locally from an x07 deploy plan.",
@@ -1335,11 +1355,11 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
             "--deployment",
             "{deployment_id}",
             "--plan",
-            "{plan}",
+            "{plan_arg}",
             "--metrics-dir",
-            "{metrics_dir}",
+            "{metrics_dir_arg}",
             "--state-dir",
-            "{state_dir}",
+            "{state_dir_arg}",
         ],
         artifacts: &["{state_dir}"],
         notes: "Run an accepted local deployment with explicit metrics evidence.",
@@ -1358,7 +1378,7 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
             "--view",
             "full",
             "--state-dir",
-            "{state_dir}",
+            "{state_dir_arg}",
         ],
         artifacts: &["{state_dir}"],
         notes: "Query full local deployment state.",
@@ -1375,7 +1395,7 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
             "--deployment",
             "{deployment_id}",
             "--state-dir",
-            "{state_dir}",
+            "{state_dir_arg}",
         ],
         artifacts: &[],
         notes: "Inspect local deployment status.",
@@ -1392,7 +1412,7 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
             "--deployment",
             "{deployment_id}",
             "--state-dir",
-            "{state_dir}",
+            "{state_dir_arg}",
         ],
         artifacts: &["{state_dir}"],
         notes: "List local deployment incidents.",
@@ -1411,9 +1431,9 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
             "--name",
             "{regression_name}",
             "--out-dir",
-            "{out_dir}",
+            "{out_dir_arg}",
             "--state-dir",
-            "{state_dir}",
+            "{state_dir_arg}",
         ],
         artifacts: &["{out_dir}"],
         notes: "Create a local regression fixture from a platform incident.",
@@ -1423,7 +1443,13 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
         id: "lp.ui.serve.local",
         category: "x07/platform",
         program: ProgramKey::X07lp,
-        args: &["ui-serve", "--state-dir", "{state_dir}", "--addr", "{addr}"],
+        args: &[
+            "ui-serve",
+            "--state-dir",
+            "{state_dir_arg}",
+            "--addr",
+            "{addr}",
+        ],
         artifacts: &["{state_dir}"],
         notes: "Serve the local platform control-plane UI.",
         machine_json: MachineJsonMode::StdoutOnly,
@@ -1434,7 +1460,7 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{binding_by_id, CliAdapter, MachineJsonMode};
+    use super::{binding_by_id, find_nearby_x07lp_driver, CliAdapter, MachineJsonMode};
 
     #[test]
     fn spec_scaffold_binding_interpolates_arguments_and_artifacts() {
@@ -1478,6 +1504,25 @@ mod tests {
         assert_eq!(rendered.args, vec!["init", "--template", "xtal-pure"]);
         assert!(rendered.artifacts.contains(&"x07.json".to_string()));
         assert_eq!(binding.machine_json, MachineJsonMode::ReportFile);
+    }
+
+    #[test]
+    fn x07lp_resolver_finds_sibling_platform_driver() {
+        let root = temp_root();
+        let workspace = root.join("workspace");
+        let studio_project = workspace.join("x07-studio/test-project");
+        let driver = workspace.join("x07-platform/scripts/x07lp-driver");
+        std::fs::create_dir_all(driver.parent().expect("driver parent"))
+            .expect("create driver dir");
+        std::fs::create_dir_all(&studio_project).expect("create studio project");
+        std::fs::write(&driver, "#!/usr/bin/env bash\n").expect("write driver");
+
+        assert_eq!(
+            find_nearby_x07lp_driver(studio_project.as_path()).as_deref(),
+            Some(driver.as_str())
+        );
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1611,11 +1656,18 @@ mod tests {
         let accept = binding_by_id("lp.deploy.accept.local").expect("binding exists");
         let rendered = accept.render(&BTreeMap::from([
             (
-                "pack_manifest".to_string(),
-                "dist/pack/app.pack.json".to_string(),
+                "pack_manifest_arg".to_string(),
+                "/workspace/dist/pack/app.pack.json".to_string(),
             ),
-            ("pack_dir".to_string(), "dist/pack".to_string()),
+            (
+                "pack_dir_arg".to_string(),
+                "/workspace/dist/pack".to_string(),
+            ),
             ("state_dir".to_string(), ".x07/platform".to_string()),
+            (
+                "state_dir_arg".to_string(),
+                "/workspace/.x07/platform".to_string(),
+            ),
         ]));
 
         assert_eq!(
@@ -1625,11 +1677,11 @@ mod tests {
                 "--target",
                 "__local__",
                 "--pack-manifest",
-                "dist/pack/app.pack.json",
+                "/workspace/dist/pack/app.pack.json",
                 "--pack-dir",
-                "dist/pack",
+                "/workspace/dist/pack",
                 "--state-dir",
-                ".x07/platform",
+                "/workspace/.x07/platform",
             ]
         );
         assert_eq!(rendered.artifacts, vec![".x07/platform"]);
@@ -1639,14 +1691,18 @@ mod tests {
         let rendered = run.render(&BTreeMap::from([
             ("deployment_id".to_string(), "lpexec_example".to_string()),
             (
-                "plan".to_string(),
-                "dist/deploy/deploy.plan.json".to_string(),
+                "plan_arg".to_string(),
+                "/workspace/dist/deploy/deploy.plan.json".to_string(),
             ),
             (
-                "metrics_dir".to_string(),
-                "tests/fixtures/metrics".to_string(),
+                "metrics_dir_arg".to_string(),
+                "/workspace/tests/fixtures/metrics".to_string(),
             ),
             ("state_dir".to_string(), ".x07/platform".to_string()),
+            (
+                "state_dir_arg".to_string(),
+                "/workspace/.x07/platform".to_string(),
+            ),
         ]));
 
         assert_eq!(
@@ -1658,11 +1714,11 @@ mod tests {
                 "--deployment",
                 "lpexec_example",
                 "--plan",
-                "dist/deploy/deploy.plan.json",
+                "/workspace/dist/deploy/deploy.plan.json",
                 "--metrics-dir",
-                "tests/fixtures/metrics",
+                "/workspace/tests/fixtures/metrics",
                 "--state-dir",
-                ".x07/platform",
+                "/workspace/.x07/platform",
             ]
         );
         assert!(!rendered.args.iter().any(|arg| arg.contains('{')));
@@ -1671,6 +1727,10 @@ mod tests {
         let rendered = query.render(&BTreeMap::from([
             ("deployment_id".to_string(), "lpexec_example".to_string()),
             ("state_dir".to_string(), ".x07/platform".to_string()),
+            (
+                "state_dir_arg".to_string(),
+                "/workspace/.x07/platform".to_string(),
+            ),
         ]));
 
         assert_eq!(
@@ -1684,9 +1744,15 @@ mod tests {
                 "--view",
                 "full",
                 "--state-dir",
-                ".x07/platform",
+                "/workspace/.x07/platform",
             ]
         );
         assert!(!rendered.args.iter().any(|arg| arg.contains('{')));
+    }
+
+    fn temp_root() -> camino::Utf8PathBuf {
+        camino::Utf8PathBuf::from_path_buf(std::env::temp_dir())
+            .expect("utf8 temp")
+            .join(format!("x07-studio-adapter-test-{}", uuid::Uuid::new_v4()))
     }
 }

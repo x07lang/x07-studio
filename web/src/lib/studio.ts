@@ -163,6 +163,26 @@ export interface BindingDescriptor {
 export interface HealthResponse {
 	ok: boolean;
 	workspace_root: string;
+	defaults: StudioDefaults;
+	components: RuntimeComponentStatus[];
+}
+
+export interface StudioDefaults {
+	daemon_addr: string;
+	provider_profile_id: string;
+	platform_state_dir: string;
+}
+
+export type RuntimeComponentState = 'available' | 'missing';
+
+export interface RuntimeComponentStatus {
+	id: string;
+	label: string;
+	command: string;
+	required: boolean;
+	status: RuntimeComponentState;
+	source?: string | null;
+	install_hint: string;
 }
 
 export interface WorkspaceRadarResponse {
@@ -926,6 +946,47 @@ export function demoSession(): SessionSnapshot {
 	return session;
 }
 
+export function demoHealth(): HealthResponse {
+	return {
+		ok: true,
+		workspace_root: demoSession().root,
+		defaults: {
+			daemon_addr: '127.0.0.1:7719',
+			provider_profile_id: 'ollama-local',
+			platform_state_dir: '.x07/platform'
+		},
+		components: [
+			{
+				id: 'x07',
+				label: 'x07 CLI',
+				command: 'x07',
+				required: true,
+				status: 'available',
+				source: 'demo projection',
+				install_hint: 'Install the x07 toolchain or set X07_STUDIO_X07_EXE.'
+			},
+			{
+				id: 'x07-wasm',
+				label: 'x07-wasm',
+				command: 'x07-wasm',
+				required: true,
+				status: 'available',
+				source: 'demo projection',
+				install_hint: 'Install x07-wasm or set X07_STUDIO_X07_WASM_EXE.'
+			},
+			{
+				id: 'x07lp',
+				label: 'x07 platform',
+				command: 'x07lp',
+				required: true,
+				status: 'available',
+				source: 'demo projection',
+				install_hint: 'Install x07lp or set X07_STUDIO_X07LP_EXE.'
+			}
+		]
+	};
+}
+
 export function demoBindings(): BindingDescriptor[] {
 	return [
 		{ id: 'project.init.xtal-pure', category: 'x07/project', program: 'x07', notes: 'Initialize XTAL project.' },
@@ -1122,6 +1183,19 @@ function demoArtifactsFor(bindingId: string): string[] {
 			return ['target/xtal/improve/summary.json', 'target/xtal/improve/tests.shadow.json'];
 		case 'xtal.manifest.ensure':
 			return ['arch/xtal/xtal.json'];
+		case 'wasm.app.verify.atlas_release':
+			return ['dist/showcase_fullstack/pack.atlas_release/app.pack.json'];
+		case 'wasm.provenance.verify.atlas_release':
+			return ['dist/showcase_fullstack/pack.atlas_release/app.provenance.dsse.json'];
+		case 'wasm.deploy.plan.atlas_release':
+			return ['dist/showcase_fullstack/deploy.atlas_release'];
+		case 'wasm.slo.eval.atlas_canary_ok':
+			return ['tests/fixtures/metrics/atlas_canary_ok.json'];
+		case 'lp.deploy.accept.local':
+		case 'lp.deploy.run.local.metrics':
+		case 'lp.deploy.query.local':
+		case 'lp.deploy.status.local':
+			return ['.x07/platform'];
 		default:
 			return [`target/xtal/${bindingId.replaceAll('.', '/')}/summary.json`];
 	}

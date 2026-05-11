@@ -11,6 +11,7 @@ import {
 	createIntentPacket,
 	defaultAgentProfiles,
 	demoBindings,
+	demoHealth,
 	demoSession,
 	nextPrimaryAction,
 	phaseIndex,
@@ -29,6 +30,17 @@ describe('x07 Studio XTAL web model', () => {
 		expect(intent.targets[0].entry).toBe('sort_u8_asc');
 		expect(intent.witnesses.map((witness) => witness.kind)).toContain('policy_requirement');
 		expect(intent.constraints).toContain('Use spec-first XTAL flow.');
+	});
+
+	it('reports onboarding readiness for standalone runtime components', () => {
+		const health = demoHealth();
+		const required = health.components
+			.filter((component) => component.required)
+			.map((component) => component.id);
+
+		expect(health.defaults.platform_state_dir).toBe('.x07/platform');
+		expect(required).toEqual(['x07', 'x07-wasm', 'x07lp']);
+		expect(health.components.every((component) => component.install_hint.length > 0)).toBe(true);
 	});
 
 	it('preserves spoken, spec, and incident inputs as auditable intent sources', () => {
@@ -144,6 +156,21 @@ describe('x07 Studio XTAL web model', () => {
 			'Implementation write'
 		]);
 		expect(signals[0].artifact).toBe('target/xtal/verify/summary.json');
+	});
+
+	it('surfaces Atlas release and platform evidence in trust review signals', () => {
+		let session = appendDemoOp(demoSession(), 'wasm.app.verify.atlas_release', 'succeeded');
+		session = appendDemoOp(session, 'wasm.deploy.plan.atlas_release', 'succeeded');
+		session = appendDemoOp(session, 'wasm.slo.eval.atlas_canary_ok', 'succeeded');
+		session = appendDemoOp(session, 'lp.deploy.query.local', 'succeeded');
+
+		const labels = buildReviewSignals(session.op_log).map((signal) => signal.label);
+		expect(labels).toEqual([
+			'Local platform delivery',
+			'SLO evidence',
+			'Deploy plan',
+			'Release evidence'
+		]);
 	});
 
 	it('derives counterexample theater state from failed verify diagnostics', () => {

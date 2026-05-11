@@ -3,6 +3,7 @@ import {
 	createIntentPacket,
 	defaultAgentProfiles,
 	demoBindings,
+	demoHealth,
 	demoSession,
 	reduceDemoEvent,
 	type AgentApprovalResponse,
@@ -38,7 +39,10 @@ export class StudioApi {
 			return health;
 		} catch {
 			this.demoMode = true;
-			return { ok: true, workspace_root: this.demoSessions[0]?.root ?? '/workspace/x07-project' };
+			return {
+				...demoHealth(),
+				workspace_root: this.demoSessions[0]?.root ?? '/workspace/x07-project'
+			};
 		}
 	}
 
@@ -258,13 +262,15 @@ export class StudioApi {
 		if (current.phase === 'spec_approved') {
 			current = reduceDemoEvent(current, 'propose_realization');
 		}
-		for (const bindingId of ['impl.sync.write', 'impl.check']) {
+		const realizationBindings = isAtlasSession(current)
+			? atlasDemoWorkflowBindings
+			: ['impl.sync.write', 'impl.check', 'xtal.verify'];
+		for (const bindingId of realizationBindings) {
 			current = appendDemoOp(current, bindingId, 'succeeded');
 		}
 		if (current.phase === 'realization_proposed') {
 			current = reduceDemoEvent(current, 'accept_realization');
 		}
-		current = appendDemoOp(current, 'xtal.verify', 'succeeded');
 		current = reduceDemoEvent(current, 'verification_passed');
 		this.replaceDemo(current);
 		return current;
@@ -553,6 +559,44 @@ function demoDocPreview(docRef: string): DocPreviewResponse {
 			'Use x07 run as the canonical execution front door. Keep the edit, format, lint, and run loop visible before handoff.',
 		entries
 	};
+}
+
+const atlasDemoWorkflowBindings = [
+	'pkg.lock.atlas.frontend',
+	'wasm.app.profile.validate.atlas_dev',
+	'wasm.web_ui.contracts.validate',
+	'wasm.http.contracts.validate',
+	'wasm.caps.validate.atlas_release',
+	'wasm.ops.validate',
+	'wasm.slo.validate.atlas',
+	'wasm.app.build.atlas_dev',
+	'wasm.app.serve.smoke.atlas_dev',
+	'wasm.app.test.happy_path',
+	'wasm.app.test.validation_error',
+	'wasm.app.test.regress.atlas_incident',
+	'wasm.app.build.atlas_release',
+	'wasm.app.pack.atlas_release',
+	'wasm.app.verify.atlas_release',
+	'wasm.provenance.attest.atlas_release',
+	'wasm.provenance.verify.atlas_release',
+	'wasm.deploy.plan.atlas_release',
+	'wasm.slo.eval.atlas_canary_ok',
+	'lp.deploy.accept.local',
+	'lp.deploy.run.local.metrics',
+	'lp.deploy.query.local',
+	'lp.deploy.status.local'
+];
+
+function isAtlasSession(session: SessionSnapshot): boolean {
+	const target = session.intent?.targets[0];
+	let raw = '';
+	if (session.intent?.source.kind === 'text' || session.intent?.source.kind === 'spec') {
+		raw = session.intent.source.raw;
+	} else if (session.intent?.source.kind === 'voice') {
+		raw = session.intent.source.transcript;
+	}
+	const haystack = `${target?.module_id ?? ''} ${target?.entry ?? ''} ${raw}`.toLowerCase();
+	return haystack.includes('atlas.app') || haystack.includes('x07_atlas') || haystack.includes('x07 atlas');
 }
 
 function agentRunApproved(session: SessionSnapshot, agentId: string): boolean {

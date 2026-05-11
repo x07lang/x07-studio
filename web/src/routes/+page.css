@@ -376,6 +376,48 @@ dd {
 	justify-content: center;
 }
 
+.setup-readiness {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 8px;
+	min-width: 0;
+}
+
+.setup-readiness div {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+	border: 1px solid rgba(114, 228, 180, 0.18);
+	border-radius: var(--radius);
+	padding: 8px 9px;
+	background: rgba(114, 228, 180, 0.055);
+}
+
+.setup-readiness div.missing {
+	border-color: rgba(245, 198, 93, 0.28);
+	background: rgba(245, 198, 93, 0.08);
+}
+
+.setup-readiness span {
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.setup-readiness strong {
+	font-size: 13px;
+	line-height: 1.1;
+}
+
+.setup-readiness small {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .project-form {
 	align-items: end;
 	display: grid;
@@ -1763,6 +1805,10 @@ textarea {
 		align-items: center;
 	}
 
+	.setup-readiness {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+
 	.form-title {
 		grid-column: 1 / -1;
 	}
@@ -1862,6 +1908,10 @@ textarea {
 	}
 
 	.radar-actions {
+		grid-template-columns: 1fr;
+	}
+
+	.setup-readiness {
 		grid-template-columns: 1fr;
 	}
 

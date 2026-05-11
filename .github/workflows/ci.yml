@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.92.0"
+  NODE_VERSION: "22"
+
+jobs:
+  check:
+    name: ci / check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux desktop deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            pkg-config
+
+      - name: Rust fmt
+        run: cargo fmt --all --check
+
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace -- --nocapture
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: Web check
+        working-directory: web
+        run: npm run check
+
+      - name: Web unit tests
+        working-directory: web
+        run: npm test -- --run
+
+      - name: Web build
+        working-directory: web
+        run: npm run build
+
+      - name: Install Playwright browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      - name: Web E2E
+        working-directory: web
+        run: npm run e2e
+
+      - name: Component bootstrap doctor
+        run: python3 scripts/bootstrap_components.py --json --allow-missing
+
+      - name: Standalone package smoke
+        run: |
+          cargo build --release -p loom-daemon -p x07-studio -p x07-studio-forge
+          python3 scripts/package_standalone.py --target-dir target/release --web-dir web/build --out-dir dist/standalone-smoke
+
+  standalone-desktop:
+    name: desktop / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout x07-wasm backend
+        uses: actions/checkout@v4
+        with:
+          repository: x07lang/x07-wasm-backend
+          path: deps/x07-wasm-backend
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux desktop deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            pkg-config
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        working-directory: web
+        run: npm ci
+
+      - name: Build Studio web app
+        working-directory: web
+        run: npm run build
+
+      - name: Build standalone desktop binaries
+        run: cargo build --release -p loom-daemon -p x07-studio -p x07-studio-forge
+
+      - name: Build bundled x07-wasm component
+        working-directory: deps/x07-wasm-backend
+        run: cargo build --release -p x07-wasm
+
+      - name: Package standalone bundle
+        run: python scripts/package_standalone.py --target-dir target/release --web-dir web/build --out-dir dist/standalone --component-bin x07-wasm=deps/x07-wasm-backend/target/release/x07-wasm
+
+      - name: Upload standalone bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: x07-studio-standalone-${{ matrix.os }}
+          path: dist/standalone/*.zip
+          if-no-files-found: error

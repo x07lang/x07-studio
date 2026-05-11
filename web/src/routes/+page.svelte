@@ -15,6 +15,7 @@
 		canonicalDocRefs,
 		canonicalMcpTools,
 		defaultPrompt,
+		demoHealth,
 		lifecycle,
 		nextPrimaryAction,
 		phaseIndex,
@@ -32,6 +33,7 @@
 		type OpRecord,
 		type ProjectDifficulty,
 		type Room,
+		type RuntimeComponentStatus,
 		type SessionSnapshot,
 		type TaskType,
 		type WorkspaceRadarResponse
@@ -40,7 +42,7 @@
 	const api = new StudioApi();
 	const initialProject = projectTemplates[0];
 
-	let health: HealthResponse = { ok: true, workspace_root: '/workspace/x07-project' };
+	let health: HealthResponse = demoHealth();
 	let sessions: SessionSnapshot[] = [];
 	let bindings: BindingDescriptor[] = [];
 	let agentProfiles: AgentProfile[] = [];
@@ -165,13 +167,13 @@
 			module: target.module_id,
 			status: selected.phase === 'intent_drafting' ? 'pending' : 'ready'
 		})) ?? [];
-	$: worklog = selected?.op_log.slice(-12).reverse() ?? [];
+	$: worklog = [...(selected?.op_log ?? [])].reverse();
 	$: visibleWorklog = worklog.filter((op) => {
 		if (worklogFilter === 'all') return true;
 		if (worklogFilter === 'codex') return op.op.includes('codex');
 		if (worklogFilter === 'claude') return op.op.includes('claude-code');
 		return isX07WorkflowOp(op.op);
-	});
+	}).slice(0, 12);
 	$: selectedBindingId = selectedBindingId || bindings[0]?.id || '';
 	$: pendingApprovals = worklog.filter(
 		(op) => op.op.startsWith('agent.approval.') && op.status === 'pending'
@@ -218,6 +220,14 @@
 	$: visibleAgent =
 		activeAgentProfile?.label ?? (selectedAgentId === 'claude-code' ? 'Claude Code' : 'OpenAI Codex');
 	$: providerSummary = api.isDemoMode ? 'demo projection' : 'Loom daemon';
+	$: setupComponents = health.components ?? [];
+	$: missingRequiredComponents = setupComponents.filter(
+		(component) => component.required && component.status !== 'available'
+	);
+	$: setupReadyCount = setupComponents.filter((component) => component.status === 'available').length;
+	$: setupSummary = missingRequiredComponents.length
+		? `${missingRequiredComponents.length} missing`
+		: 'ready';
 	$: radarMetrics = [
 		{
 			label: 'XTAL readiness',
@@ -258,6 +268,11 @@
 			label: 'Agents',
 			value: `${availableAgentCount}/${agentProfiles.length}`,
 			detail: agentProfiles.length ? 'profiles configured' : 'loading profiles'
+		},
+		{
+			label: 'Setup',
+			value: setupSummary,
+			detail: `${setupReadyCount}/${setupComponents.length || 1} components`
 		}
 	];
 	$: operationRows = worklog.length ? worklog : [placeholderOp];
@@ -385,7 +400,9 @@
 			'run.',
 			'bundle.',
 			'impl.',
-			'xtal.'
+			'xtal.',
+			'wasm.',
+			'lp.deploy.'
 		].some((prefix) => op.startsWith(prefix));
 	}
 
@@ -395,6 +412,12 @@
 
 	function statusLabel(op: OpRecord | null) {
 		return op?.status ? op.status.replaceAll('_', ' ') : 'pending';
+	}
+
+	function componentDetail(component: RuntimeComponentStatus) {
+		return component.status === 'available'
+			? (component.source ?? 'available')
+			: component.install_hint;
 	}
 
 	function workspaceLabel(root: string) {
@@ -899,6 +922,15 @@
 				<button class="command-button warning" type="button" on:click={() => primeRadarAction('incident')}>
 					Incident Improve
 				</button>
+			</div>
+			<div class="setup-readiness" aria-label="Setup readiness">
+				{#each setupComponents as component}
+					<div class:missing={component.status !== 'available'}>
+						<span>{component.label}</span>
+						<strong>{component.status === 'available' ? 'Ready' : component.required ? 'Required' : 'Optional'}</strong>
+						<small>{componentDetail(component)}</small>
+					</div>
+				{/each}
 			</div>
 		</section>
 

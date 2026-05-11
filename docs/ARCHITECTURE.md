@@ -12,6 +12,23 @@
 - `x07-studio-forge`: ratatui terminal shell
 - `web`: SvelteKit browser shell over the daemon API
 
+## Standalone packaging
+
+The standalone desktop bundle is built from the same runtime pieces instead of a
+separate product surface:
+
+- release `loom-daemon`, `x07-studio`, and `x07-studio-forge` binaries
+- static SvelteKit output from `web/build`
+- launcher and bootstrap scripts under `scripts/`
+- config examples for providers and MCP endpoints
+
+The native desktop shell starts an embedded local daemon by default, so first
+launch works without a manual background process. The packaged web launcher
+starts `loom-daemon`, serves the built Svelte app, and proxies `/v1/**` to the
+daemon. Both surfaces consume the daemon health component report so onboarding
+can show whether `x07`, `x07-wasm`, `x07lp`, Codex, and Claude Code are
+available, missing, or optional.
+
 ## Runtime shape
 
 ```text

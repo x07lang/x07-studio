@@ -21,9 +21,12 @@
 - MCP HTTP transport with initialize + session header handling
 - MCP stdio transport with newline-delimited JSON-RPC
 - daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, existing specs, incident notes, revision notes, and visible intent operation records
+- daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs
+- standalone packaging scripts assemble the daemon, native desktop shell, Forge shell, and static Svelte web app into a portable bundle
 - OpenAI-compatible provider probing through `/models`, `/responses`, and `/chat/completions`
 - Axum daemon routes for sessions, bindings, providers, and MCP connections
 - egui GUI shell and ratatui Forge shell over the daemon API
+- egui GUI shell starts an embedded local daemon by default for standalone desktop use
 
 ## Still intentionally thin in v0.1
 

@@ -77,6 +77,20 @@ cargo run -p x07-studio-forge -- --daemon-url http://127.0.0.1:7719
 cd web && npm install && npm run dev
 ```
 
+The native desktop shell can also start its own local daemon:
+
+```bash
+cargo run -p x07-studio -- --root /path/to/x07/workspace
+```
+
+The packaged web shell uses the same daemon API and static Svelte build:
+
+```bash
+cd web && npm install && npm run build
+cargo build --release -p loom-daemon -p x07-studio -p x07-studio-forge
+python3 scripts/package_standalone.py --target-dir target/release --web-dir web/build --out-dir dist/standalone
+```
+
 ## Suggested local setup
 
 1. Put this repo beside `x07`, `x07-mcp`, `x07-wasm-backend`, and `x07-platform`.
@@ -84,7 +98,13 @@ cd web && npm install && npm run dev
    - `X07_STUDIO_X07_EXE`
    - `X07_STUDIO_X07_WASM_EXE`
    - `X07_STUDIO_X07LP_EXE`
-3. Copy `config/providers.example.json` for provider setup and `config/mcp-http.example.json` or `config/mcp-stdio.example.json` for MCP connection payloads.
+3. Run `python3 scripts/bootstrap_components.py --install-missing --write-env .x07/studio/defaults.env` to detect available tools and build sibling source checkouts when possible.
+4. Copy `config/providers.example.json` for provider setup and `config/mcp-http.example.json` or `config/mcp-stdio.example.json` for MCP connection payloads.
+
+The Studio health endpoint and web onboarding panel report readiness for `x07`,
+`x07-wasm`, `x07lp`, Codex, and Claude Code. The first three are required for
+the full Atlas release and local platform delivery lane; the agent CLIs are
+optional until supervised handoffs need to execute locally.
 
 ## Validation
 
@@ -94,6 +114,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd web && npm run check && npm test && npm run build
 ```
+
+GitHub Actions builds the Rust workspace, the Svelte web app, Playwright E2E,
+and standalone desktop bundles for Linux, macOS, and Windows. The desktop bundle
+job also builds `x07-wasm` from `x07lang/x07-wasm-backend` and wires it into the
+packaged defaults so Atlas app workflows have a ready WASM component.
 
 ## Notes
 
