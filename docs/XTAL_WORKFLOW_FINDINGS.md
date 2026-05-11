@@ -291,3 +291,13 @@ This document records friction found while implementing the Studio web surface.
    matching `x07.contract.repro@0.1.0`, ensures an `arch/xtal/xtal.json`
    manifest exists when needed, and runs `xtal.ingest --normalize-only` followed
    by `xtal.improve` from the approval/run path.
+
+28. Platform delivery must use the current x07lp deployment surface.
+
+   Studio had shallow x07-platform bindings for hosted release query, hosted
+   rollback, and rollout status, but the command shapes had drifted from the
+   current platform driver. The platform surface now exposes `release-query`,
+   `release-rollback`, and local `accept`/`run`/`query`/`status`/incident
+   bindings. The next integration step should be a typed delivery lane, not a
+   static command chain: `accept` returns the deployment execution id that the
+   following `run`, `query`, status, and incident commands need.

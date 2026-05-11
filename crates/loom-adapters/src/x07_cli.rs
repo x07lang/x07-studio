@@ -1266,7 +1266,7 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
         id: "lp.release.query",
         category: "x07/platform",
         program: ProgramKey::X07lp,
-        args: &["release", "query", "--release-id", "{release_id}"],
+        args: &["release-query", "--release", "{release_id}"],
         artifacts: &[],
         notes: "Query hosted release state.",
         machine_json: MachineJsonMode::StdoutOnly,
@@ -1275,18 +1275,157 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
         id: "lp.release.rollback",
         category: "x07/platform",
         program: ProgramKey::X07lp,
-        args: &["release", "rollback", "--release-id", "{release_id}"],
+        args: &[
+            "release-rollback",
+            "--release",
+            "{release_id}",
+            "--reason",
+            "{reason}",
+        ],
         artifacts: &[],
         notes: "Rollback a hosted release.",
         machine_json: MachineJsonMode::StdoutOnly,
     },
     BindingTemplate {
-        id: "lp.rollout.status",
+        id: "lp.deploy.accept.local",
         category: "x07/platform",
         program: ProgramKey::X07lp,
-        args: &["rollout", "status", "--rollout-id", "{rollout_id}"],
+        args: &[
+            "accept",
+            "--target",
+            "__local__",
+            "--pack-manifest",
+            "{pack_manifest}",
+            "--pack-dir",
+            "{pack_dir}",
+            "--state-dir",
+            "{state_dir}",
+        ],
+        artifacts: &["{state_dir}"],
+        notes: "Accept a local deployment candidate from a verified pack manifest.",
+        machine_json: MachineJsonMode::StdoutOnly,
+    },
+    BindingTemplate {
+        id: "lp.deploy.run.local",
+        category: "x07/platform",
+        program: ProgramKey::X07lp,
+        args: &[
+            "run",
+            "--target",
+            "__local__",
+            "--deployment",
+            "{deployment_id}",
+            "--plan",
+            "{plan}",
+            "--state-dir",
+            "{state_dir}",
+        ],
+        artifacts: &["{state_dir}"],
+        notes: "Run an accepted deployment locally from an x07 deploy plan.",
+        machine_json: MachineJsonMode::StdoutOnly,
+    },
+    BindingTemplate {
+        id: "lp.deploy.run.local.metrics",
+        category: "x07/platform",
+        program: ProgramKey::X07lp,
+        args: &[
+            "run",
+            "--target",
+            "__local__",
+            "--deployment",
+            "{deployment_id}",
+            "--plan",
+            "{plan}",
+            "--metrics-dir",
+            "{metrics_dir}",
+            "--state-dir",
+            "{state_dir}",
+        ],
+        artifacts: &["{state_dir}"],
+        notes: "Run an accepted local deployment with explicit metrics evidence.",
+        machine_json: MachineJsonMode::StdoutOnly,
+    },
+    BindingTemplate {
+        id: "lp.deploy.query.local",
+        category: "x07/platform",
+        program: ProgramKey::X07lp,
+        args: &[
+            "query",
+            "--target",
+            "__local__",
+            "--deployment",
+            "{deployment_id}",
+            "--view",
+            "full",
+            "--state-dir",
+            "{state_dir}",
+        ],
+        artifacts: &["{state_dir}"],
+        notes: "Query full local deployment state.",
+        machine_json: MachineJsonMode::StdoutOnly,
+    },
+    BindingTemplate {
+        id: "lp.deploy.status.local",
+        category: "x07/platform",
+        program: ProgramKey::X07lp,
+        args: &[
+            "status",
+            "--target",
+            "__local__",
+            "--deployment",
+            "{deployment_id}",
+            "--state-dir",
+            "{state_dir}",
+        ],
         artifacts: &[],
-        notes: "Inspect rollout status.",
+        notes: "Inspect local deployment status.",
+        machine_json: MachineJsonMode::StdoutOnly,
+    },
+    BindingTemplate {
+        id: "lp.incident.list.local",
+        category: "x07/platform",
+        program: ProgramKey::X07lp,
+        args: &[
+            "incident-list",
+            "--target",
+            "__local__",
+            "--deployment",
+            "{deployment_id}",
+            "--state-dir",
+            "{state_dir}",
+        ],
+        artifacts: &["{state_dir}"],
+        notes: "List local deployment incidents.",
+        machine_json: MachineJsonMode::StdoutOnly,
+    },
+    BindingTemplate {
+        id: "lp.regress.from_incident.local",
+        category: "x07/platform",
+        program: ProgramKey::X07lp,
+        args: &[
+            "regress-from-incident",
+            "--target",
+            "__local__",
+            "--incident-id",
+            "{incident_id}",
+            "--name",
+            "{regression_name}",
+            "--out-dir",
+            "{out_dir}",
+            "--state-dir",
+            "{state_dir}",
+        ],
+        artifacts: &["{out_dir}"],
+        notes: "Create a local regression fixture from a platform incident.",
+        machine_json: MachineJsonMode::StdoutOnly,
+    },
+    BindingTemplate {
+        id: "lp.ui.serve.local",
+        category: "x07/platform",
+        program: ProgramKey::X07lp,
+        args: &["ui-serve", "--state-dir", "{state_dir}", "--addr", "{addr}"],
+        artifacts: &["{state_dir}"],
+        notes: "Serve the local platform control-plane UI.",
         machine_json: MachineJsonMode::StdoutOnly,
     },
 ];
@@ -1415,7 +1554,15 @@ mod tests {
             "wasm.workload.inspect",
             "wasm.deploy.plan",
             "lp.release.query",
-            "lp.rollout.status",
+            "lp.release.rollback",
+            "lp.deploy.accept.local",
+            "lp.deploy.run.local",
+            "lp.deploy.run.local.metrics",
+            "lp.deploy.query.local",
+            "lp.deploy.status.local",
+            "lp.incident.list.local",
+            "lp.regress.from_incident.local",
+            "lp.ui.serve.local",
         ] {
             assert!(ids.contains(&required), "missing {required}");
         }
@@ -1426,5 +1573,120 @@ mod tests {
         let binding = binding_by_id("lp.release.query").expect("binding exists");
 
         assert_eq!(binding.machine_json, MachineJsonMode::StdoutOnly);
+    }
+
+    #[test]
+    fn platform_release_bindings_use_current_driver_shape() {
+        let query = binding_by_id("lp.release.query").expect("binding exists");
+        let rendered = query.render(&BTreeMap::from([(
+            "release_id".to_string(),
+            "rel_123".to_string(),
+        )]));
+
+        assert_eq!(rendered.program, "x07lp");
+        assert_eq!(rendered.args, vec!["release-query", "--release", "rel_123"]);
+        assert!(!rendered.args.iter().any(|arg| arg.contains('{')));
+
+        let rollback = binding_by_id("lp.release.rollback").expect("binding exists");
+        let rendered = rollback.render(&BTreeMap::from([
+            ("release_id".to_string(), "rel_123".to_string()),
+            ("reason".to_string(), "failed canary".to_string()),
+        ]));
+
+        assert_eq!(
+            rendered.args,
+            vec![
+                "release-rollback",
+                "--release",
+                "rel_123",
+                "--reason",
+                "failed canary",
+            ]
+        );
+        assert!(!rendered.args.iter().any(|arg| arg.contains('{')));
+    }
+
+    #[test]
+    fn platform_local_delivery_bindings_use_current_driver_shape() {
+        let accept = binding_by_id("lp.deploy.accept.local").expect("binding exists");
+        let rendered = accept.render(&BTreeMap::from([
+            (
+                "pack_manifest".to_string(),
+                "dist/pack/app.pack.json".to_string(),
+            ),
+            ("pack_dir".to_string(), "dist/pack".to_string()),
+            ("state_dir".to_string(), ".x07/platform".to_string()),
+        ]));
+
+        assert_eq!(
+            rendered.args,
+            vec![
+                "accept",
+                "--target",
+                "__local__",
+                "--pack-manifest",
+                "dist/pack/app.pack.json",
+                "--pack-dir",
+                "dist/pack",
+                "--state-dir",
+                ".x07/platform",
+            ]
+        );
+        assert_eq!(rendered.artifacts, vec![".x07/platform"]);
+        assert!(!rendered.args.iter().any(|arg| arg.contains('{')));
+
+        let run = binding_by_id("lp.deploy.run.local.metrics").expect("binding exists");
+        let rendered = run.render(&BTreeMap::from([
+            ("deployment_id".to_string(), "lpexec_example".to_string()),
+            (
+                "plan".to_string(),
+                "dist/deploy/deploy.plan.json".to_string(),
+            ),
+            (
+                "metrics_dir".to_string(),
+                "tests/fixtures/metrics".to_string(),
+            ),
+            ("state_dir".to_string(), ".x07/platform".to_string()),
+        ]));
+
+        assert_eq!(
+            rendered.args,
+            vec![
+                "run",
+                "--target",
+                "__local__",
+                "--deployment",
+                "lpexec_example",
+                "--plan",
+                "dist/deploy/deploy.plan.json",
+                "--metrics-dir",
+                "tests/fixtures/metrics",
+                "--state-dir",
+                ".x07/platform",
+            ]
+        );
+        assert!(!rendered.args.iter().any(|arg| arg.contains('{')));
+
+        let query = binding_by_id("lp.deploy.query.local").expect("binding exists");
+        let rendered = query.render(&BTreeMap::from([
+            ("deployment_id".to_string(), "lpexec_example".to_string()),
+            ("state_dir".to_string(), ".x07/platform".to_string()),
+        ]));
+
+        assert_eq!(
+            rendered.args,
+            vec![
+                "query",
+                "--target",
+                "__local__",
+                "--deployment",
+                "lpexec_example",
+                "--view",
+                "full",
+                "--state-dir",
+                ".x07/platform",
+            ]
+        );
+        assert!(!rendered.args.iter().any(|arg| arg.contains('{')));
     }
 }

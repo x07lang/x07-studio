@@ -69,7 +69,19 @@ Loom treats CLI execution as a rendered binding, not as free-form shell text.
 
 - `lp.release.query`
 - `lp.release.rollback`
-- `lp.rollout.status`
+- `lp.deploy.accept.local`
+- `lp.deploy.run.local`
+- `lp.deploy.run.local.metrics`
+- `lp.deploy.query.local`
+- `lp.deploy.status.local`
+- `lp.incident.list.local`
+- `lp.regress.from_incident.local`
+- `lp.ui.serve.local`
+
+The local deployment bindings target the current `x07lp` driver surface:
+`accept`, `run`, `query`, `status`, `incident-list`, `regress-from-incident`,
+and `ui-serve`. They are intended to sit after `wasm.app.pack`,
+`wasm.app.verify`, and `wasm.deploy.plan` in an end-to-end Studio lane.
 
 ## Machine-output policy
 
