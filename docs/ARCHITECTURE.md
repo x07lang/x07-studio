@@ -30,8 +30,11 @@ starts `loom-daemon`, serves the built Svelte app on the preferred local port or
 the next free port, and proxies `/v1/**` to the daemon. Both surfaces consume the
 daemon health component report so onboarding can show whether `x07`,
 `x07-wasm`, `x07lp`, Codex, and Claude Code are available, missing, or optional.
-The launcher refreshes component paths without discarding user-edited onboarding
-defaults, and the daemon reports the runtime address selected by the launcher.
+The browser and native egui shells render a setup plan from that same health
+payload: first-run defaults, bootstrap command, resolved component paths, and
+required/optional install work. The launcher refreshes component paths without
+discarding user-edited onboarding defaults, and the daemon reports the runtime
+address selected by the launcher or embedded native shell.
 
 ## Runtime shape
 

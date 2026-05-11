@@ -23,7 +23,7 @@
 - daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, existing specs, incident notes, revision notes, and visible intent operation records
 - opt-in provider-backed intent polish that records model suggestions as review evidence while keeping deterministic intent generation as the fallback
 - daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs
-- browser onboarding plan renders first-run defaults, bootstrap command, resolved component sources, and required/optional setup work from the daemon health report
+- browser and native egui onboarding plans render first-run defaults, bootstrap command, resolved component sources, and required/optional setup work from the daemon health report
 - daemon-side coding-agent readiness checks reject disabled profiles and missing execute commands even when clients bypass the browser controls
 - standalone packaging scripts assemble the daemon, native desktop shell, Forge shell, and static Svelte web app into a portable bundle
 - standalone launcher refreshes setup defaults, selects free local daemon/web ports, and reports the actual runtime addresses through daemon health
@@ -32,7 +32,7 @@
 - OpenAI-compatible provider probing through `/models`, `/responses`, and `/chat/completions`
 - Axum daemon routes for sessions, bindings, providers, and MCP connections
 - egui GUI shell and ratatui Forge shell over the daemon API
-- egui GUI shell starts an embedded local daemon by default for standalone desktop use
+- egui GUI shell starts an embedded local daemon by default for standalone desktop use and reports that runtime daemon address through health
 
 ## Still intentionally thin in v0.1
 

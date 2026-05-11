@@ -13,7 +13,7 @@ use uuid::Uuid;
 use loom_client::DaemonClient;
 use loom_types::api::{
     ConnectMcpRequest, CreateSessionRequest, DispatchEventRequest, HealthResponse,
-    RunBindingRequest, RuntimeComponentState,
+    RunBindingRequest, RuntimeComponentState, RuntimeComponentStatus,
 };
 use loom_types::artifacts::{IntentPacket, ProviderProfile, TaskType};
 use loom_types::mcp::{McpEndpoint, McpHttpEndpoint};
@@ -26,6 +26,8 @@ const COMPONENT_ENV_KEYS: &[&str] = &[
     "X07_STUDIO_X07_WASM_EXE",
     "X07_STUDIO_X07LP_EXE",
 ];
+const ONBOARDING_BOOTSTRAP_COMMAND: &str =
+    "python3 scripts/bootstrap_components.py --install-missing --write-env .x07/studio/defaults.env";
 
 #[derive(Debug, Parser)]
 #[command(name = "x07-studio")]
@@ -88,6 +90,7 @@ struct ManagedDaemon {
 fn start_managed_daemon(rt: &Runtime, root: &str) -> anyhow::Result<ManagedDaemon> {
     let std_listener = TcpListener::bind("127.0.0.1:0")?;
     let addr: SocketAddr = std_listener.local_addr()?;
+    set_managed_daemon_env(addr);
     std_listener.set_nonblocking(true)?;
     let _guard = rt.enter();
     let listener = tokio::net::TcpListener::from_std(std_listener)?;
@@ -567,7 +570,118 @@ fn component_summary(ui: &mut egui::Ui, health: &HealthResponse) {
                 );
             });
         }
+        ui.separator();
+        ui.strong("Setup plan");
+        for step in build_onboarding_plan(health).into_iter().take(6) {
+            ui.group(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(&step.label);
+                    ui.colored_label(step.color(), step.state);
+                });
+                ui.monospace(&step.command);
+                ui.label(&step.detail);
+            });
+        }
     });
+}
+
+struct OnboardingStep {
+    label: String,
+    state: &'static str,
+    command: String,
+    detail: String,
+}
+
+impl OnboardingStep {
+    fn color(&self) -> egui::Color32 {
+        match self.state {
+            "required" => egui::Color32::YELLOW,
+            "ready" => egui::Color32::from_rgb(88, 210, 150),
+            _ => egui::Color32::GRAY,
+        }
+    }
+
+    fn rank(&self) -> usize {
+        match self.state {
+            "required" => 0,
+            "ready" => 1,
+            _ => 2,
+        }
+    }
+}
+
+fn build_onboarding_plan(health: &HealthResponse) -> Vec<OnboardingStep> {
+    let missing_required = health.components.iter().any(|component| {
+        component.required && component.status != RuntimeComponentState::Available
+    });
+    let mut steps = Vec::with_capacity(health.components.len() + 1);
+    steps.push(OnboardingStep {
+        label: "First-run defaults".to_string(),
+        state: if missing_required {
+            "required"
+        } else {
+            "ready"
+        },
+        command: ONBOARDING_BOOTSTRAP_COMMAND.to_string(),
+        detail: format!(
+            "workspace {} / daemon {} / platform {}",
+            health.workspace_root, health.defaults.daemon_addr, health.defaults.platform_state_dir
+        ),
+    });
+    steps.extend(health.components.iter().map(component_onboarding_step));
+    steps.sort_by_key(OnboardingStep::rank);
+    steps
+}
+
+fn component_onboarding_step(component: &RuntimeComponentStatus) -> OnboardingStep {
+    let ready = component.status == RuntimeComponentState::Available;
+    let env_var = component_env_var(&component.id);
+    OnboardingStep {
+        label: if component.required {
+            format!("{} runtime", component.label)
+        } else {
+            format!("{} agent", component.label)
+        },
+        state: if ready {
+            "ready"
+        } else if component.required {
+            "required"
+        } else {
+            "optional"
+        },
+        command: if ready {
+            component
+                .source
+                .clone()
+                .unwrap_or_else(|| component.command.clone())
+        } else if env_var.is_some() {
+            ONBOARDING_BOOTSTRAP_COMMAND.to_string()
+        } else {
+            component.command.clone()
+        },
+        detail: if ready {
+            format!("{} resolved for local runs.", component.label)
+        } else if let Some(env_var) = env_var {
+            format!("{} Override with {env_var}.", component.install_hint)
+        } else {
+            component.install_hint.clone()
+        },
+    }
+}
+
+fn component_env_var(component_id: &str) -> Option<&'static str> {
+    match component_id {
+        "x07" => Some("X07_STUDIO_X07_EXE"),
+        "x07-wasm" => Some("X07_STUDIO_X07_WASM_EXE"),
+        "x07lp" => Some("X07_STUDIO_X07LP_EXE"),
+        _ => None,
+    }
+}
+
+fn set_managed_daemon_env(addr: SocketAddr) {
+    let daemon_addr = addr.to_string();
+    std::env::set_var("X07_STUDIO_DAEMON_ADDR", &daemon_addr);
+    std::env::set_var("X07_STUDIO_DAEMON_URL", format!("http://{daemon_addr}"));
 }
 
 fn load_first_defaults_env(explicit: Option<&StdPath>) -> anyhow::Result<Option<PathBuf>> {
@@ -664,7 +778,15 @@ fn parse_vars_map(input: &str) -> anyhow::Result<BTreeMap<String, String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_user_path, parse_defaults_line};
+    use super::{
+        build_onboarding_plan, expand_user_path, parse_defaults_line, set_managed_daemon_env,
+        ONBOARDING_BOOTSTRAP_COMMAND,
+    };
+    use loom_types::api::{
+        HealthResponse, RuntimeComponentState, RuntimeComponentStatus, StudioDefaults,
+    };
+    use std::ffi::OsString;
+    use std::net::SocketAddr;
     use std::path::Path;
 
     #[test]
@@ -702,5 +824,124 @@ mod tests {
 
         assert!(!expanded.starts_with("~/"));
         assert!(expanded.ends_with("x07-studio-workspace"));
+    }
+
+    #[test]
+    fn onboarding_plan_prioritizes_missing_required_components() {
+        let health = HealthResponse {
+            ok: true,
+            workspace_root: "/tmp/x07-project".to_string(),
+            defaults: StudioDefaults {
+                daemon_addr: "127.0.0.1:7719".to_string(),
+                provider_profile_id: "ollama-local".to_string(),
+                platform_state_dir: ".x07/platform".to_string(),
+            },
+            components: vec![
+                runtime_component(
+                    "x07-wasm",
+                    "x07-wasm",
+                    "x07-wasm",
+                    true,
+                    RuntimeComponentState::Missing,
+                    None,
+                    "Install x07-wasm.",
+                ),
+                runtime_component(
+                    "codex",
+                    "OpenAI Codex",
+                    "codex",
+                    false,
+                    RuntimeComponentState::Missing,
+                    None,
+                    "Install Codex CLI.",
+                ),
+            ],
+        };
+
+        let plan = build_onboarding_plan(&health);
+        let defaults = plan
+            .iter()
+            .find(|step| step.label == "First-run defaults")
+            .expect("defaults step");
+        let wasm = plan
+            .iter()
+            .find(|step| step.label == "x07-wasm runtime")
+            .expect("wasm step");
+        let codex = plan
+            .iter()
+            .find(|step| step.label == "OpenAI Codex agent")
+            .expect("codex step");
+
+        assert_eq!(defaults.state, "required");
+        assert!(defaults.detail.contains("daemon 127.0.0.1:7719"));
+        assert_eq!(wasm.state, "required");
+        assert_eq!(wasm.command, ONBOARDING_BOOTSTRAP_COMMAND);
+        assert!(wasm.detail.contains("X07_STUDIO_X07_WASM_EXE"));
+        assert_eq!(codex.state, "optional");
+        assert_eq!(codex.command, "codex");
+    }
+
+    #[test]
+    fn managed_daemon_env_records_runtime_addr() {
+        let _guard = EnvRestore::new(&["X07_STUDIO_DAEMON_ADDR", "X07_STUDIO_DAEMON_URL"]);
+        let addr: SocketAddr = "127.0.0.1:7788".parse().expect("socket addr");
+
+        set_managed_daemon_env(addr);
+
+        assert_eq!(
+            std::env::var("X07_STUDIO_DAEMON_ADDR").as_deref(),
+            Ok("127.0.0.1:7788")
+        );
+        assert_eq!(
+            std::env::var("X07_STUDIO_DAEMON_URL").as_deref(),
+            Ok("http://127.0.0.1:7788")
+        );
+    }
+
+    fn runtime_component(
+        id: &str,
+        label: &str,
+        command: &str,
+        required: bool,
+        status: RuntimeComponentState,
+        source: Option<&str>,
+        install_hint: &str,
+    ) -> RuntimeComponentStatus {
+        RuntimeComponentStatus {
+            id: id.to_string(),
+            label: label.to_string(),
+            command: command.to_string(),
+            required,
+            status,
+            source: source.map(str::to_string),
+            install_hint: install_hint.to_string(),
+        }
+    }
+
+    struct EnvRestore {
+        entries: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl EnvRestore {
+        fn new(keys: &[&'static str]) -> Self {
+            Self {
+                entries: keys
+                    .iter()
+                    .map(|key| (*key, std::env::var_os(key)))
+                    .collect(),
+            }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, value) in &self.entries {
+                if let Some(value) = value {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
     }
 }

@@ -422,3 +422,12 @@ This document records friction found while implementing the Studio web surface.
    The desktop matrix now occupies the default daemon/web ports, starts the
    packaged web launcher, fetches the built app, and verifies `/v1/health`
    reports the runtime fallback daemon address.
+
+41. Native desktop onboarding must not lag behind the web shell.
+
+   The browser setup panel showed first-run defaults, bootstrap command, missing
+   required components, and optional Codex/Claude setup, but the egui shell only
+   showed compact component badges. The native shell now derives the same setup
+   plan from daemon health, and its embedded daemon exports the actual random
+   loopback address before serving so `/v1/health` no longer reports the static
+   default port.
