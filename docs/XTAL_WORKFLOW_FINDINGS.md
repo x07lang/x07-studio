@@ -267,3 +267,12 @@ This document records friction found while implementing the Studio web surface.
    now includes an explicit Execution Boundary section: `x07 run` is the default
    execution front door, solve-pure is the default lane, and any detected
    capability or release/budget widening is named as an approval-gated surface.
+
+26. Brownfield extract must run before spec approval.
+
+   The Workspace Radar prepared a Brownfield Extract prompt and task type, and
+   the binding catalog already exposed `spec.extract`, but the approval path
+   treated brownfield like a normal new-behavior session. That let humans approve
+   without ever extracting current implementation behavior. Studio now runs
+   `spec.extract` during the `spec_draft` phase for `brownfield_extract`
+   sessions and only locks the session contract after that operation succeeds.

@@ -289,17 +289,24 @@
 			if (!promptText.trim()) {
 				promptText = selectedProjectTemplate.prompt;
 			}
-			const session = await api.createSession(`${selectedProjectTemplate.label}: ${title}`, projectTaskType);
+			const label = intakeProjectLabel();
+			const session = await api.createSession(`${label}: ${title}`, projectTaskType);
 			sessions = [session, ...sessions.filter((item) => item.session_id !== session.session_id)];
 			selectedId = session.session_id;
 			selectedRoom = 'intent';
 			selectedSessionForRoom = session.session_id;
 			approvalState = 'drafting';
 			revisionHistory = [];
-			statusLine = `Created ${selectedProjectTemplate.label.toLowerCase()} project: ${title}`;
+			statusLine = `Created ${label.toLowerCase()} project: ${title}`;
 		} finally {
 			busy = false;
 		}
+	}
+
+	function intakeProjectLabel() {
+		if (projectTaskType === 'brownfield_extract') return 'Brownfield';
+		if (projectTaskType === 'incident_repair' && selectedProjectTemplate.taskType !== projectTaskType) return 'Incident';
+		return selectedProjectTemplate.label;
 	}
 
 	function loadProjectBrief() {
@@ -688,6 +695,13 @@
 		}
 		if (current.phase === 'intent_ready') {
 			current = await api.dispatch(current, 'draft_spec');
+		}
+		if (current.task_type === 'brownfield_extract' && current.phase === 'spec_draft') {
+			current = await api.runBinding(current, 'spec.extract');
+			if (current.op_log.at(-1)?.status === 'failed') {
+				statusLine = 'Brownfield spec extraction failed; review operation evidence';
+				return current;
+			}
 		}
 		if (current.phase === 'spec_draft') {
 			current = await api.dispatch(current, 'approve_spec');

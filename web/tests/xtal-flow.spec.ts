@@ -96,6 +96,13 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText('Brownfield extract intake prepared')).toBeVisible();
 	await expect(page.getByLabel('Task type')).toHaveValue('brownfield_extract');
 	await expect(page.getByLabel('Initial plan')).toHaveValue(/Extract the current project behavior/);
+	await page.getByRole('button', { name: 'New Session', exact: true }).click();
+	await expect(page.getByText('Created brownfield project: Brownfield XTAL extract')).toBeVisible();
+	await page.getByRole('button', { name: 'Polish Intent' }).click();
+	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Approve Spec' }).click();
+	await expect(page.locator('code').filter({ hasText: 'spec.extract' })).toBeVisible();
+	await expect(page.getByText('Spec approved; realization lane is unlocked')).toBeVisible();
 	await page.getByRole('button', { name: 'Incident Improve' }).click();
 	await expect(page.getByText('Incident improve intake prepared')).toBeVisible();
 	await expect(page.getByLabel('Task type')).toHaveValue('incident_repair');

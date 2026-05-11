@@ -135,6 +135,10 @@ The web intake starts with simple, intermediate, advanced, complex, and expert
 x07 project briefs. They are intentionally editable form seeds, not hidden
 generators: a user or agent chooses difficulty, task type, title, input mode,
 and prompt text before a session is created.
+For `brownfield_extract` sessions, the browser approval path runs
+`spec.extract` in the `spec_draft` phase before locking the session contract,
+so existing implementation behavior becomes reviewable spec evidence instead
+of being skipped by a normal scaffold path.
 
 After spec approval, the daemon can run the visible XTAL workflow through
 `POST /v1/sessions/{session_id}/xtal/run`. That path derives binding variables
