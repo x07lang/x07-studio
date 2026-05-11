@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const projects = [
 	{
@@ -75,6 +75,14 @@ const sorterSpec = JSON.stringify({
 	operations: [{ id: 'op.sort_u8_asc.v1', name: 'toy.sorter.sort_u8_asc' }]
 });
 
+function inspectOperation(page: Page, op: string) {
+	return page.getByRole('button', { name: new RegExp(`Inspect( operation)? ${escapeRegex(op)}`) }).first();
+}
+
+function escapeRegex(value: string) {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 test('user can create increasingly difficult x07 project sessions and exercise controls', async ({ page }) => {
 	await page.setViewportSize({ width: 1728, height: 972 });
 	await page.goto('/');
@@ -82,6 +90,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText('Demo projection active')).toBeVisible();
 	await expect(page.getByLabel('Operation log')).toBeInViewport();
 	await expect(page.getByLabel('Canonical command lane')).toContainText('x07 canonical command lane');
+	await expect(page.getByLabel('XTAL automation plan')).toContainText('approval gated');
+	await expect(page.getByLabel('XTAL automation plan')).toContainText('Project scaffold');
 	await page.locator('#command-lane-input').fill('x07 run --workspace demo --from intent --to verify');
 	await page.getByLabel('Command lane mode').selectOption('plan');
 	await page.getByLabel('Command lane environment').selectOption('sandbox');
@@ -112,7 +122,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: 'Approve Spec' }).click();
-	await expect(page.locator('code').filter({ hasText: 'spec.extract' })).toBeVisible();
+	await expect(inspectOperation(page, 'spec.extract')).toBeVisible();
 	await expect(page.getByText('Spec approved; realization lane is unlocked')).toBeVisible();
 	await page.getByRole('button', { name: 'Incident Improve' }).click();
 	await expect(page.getByText('Incident improve intake prepared')).toBeVisible();
@@ -124,8 +134,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText('Incident ingest/improve evidence recorded')).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'xtal.ingest' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'xtal.improve' })).toBeVisible();
+	await expect(inspectOperation(page, 'xtal.ingest')).toBeVisible();
+	await expect(inspectOperation(page, 'xtal.improve')).toBeVisible();
 	await page.getByRole('button', { name: 'Intent', exact: true }).click();
 	await expect(page.getByText('Intent intake prepared')).toBeVisible();
 	await expect(page.getByLabel('Task type')).toHaveValue('new_behavior');
@@ -183,7 +193,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await expect(page.getByLabel('Spec approval preview')).toContainText('atlas.app');
-	await expect(page.locator('code').filter({ hasText: 'intent.formalize' })).toBeVisible();
+	await expect(inspectOperation(page, 'intent.formalize')).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeEnabled();
 
 	await page.getByLabel('Revision').fill('Add a deterministic repair witness before implementation.');
@@ -202,6 +212,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 
 	await page.getByRole('button', { name: 'Approve Spec' }).click();
 	await expect(page.getByText('Spec approved; realization lane is unlocked')).toBeVisible();
+	await expect(page.getByLabel('XTAL automation plan')).toContainText('contract locked');
 	await expect(page.getByLabel('Session doctrine')).toContainText('x07.doc_v1');
 	await expect(page.getByLabel('Session doctrine')).toContainText('x07/docs/getting-started/agent-quickstart.md');
 	await page
@@ -222,7 +233,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.locator('footer').getByText('Agent checkpoint approved')).toBeVisible();
 	await page.getByRole('button', { name: 'Run Claude Code Command' }).click();
 	await expect(page.locator('footer').getByText('Claude Code supervised command succeeded')).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'agent.event.claude-code.artifact' })).toBeVisible();
+	await expect(inspectOperation(page, 'agent.event.claude-code.artifact')).toBeVisible();
 	await expect(page.getByLabel('Trust review signals')).toContainText('Artifact surfaced');
 	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Artifact surfaced/ }).click();
 	await expect(page.getByLabel('Selected operation inspector')).toContainText(
@@ -232,6 +243,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
+	await expect(page.getByLabel('XTAL automation plan')).toContainText('done');
+	await expect(page.getByLabel('XTAL automation plan')).toContainText('x07-wasm app build');
 	await expect(page.getByLabel('Trust review signals')).toContainText('Local platform delivery');
 	await expect(page.getByLabel('Trust review signals')).toContainText('SLO evidence');
 	await expect(page.getByLabel('Trust review signals')).toContainText('Release evidence');
@@ -240,15 +253,15 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Operation artifacts')).toContainText('.x07/platform');
 	await expect(page.getByText('Agent Visible Worklog')).toBeVisible();
 	await page.getByLabel('Worklog filter').selectOption('claude');
-	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'agent.event.claude-code.artifact' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'agent.approval.claude-code' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'agent.supervise.claude-code' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'agent.handoff.claude-code' })).toBeVisible();
+	await expect(inspectOperation(page, 'agent.run.claude-code')).toBeVisible();
+	await expect(inspectOperation(page, 'agent.event.claude-code.artifact')).toBeVisible();
+	await expect(inspectOperation(page, 'agent.approval.claude-code')).toBeVisible();
+	await expect(inspectOperation(page, 'agent.supervise.claude-code')).toBeVisible();
+	await expect(inspectOperation(page, 'agent.handoff.claude-code')).toBeVisible();
 	await page.getByLabel('Worklog filter').selectOption('all');
-	await expect(page.locator('code').filter({ hasText: 'wasm.app.verify.atlas_release' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'lp.deploy.accept.local' })).toBeVisible();
-	await expect(page.locator('code').filter({ hasText: 'lp.deploy.status.local' })).toBeVisible();
+	await expect(inspectOperation(page, 'wasm.app.verify.atlas_release')).toBeVisible();
+	await expect(inspectOperation(page, 'lp.deploy.accept.local')).toBeVisible();
+	await expect(inspectOperation(page, 'lp.deploy.status.local')).toBeVisible();
 	await page.getByRole('button', { name: /Inspect lp\.deploy\.status\.local/ }).first().click();
 	await expect(page.getByLabel('Selected operation inspector')).toContainText('lp.deploy.status.local');
 	await expect(page.getByLabel('Operation artifacts')).toContainText(
@@ -258,7 +271,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Selected operation inspector')).toContainText('wasm.slo.eval.atlas_canary_ok');
 
 	await page.getByLabel('Worklog filter').selectOption('claude');
-	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();
+	await expect(inspectOperation(page, 'agent.run.claude-code')).toBeVisible();
 	await page.getByLabel('Worklog filter').selectOption('all');
 	await page.getByLabel('Auto-scroll').uncheck();
 	await expect(page.getByLabel('Auto-scroll')).not.toBeChecked();

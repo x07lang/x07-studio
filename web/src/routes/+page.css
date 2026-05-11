@@ -68,6 +68,11 @@
 .template-meta span,
 .approval-ledger span,
 .approval-ledger em,
+.automation-head span,
+.automation-head em,
+.automation-step span,
+.automation-step small,
+.automation-step em,
 .guard-section > span,
 .guard-row small,
 .guard-row em,
@@ -891,6 +896,95 @@ textarea {
 	font-style: normal;
 	font-size: 11px;
 	font-family: var(--font-mono);
+}
+
+.automation-plan {
+	display: grid;
+	gap: 8px;
+	margin-top: 10px;
+	border: 1px solid rgba(85, 214, 231, 0.18);
+	border-radius: var(--radius);
+	background: rgba(4, 6, 9, 0.22);
+	padding: 9px;
+}
+
+.automation-head,
+.automation-step {
+	display: grid;
+	grid-template-columns: minmax(108px, 0.55fr) minmax(160px, 1fr) minmax(190px, 1.2fr) minmax(128px, 0.75fr) minmax(160px, 1fr);
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.automation-head {
+	grid-template-columns: minmax(0, 1fr) auto;
+	padding-bottom: 2px;
+}
+
+.automation-head strong {
+	display: block;
+	margin-top: 2px;
+	font-size: 13px;
+}
+
+.automation-head em {
+	font-style: normal;
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.automation-step {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 7px 8px;
+	background: rgba(255, 255, 255, 0.033);
+}
+
+.automation-step.done {
+	border-color: rgba(114, 228, 180, 0.26);
+}
+
+.automation-step.ready,
+.automation-step.running {
+	border-color: rgba(85, 214, 231, 0.32);
+	background: rgba(85, 214, 231, 0.055);
+}
+
+.automation-step.failed {
+	border-color: rgba(255, 105, 105, 0.38);
+	background: rgba(255, 105, 105, 0.06);
+}
+
+.automation-step span {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	text-transform: uppercase;
+}
+
+.automation-step strong,
+.automation-step code,
+.automation-step small,
+.automation-step em {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.automation-step strong {
+	font-size: 12px;
+}
+
+.automation-step code {
+	color: var(--cyan);
+	font-size: 11px;
+}
+
+.automation-step small,
+.automation-step em {
+	font-size: 11px;
+	font-style: normal;
 }
 
 .graph-tools {
@@ -2107,6 +2201,16 @@ textarea {
 	.approval-ledger,
 	.spec-grid {
 		grid-template-columns: 1fr;
+	}
+
+	.automation-step {
+		grid-template-columns: 82px minmax(0, 1fr);
+	}
+
+	.automation-step code,
+	.automation-step small,
+	.automation-step em {
+		grid-column: 2;
 	}
 
 	.terminal-log button,

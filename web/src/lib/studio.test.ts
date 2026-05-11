@@ -5,6 +5,7 @@ import { buildCounterexampleTheater, buildPatchReview, buildReviewSignals } from
 import {
 	appendDemoOp,
 	buildApprovalLedger,
+	buildAutomationPlan,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
 	canonicalMcpTools,
@@ -136,6 +137,23 @@ describe('x07 Studio XTAL web model', () => {
 		const awaitingLedger = buildApprovalLedger(session, ['Keep empty input explicit.'], 'awaiting');
 		expect(awaitingLedger.find((item) => item.label === 'Revision 1')?.state).toBe('done');
 		expect(awaitingLedger.find((item) => item.label === 'Human decision')?.state).toBe('active');
+	});
+
+	it('derives an approval-gated automation plan from the selected project template', () => {
+		let session = demoSession();
+		const draftPlan = buildAutomationPlan(session, projectTemplates[0], 'drafting');
+		expect(draftPlan.find((step) => step.label === 'Human approval')?.state).toBe('blocked');
+		expect(draftPlan.find((step) => step.label === 'Project scaffold')?.state).toBe('blocked');
+
+		session = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, 'Create a sorter.'));
+		session = reduceDemoEvent(session, 'approve_spec');
+		session = appendDemoOp(session, 'project.init.xtal-pure', 'succeeded');
+		session = appendDemoOp(session, 'xtal.verify', 'succeeded');
+
+		const runPlan = buildAutomationPlan(session, projectTemplates[0], 'approved');
+		expect(runPlan.find((step) => step.label === 'Human approval')?.state).toBe('done');
+		expect(runPlan.find((step) => step.label === 'Project scaffold')?.state).toBe('done');
+		expect(runPlan.find((step) => step.command.includes('x07 xtal verify'))?.state).toBe('done');
 	});
 
 	it('models visible canonical operation records', () => {

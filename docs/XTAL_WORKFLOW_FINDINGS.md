@@ -330,3 +330,15 @@ This document records friction found while implementing the Studio web surface.
    `MCP` room entry that focuses the Session Doctrine panel, keeping
    `x07.search_v1`, `x07.context_pack_v1`, `x07.exec_v1`, and the canonical
    `x07/docs/getting-started/**` references visible before agent handoff.
+
+32. End-to-end automation needs a runbook before execution.
+
+   `Approve and Run` was backed by canonical bindings and a visible operation
+   log, but non-expert users still had to infer what would happen after
+   approval. Studio now derives an XTAL Automation Plan from the selected
+   docs-example brief, approval state, session contract, and operation log. It
+   shows plan polish, human approval, project scaffold, spec/test/incident
+   steps, implementation sync, canonical commands, expected artifacts, and
+   blocked/ready/running/done/failed state before and after execution. This
+   keeps automatic project creation explainable without weakening the XTAL
+   approval gate.

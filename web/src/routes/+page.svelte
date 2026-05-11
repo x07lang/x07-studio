@@ -11,6 +11,7 @@
 	import {
 		agentLanes,
 		buildApprovalLedger,
+		buildAutomationPlan,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
@@ -195,6 +196,7 @@
 	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
 	$: approvalLedger = buildApprovalLedger(selected, revisionHistory, approvalState);
+	$: automationPlan = buildAutomationPlan(selected, selectedProjectTemplate, approvalState);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
 	$: canApproveSpec =
 		approvalState !== 'changes' && (selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft');
@@ -1179,6 +1181,24 @@
 							<span>{item.label}</span>
 							<strong>{item.detail}</strong>
 							<em>{item.state}</em>
+						</div>
+					{/each}
+				</div>
+				<div class="automation-plan" aria-label="XTAL automation plan">
+					<div class="automation-head">
+						<div>
+							<span>Automation Plan</span>
+							<strong>{selectedProjectTemplate.label} end-to-end runbook</strong>
+						</div>
+						<em>{selected?.contract ? 'contract locked' : 'approval gated'}</em>
+					</div>
+					{#each automationPlan as step}
+						<div class={`automation-step ${step.state}`}>
+							<span>{step.state}</span>
+							<strong>{step.label}</strong>
+							<code>{step.command}</code>
+							<small>{step.artifact}</small>
+							<em>{step.gate}</em>
 						</div>
 					{/each}
 				</div>

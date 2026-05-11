@@ -322,6 +322,16 @@ export interface ApprovalLedgerItem {
 	state: 'done' | 'active' | 'blocked';
 }
 
+export type AutomationPlanState = 'blocked' | 'ready' | 'running' | 'done' | 'failed';
+
+export interface AutomationPlanStep {
+	label: string;
+	command: string;
+	artifact: string;
+	gate: string;
+	state: AutomationPlanState;
+}
+
 export const rooms: Array<{ id: Room; label: string }> = [
 	{ id: 'intent', label: 'Intent' },
 	{ id: 'spec', label: 'Spec' },
@@ -763,6 +773,149 @@ export function buildApprovalLedger(
 			state: session?.contract ? 'done' : 'blocked'
 		}
 	];
+}
+
+export function buildAutomationPlan(
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate,
+	approvalState: ApprovalLoopState
+): AutomationPlanStep[] {
+	const ops = session?.op_log ?? [];
+	const approved = Boolean(session?.contract) || (session ? phaseIndex(session.phase) >= phaseIndex('spec_approved') : false);
+	const intentReady = Boolean(session?.intent) || latestOpState(ops, ['intent.formalize']) === 'done';
+	const taskType = session?.task_type ?? template.taskType;
+	const setupSteps: AutomationPlanStep[] = [
+		{
+			label: 'Plan polish',
+			command: 'intent.formalize',
+			artifact: '.x07/studio/sessions/intent.json',
+			gate: 'Human reviews the polished intent before spec approval',
+			state: intentReady ? 'done' : session ? 'ready' : 'blocked'
+		},
+		{
+			label: 'Human approval',
+			command: 'approve_spec',
+			artifact: '.x07/studio/sessions/session_contract.json',
+			gate:
+				approvalState === 'changes'
+					? 'Blocked until the agent repolishes requested changes'
+					: 'Locks write roots, docs, MCP tools, worlds, and budgets',
+			state: approved ? 'done' : approvalState === 'changes' ? 'blocked' : intentReady ? 'ready' : 'blocked'
+		},
+		{
+			label: 'Project scaffold',
+			command: 'project.init.xtal-pure',
+			artifact: 'x07.json',
+			gate: 'Creates the x07 project only after approval',
+			state: stateForOps(ops, ['project.init.xtal-pure'], approved)
+		}
+	];
+
+	if (taskType === 'brownfield_extract') {
+		setupSteps.push({
+			label: 'Brownfield extraction',
+			command: 'spec.extract',
+			artifact: 'target/xtal/spec.extract.report.json',
+			gate: 'Extract current behavior before implementation writes',
+			state: stateForOps(ops, ['spec.extract'], approved)
+		});
+	} else if (taskType === 'incident_repair') {
+		setupSteps.push(
+			{
+				label: 'Incident normalization',
+				command: 'xtal.ingest --normalize-only',
+				artifact: 'target/xtal/ingest/summary.json',
+				gate: 'Converts incident notes into canonical XTAL evidence',
+				state: stateForOps(ops, ['xtal.ingest'], approved)
+			},
+			{
+				label: 'Improve from incident',
+				command: 'xtal.improve',
+				artifact: 'target/xtal/improve/summary.json',
+				gate: 'Creates regression evidence before repair trust',
+				state: stateForOps(ops, ['xtal.improve'], approved)
+			}
+		);
+	} else {
+		setupSteps.push(
+			{
+				label: 'Spec scaffold',
+				command: 'spec.scaffold',
+				artifact: template.artifacts[0] ?? 'spec/',
+				gate: 'Creates spec artifacts before implementation',
+				state: stateForOps(ops, ['spec.scaffold'], approved)
+			},
+			{
+				label: 'Generated tests',
+				command: 'tests.gen.write',
+				artifact: template.artifacts[1] ?? 'gen/xtal/tests.json',
+				gate: 'Examples become executable tests',
+				state: stateForOps(ops, ['tests.gen.write'], approved)
+			}
+		);
+	}
+
+	setupSteps.push({
+		label: 'Implementation sync',
+		command: 'impl.sync.write',
+		artifact: 'target/xtal/impl-sync.patchset.json',
+		gate: 'Implementation writes stay inside approved roots',
+		state: stateForOps(ops, ['impl.sync.write', 'wasm.app.build.atlas_dev'], approved)
+	});
+
+	const templateSteps = template.canonicalCommands.map((command, index) => ({
+		label: `${template.label} evidence ${index + 1}`,
+		command,
+		artifact: template.artifacts[index] ?? template.artifacts.at(-1) ?? 'target/xtal/',
+		gate: template.riskProfile,
+		state: stateForCommand(ops, command, approved)
+	}));
+
+	return [...setupSteps, ...templateSteps].slice(0, 9);
+}
+
+function stateForOps(
+	ops: OpRecord[],
+	bindingIds: string[],
+	approved: boolean
+): AutomationPlanState {
+	const state = latestOpState(ops, bindingIds);
+	if (state) return state;
+	return approved ? 'ready' : 'blocked';
+}
+
+function latestOpState(ops: OpRecord[], bindingIds: string[]): AutomationPlanState | null {
+	const matched = [...ops].reverse().find((op) => bindingIds.includes(op.op));
+	if (!matched) return null;
+	return opStatusToPlanState(matched.status);
+}
+
+function stateForCommand(
+	ops: OpRecord[],
+	command: string,
+	approved: boolean
+): AutomationPlanState {
+	const normalizedCommand = normalizeCommand(command);
+	const matched = [...ops]
+		.reverse()
+		.find((op) => normalizedCommand.includes(normalizeCommand(op.op)) || normalizeCommand(op.command.join(' ')).includes(normalizedCommand.split(' ').slice(0, 5).join(' ')));
+	if (matched) return opStatusToPlanState(matched.status);
+	return approved ? 'ready' : 'blocked';
+}
+
+function opStatusToPlanState(status: OperationStatus): AutomationPlanState {
+	if (status === 'succeeded') return 'done';
+	if (status === 'failed') return 'failed';
+	if (status === 'running') return 'running';
+	return 'ready';
+}
+
+function normalizeCommand(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/x07-wasm/g, 'x07 wasm')
+		.replace(/[^a-z0-9]+/g, ' ')
+		.trim();
 }
 
 export function createIntentPacket(
