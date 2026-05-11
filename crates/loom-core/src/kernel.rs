@@ -2714,6 +2714,11 @@ fn render_agent_handoff_prompt(
         out.push_str(&format!("- {boundary}\n"));
     }
     out.push('\n');
+    out.push_str("## Automation Runbook\n\n");
+    for step in handoff_automation_runbook(session) {
+        out.push_str(&format!("- {step}\n"));
+    }
+    out.push('\n');
     out.push_str("## Allowed Verbs\n\n");
     for verb in &agent.allowed_verbs {
         out.push_str(&format!("- `{verb}`\n"));
@@ -2829,6 +2834,61 @@ fn handoff_execution_boundaries(session: &SessionSnapshot) -> Vec<String> {
         );
     }
     boundaries
+}
+
+fn handoff_automation_runbook(session: &SessionSnapshot) -> Vec<String> {
+    let haystack = handoff_haystack(session);
+    let has = |needle: &str| haystack.contains(needle);
+    let mut steps = vec![
+        "`intent.formalize` -> `.x07/studio/sessions/intent.json` (approved intent packet)."
+            .to_string(),
+        "`approve_spec` -> session contract lock (human gate; agents cannot self-approve)."
+            .to_string(),
+        "`project.init.xtal-pure` -> `x07.json` and XTAL project scaffold.".to_string(),
+    ];
+    match session.task_type {
+        TaskType::BrownfieldExtract => steps.push(
+            "`spec.extract` -> `target/xtal/spec.extract.report.json` before implementation writes."
+                .to_string(),
+        ),
+        TaskType::IncidentRepair => steps.extend([
+            "`xtal.ingest --normalize-only` -> canonical violation/repro evidence.".to_string(),
+            "`xtal.improve` -> incident-tied regression evidence before repair trust.".to_string(),
+        ]),
+        _ => steps.extend([
+            "`spec.scaffold` / `spec.check` -> reviewed x07spec artifacts.".to_string(),
+            "`tests.gen.write` -> generated XTAL tests from approved examples.".to_string(),
+        ]),
+    }
+    steps.extend([
+        "`impl.sync.write` / `impl.check` -> implementation changes inside approved write roots."
+            .to_string(),
+        "`xtal.verify` -> `target/xtal/verify/summary.json` before completion.".to_string(),
+        "`xtal.repair` is allowed only from failed verification or incident evidence.".to_string(),
+        "`xtal.certify` is evidence-only after trust review.".to_string(),
+    ]);
+    if has("x07-wasm") || has("wasm") || has("app profile") || has("app build") {
+        steps.extend([
+            "`x07-wasm app profile validate` -> app profile evidence.".to_string(),
+            "`x07-wasm app build` -> app bundle artifacts.".to_string(),
+            "`x07-wasm app test` -> deterministic trace replay evidence.".to_string(),
+        ]);
+    }
+    if has("release") || has("provenance") || has("deploy") || has("pack") {
+        steps.extend([
+            "`x07-wasm app pack` / `app verify` -> release pack evidence.".to_string(),
+            "`x07-wasm provenance attest` / `provenance verify` -> provenance evidence."
+                .to_string(),
+            "`x07lp deploy accept/run/query/status` -> visible local platform delivery evidence."
+                .to_string(),
+        ]);
+    }
+    if has("budget") || has("slo") || has("profile") {
+        steps.push(
+            "`x07-wasm slo eval` -> SLO and budget evidence before certification.".to_string(),
+        );
+    }
+    steps
 }
 
 fn handoff_haystack(session: &SessionSnapshot) -> String {
@@ -3694,7 +3754,12 @@ mod tests {
             .expect("create handoff");
 
         assert!(handoff.prompt.contains("## Execution Boundary"));
+        assert!(handoff.prompt.contains("## Automation Runbook"));
         assert!(handoff.prompt.contains("`x07 run`"));
+        assert!(handoff.prompt.contains("`approve_spec`"));
+        assert!(handoff.prompt.contains("agents cannot self-approve"));
+        assert!(handoff.prompt.contains("`xtal.verify`"));
+        assert!(handoff.prompt.contains("`x07-wasm app build`"));
         assert!(handoff.prompt.contains("WASM app"));
         assert!(handoff.prompt.contains("release/provenance"));
         assert!(handoff.prompt.contains("SLO/budget"));

@@ -342,3 +342,14 @@ This document records friction found while implementing the Studio web surface.
    blocked/ready/running/done/failed state before and after execution. This
    keeps automatic project creation explainable without weakening the XTAL
    approval gate.
+
+33. External agent prompts need the same runbook as the UI.
+
+   The browser now shows the approval-gated automation plan, but Codex and
+   Claude handoff prompts still only described guardrails, boundaries, tools,
+   write roots, and the required loop. Studio now renders an Automation Runbook
+   section into daemon-generated handoff prompts. It names the human approval
+   gate, project scaffold, spec/test or incident steps, implementation sync,
+   verification, repair/certification gates, and WASM/release/provenance/SLO
+   commands when the session implies those surfaces. This keeps supervised
+   coding agents aligned with the same plan that humans review.
