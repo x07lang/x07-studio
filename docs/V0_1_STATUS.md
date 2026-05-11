@@ -17,7 +17,7 @@
 - GUI exposes HTTP MCP first; stdio MCP is available through the daemon API already
 - provider probing is bounded and capability-oriented, not a full benchmark suite
 - session execution policy is enforced by the reducer and canonical binding catalog, not yet by a full path sandbox
-- the v0.1 shells expose lifecycle controls and artifact logs; graph overlays, voice/STT, and full visual patch review remain later UI layers
+- the v0.1 shells expose lifecycle controls, basic lineage graph projection, and artifact logs; voice/STT, richer graph overlays, and full visual patch review remain later UI layers
 - no compile-time proof cache yet
 - no voice/stt layer yet
 

@@ -86,13 +86,14 @@ records; humans approve or reject those checkpoints in the same visible worklog
 before Studio starts the supervised command. Approval checkpoints are one-shot:
 the next relevant handoff, plan, or run requires a fresh approval.
 
-The web intake starts with simple, intermediate, and complex x07 project briefs.
-They are intentionally editable form seeds, not hidden generators: a user or
-agent chooses difficulty, task type, title, input mode, and prompt text before a
-session is created.
+The web intake starts with simple, intermediate, advanced, complex, and expert
+x07 project briefs. They are intentionally editable form seeds, not hidden
+generators: a user or agent chooses difficulty, task type, title, input mode,
+and prompt text before a session is created.
 
 After spec approval, the daemon can run the visible XTAL workflow through
 `POST /v1/sessions/{session_id}/xtal/run`. That path derives binding variables
 from the intent packet, initializes an `xtal-pure` project only when `x07.json`
-is absent, scaffolds the spec, generates tests, synchronizes implementation, and
-runs `xtal.verify` while appending each command as an `OpRecord`.
+is absent, or seeds a supported `x07/docs/examples` project when the intent maps
+to one. It then runs the template's generation, arch/package, test, run, bundle,
+and verification commands while appending each command as an `OpRecord`.

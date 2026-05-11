@@ -111,3 +111,24 @@ This document records friction found while implementing the Studio web surface.
    `x07.arch.manifest@0.1.0` manifests while the current toolchain requires
    `0.3.0`; the source examples were updated and Studio now runs
    `arch.check.write_lock` as part of the seeded complex workflows.
+
+13. The visible worklog must fit the first viewport.
+
+   The ImageGen concept puts the command stream in the same first viewport as
+   the intent, lineage, agent, trust, and budget surfaces. A fresh browser
+   render showed the operation log below the fold on a 1728x972 desktop
+   viewport, which weakens the "all agent processes visible" requirement even
+   though the underlying records existed. The browser shell now uses a bounded
+   desktop grid with internal panel scrolling so the operation log remains
+   visible without hiding the XTAL room controls. The e2e test now asserts that
+   the operation log is in the viewport on initial load.
+
+14. Browser e2e tests must not accidentally bind to a live daemon.
+
+   The SvelteKit dev proxy used a fixed `http://127.0.0.1:7719` daemon origin.
+   When a live Loom daemon was running during QA, the Playwright test opened the
+   real connected surface instead of the deterministic demo projection and
+   failed on the expected status text. The Vite config now reads
+   `LOOM_DAEMON_ORIGIN`, and the Playwright web server points that origin at a
+   closed local port so demo-mode e2e coverage stays hermetic even when a live
+   daemon is active for separate rendered QA.

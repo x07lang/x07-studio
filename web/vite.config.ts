@@ -1,7 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, type Plugin } from 'vite';
 
-const loomDaemonOrigin = 'http://127.0.0.1:7719';
+const loomDaemonOrigin = process.env.LOOM_DAEMON_ORIGIN ?? 'http://127.0.0.1:7719';
 
 function loomHealthEndpoint(): Plugin {
 	return {

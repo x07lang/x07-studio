@@ -599,7 +599,7 @@
 				</select>
 			</div>
 			<div class="flow-select">
-				<label for="active-agent">Bindings</label>
+				<label for="active-agent">Agent Lane</label>
 				<select id="active-agent" bind:value={visibleAgent} aria-label="Active coding agent">
 					<option>Codex</option>
 					<option>Claude Code</option>

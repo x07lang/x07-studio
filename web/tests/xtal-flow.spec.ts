@@ -54,9 +54,12 @@ const projects = [
 ] as const;
 
 test('user can create increasingly difficult x07 project sessions and exercise controls', async ({ page }) => {
+	await page.setViewportSize({ width: 1728, height: 972 });
 	await page.goto('/');
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.getByText('Demo projection active')).toBeVisible();
+	await expect(page.getByLabel('Operation log')).toBeInViewport();
+	await expect(page.getByText('Agent Lane')).toBeVisible();
 
 	await page.getByRole('button', { name: 'Refresh Studio' }).click();
 	await expect(page.getByText('Demo projection active')).toBeVisible();

@@ -78,10 +78,23 @@ Run XTAL workflow request:
 POST /v1/sessions/{session_id}/xtal/run
 ```
 
-The daemon derives safe binding variables from the approved intent packet. If
-the workspace has no `x07.json`, it initializes an `xtal-pure` project, then
-runs visible operation records for `spec.scaffold`, `spec.check`,
+The daemon derives safe binding variables from the approved intent packet. For
+starter workspaces with no `x07.json`, it initializes an `xtal-pure` project,
+then records visible operation records for `spec.scaffold`, `spec.check`,
 `tests.gen.write`, `impl.sync.write`, `impl.check`, and `xtal.verify`.
+
+When the approved intent maps to a supported docs example, Studio seeds that
+example first and then runs its canonical workflow:
+
+- `workflow.graph`: `docs/examples/agent-gate/xtal/workflow-graph`
+- `workflow.lifecycle`: `docs/examples/readiness-checks/x07-sm-arch-contracts-smoke`
+- `gateway.core`: `docs/examples/apps/x07-api-gateway`
+- `db.guard`: `docs/examples/apps/x07dbguard`
+
+Each seeded workflow appends its `project.seed.*`, generation, arch/package,
+test, run, bundle, and verification records to the same session worklog. If
+`X07_VM_VZ_GUEST_BUNDLE` is not declared, sandbox examples use the explicit
+OS-backed sandbox bindings with `--i-accept-weaker-isolation`.
 
 ## Providers
 
