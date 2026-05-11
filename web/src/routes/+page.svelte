@@ -11,6 +11,7 @@
 	import {
 		agentLanes,
 		agentReadiness,
+		buildAgentHandoffReview,
 		buildApprovalLedger,
 		buildAutomationPlan,
 		buildEvidenceCoverage,
@@ -30,6 +31,7 @@
 		rooms,
 		workflowChecklist,
 		type ApprovalLoopState,
+		type AgentHandoff,
 		type AgentProfile,
 		type ArtifactPreviewResponse,
 		type BindingDescriptor,
@@ -68,6 +70,7 @@
 	let providerProfileId = '';
 	let statusLine = 'Starting Studio surface';
 	let handoffStatus = 'No agent handoff generated';
+	let latestAgentHandoff: AgentHandoff | null = null;
 	let busy = false;
 	let approvalState: ApprovalLoopState = 'drafting';
 	let selectedAgentId = 'openai-codex';
@@ -247,6 +250,7 @@
 	$: evidenceCoverage = buildEvidenceCoverage(selected, selectedProjectTemplate, approvalState);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
 	$: platformBridge = buildPlatformBridge(selected, selectedProjectTemplate);
+	$: agentHandoffReview = buildAgentHandoffReview(selected, selectedAgentId, latestAgentHandoff);
 	$: draftWitnessPreview = previewIntentWitnesses(promptText, inputMode);
 	$: canApproveSpec =
 		approvalState !== 'changes' && (selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft');
@@ -707,6 +711,23 @@
 		statusLine = `Inspecting platform bridge evidence: ${op.op}`;
 	}
 
+	function inspectHandoffSource() {
+		if (!agentHandoffReview.opId) {
+			selectedRoom = 'providers';
+			statusLine = agentHandoffReview.status;
+			return;
+		}
+		const op = allOps.find((candidate) => candidate.id === agentHandoffReview.opId);
+		if (!op) {
+			selectedRoom = 'providers';
+			statusLine = agentHandoffReview.status;
+			return;
+		}
+		selectOperation(op);
+		selectedRoom = 'providers';
+		statusLine = `Inspecting agent handoff evidence: ${op.op}`;
+	}
+
 	function inspectCounterexample() {
 		if (!counterexampleTheater.opId) return;
 		selectedOpId = counterexampleTheater.opId;
@@ -917,6 +938,7 @@
 		try {
 			const response = await api.createAgentHandoff(selected, agentId);
 			await replaceSession(response.session);
+			latestAgentHandoff = response.handoff;
 			handoffStatus = `${response.handoff.agent_label} handoff saved to ${response.handoff.prompt_path}`;
 			statusLine = handoffStatus;
 		} catch (error) {
@@ -945,6 +967,7 @@
 			}
 			const response = await pending;
 			await replaceSession(response.session);
+			latestAgentHandoff = response.handoff;
 			const label = response.handoff.agent_label;
 			if (response.op.op.startsWith('agent.approval.') && response.op.status === 'pending') {
 				handoffStatus = `${label} approval required before supervised command`;
@@ -1591,6 +1614,60 @@
 					{/each}
 				</div>
 				<p class="handoff-status">{handoffStatus}</p>
+				<div class="handoff-contract" aria-label="Agent handoff contract">
+					<div class="handoff-contract-head">
+						<div>
+							<span>Handoff Contract</span>
+							<strong>{agentHandoffReview.agentLabel}</strong>
+						</div>
+						<button class="segmented-button" type="button" on:click={inspectHandoffSource}>
+							Inspect Handoff
+						</button>
+					</div>
+					<div class="handoff-contract-grid">
+						<div>
+							<span>Status</span>
+							<strong>{agentHandoffReview.status}</strong>
+						</div>
+						<div>
+							<span>Prompt</span>
+							<code>{agentHandoffReview.promptPath}</code>
+						</div>
+						<div>
+							<span>Approval</span>
+							<strong>{agentHandoffReview.approval}</strong>
+						</div>
+						<div>
+							<span>Command</span>
+							<code>{agentHandoffReview.command}</code>
+						</div>
+					</div>
+					<div class="handoff-section">
+						<span>Execution Boundary</span>
+						{#each agentHandoffReview.boundaries.slice(0, 4) as boundary}
+							<small>{boundary}</small>
+						{/each}
+					</div>
+					<div class="handoff-section">
+						<span>Automation Runbook</span>
+						{#each agentHandoffReview.runbook.slice(0, 5) as step}
+							<small>{step}</small>
+						{/each}
+					</div>
+					<div class="handoff-chip-row" aria-label="Handoff allowed surfaces">
+						{#each agentHandoffReview.allowedVerbs.slice(0, 5) as verb}
+							<code>{verb}</code>
+						{/each}
+						{#each agentHandoffReview.mcpTools.slice(0, 3) as tool}
+							<code>{tool}</code>
+						{/each}
+						{#each agentHandoffReview.writeRoots.slice(0, 3) as root}
+							<code>{root}</code>
+						{/each}
+					</div>
+					<pre aria-label="Handoff prompt excerpt">{agentHandoffReview.promptExcerpt}</pre>
+					<p>{agentHandoffReview.eventProtocol}</p>
+				</div>
 				{#if pendingApprovals.length}
 					<div class="approval-queue" aria-label="Agent approval checkpoints">
 						{#each pendingApprovals as approval}

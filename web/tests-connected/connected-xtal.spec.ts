@@ -96,6 +96,10 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await page.getByRole('tab', { name: 'Agents' }).click();
 	await page.getByRole('button', { name: 'Generate Claude Code Handoff' }).click();
 	await expect(page.locator('footer').getByText('Claude Code handoff saved to')).toBeVisible();
+	await expect(page.getByLabel('Agent handoff contract')).toContainText('Claude Code');
+	await expect(page.getByLabel('Agent handoff contract')).toContainText('Execution Boundary');
+	await expect(page.getByLabel('Agent handoff contract')).toContainText('x07 run');
+	await expect(page.getByLabel('Agent handoff contract')).toContainText('x07.search_v1');
 	await page.getByRole('button', { name: 'Plan Claude Code Run' }).click();
 	await expect(page.locator('footer').getByText('Claude Code supervised launch plan recorded')).toBeVisible();
 	await page.getByRole('button', { name: 'Run Claude Code Command' }).click();

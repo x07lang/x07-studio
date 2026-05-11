@@ -18,6 +18,7 @@
 - brownfield approval path that runs `spec.extract` before session contract lock
 - approval ledger that blocks stale approvals after human revision requests until the agent repolishes intent
 - session doctrine surfacing for canonical x07 docs, MCP tools, allowed verbs, and handoff prompt context
+- reviewable Codex/Claude handoff contract panel showing command, prompt path, approval gate, execution boundaries, automation runbook, allowed verbs, MCP tools, write roots, prompt excerpt, and agent event protocol
 - bounded session docs preview for `x07/docs/...` refs, including file snippets and directory indexes
 - agent handoff execution-boundary prompts for x07 run, solve-rr, sandbox/run-os, WASM app, release/provenance, and SLO/budget gates
 - MCP HTTP transport with initialize + session header handling

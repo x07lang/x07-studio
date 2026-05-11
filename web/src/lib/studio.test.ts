@@ -5,6 +5,7 @@ import { buildCounterexampleTheater, buildPatchReview, buildReviewSignals } from
 import {
 	appendDemoOp,
 	agentReadiness,
+	buildAgentHandoffReview,
 	buildApprovalLedger,
 	buildAutomationPlan,
 	buildEvidenceCoverage,
@@ -548,6 +549,49 @@ describe('x07 Studio XTAL web model', () => {
 		expect(session.op_log[0].op).toBe('agent.supervise.openai-codex');
 		expect(session.op_log[0].command[0]).toBe('codex');
 		expect(session.op_log[0].artifacts[0]).toContain('handoffs');
+	});
+
+	it('extracts a reviewable agent handoff contract', () => {
+		const session = demoSession();
+		const handoff = {
+			schema_version: 'x07.studio.agent_handoff@0.1.0' as const,
+			session_id: session.session_id,
+			agent_id: 'openai-codex',
+			agent_label: 'OpenAI Codex',
+			command: ['codex', '.x07/studio/handoffs/demo.md'],
+			prompt_path: '.x07/studio/handoffs/demo.md',
+			prompt: [
+				'# x07 Studio Agent Handoff',
+				'',
+				'## Execution Boundary',
+				'',
+				'- Use `x07 run` as the default execution front door.',
+				'- SLO/budget: preserve budget evidence before certification.',
+				'',
+				'## Automation Runbook',
+				'',
+				'- `approve_spec` -> session contract lock.',
+				'- `xtal.verify` -> verify summary.',
+				'',
+				'## Agent Event Protocol',
+				'',
+				'Emit `x07.studio.agent_event@0.1.0` JSONL milestones.'
+			].join('\n'),
+			allowed_verbs: ['intent.formalize', 'xtal.verify'],
+			mcp_tools: ['x07.search_v1'],
+			write_roots: ['spec/', 'src/'],
+			approval_required: true,
+			artifacts: ['.x07/studio/handoffs/demo.md'],
+			created_at: 'now'
+		};
+
+		const review = buildAgentHandoffReview(session, 'openai-codex', handoff);
+		expect(review.agentLabel).toBe('OpenAI Codex');
+		expect(review.command).toBe('codex .x07/studio/handoffs/demo.md');
+		expect(review.approval).toBe('Human checkpoint before execute');
+		expect(review.boundaries).toContain('Use `x07 run` as the default execution front door.');
+		expect(review.runbook).toContain('`xtal.verify` -> verify summary.');
+		expect(review.eventProtocol).toContain('x07.studio.agent_event@0.1.0');
 	});
 
 	it('models pending human approval checkpoints', () => {

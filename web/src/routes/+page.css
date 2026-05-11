@@ -85,6 +85,9 @@
 .platform-lane em,
 .provider span,
 .provider small,
+.handoff-contract span,
+.handoff-contract small,
+.handoff-contract p,
 .worklog small,
 .spec-grid span,
 .spec-grid small,
@@ -1650,6 +1653,109 @@ textarea {
 	overflow-wrap: anywhere;
 }
 
+.handoff-contract {
+	display: grid;
+	gap: 9px;
+	margin-top: 10px;
+	border: 1px solid rgba(85, 214, 231, 0.22);
+	border-radius: var(--radius);
+	background: rgba(85, 214, 231, 0.045);
+	padding: 10px;
+	min-width: 0;
+}
+
+.handoff-contract-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.handoff-contract-head span,
+.handoff-contract-grid span,
+.handoff-section > span {
+	display: block;
+	font-size: 10px;
+	font-weight: 800;
+	text-transform: uppercase;
+}
+
+.handoff-contract-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.handoff-contract-grid > div,
+.handoff-section {
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: var(--radius);
+	background: rgba(255, 255, 255, 0.035);
+	padding: 8px;
+	min-width: 0;
+}
+
+.handoff-contract strong,
+.handoff-contract code,
+.handoff-contract small,
+.handoff-contract p,
+.handoff-contract pre {
+	overflow-wrap: anywhere;
+}
+
+.handoff-contract strong {
+	font-size: 12px;
+}
+
+.handoff-contract code {
+	color: var(--cyan);
+	font-size: 11px;
+}
+
+.handoff-section {
+	display: grid;
+	gap: 5px;
+}
+
+.handoff-section small {
+	color: var(--text);
+	font-size: 11px;
+	line-height: 1.35;
+}
+
+.handoff-chip-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.handoff-chip-row code {
+	border: 1px solid rgba(85, 214, 231, 0.2);
+	border-radius: var(--radius);
+	background: rgba(4, 10, 14, 0.3);
+	padding: 4px 6px;
+}
+
+.handoff-contract pre {
+	max-height: 138px;
+	overflow: auto;
+	margin: 0;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: var(--radius);
+	background: rgba(4, 6, 9, 0.45);
+	padding: 8px;
+	color: var(--text);
+	font-size: 11px;
+	line-height: 1.4;
+	white-space: pre-wrap;
+}
+
+.handoff-contract p {
+	margin: 0;
+	font-size: 11px;
+	line-height: 1.35;
+}
+
 .approval-queue {
 	display: grid;
 	gap: 8px;
@@ -2739,6 +2845,7 @@ textarea {
 	.terminal-log button,
 	.op-inspector dl,
 	.artifact-list,
+	.handoff-contract-grid,
 	.patch-diff {
 		grid-template-columns: 1fr;
 		gap: 3px;

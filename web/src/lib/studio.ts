@@ -269,6 +269,23 @@ export interface AgentHandoff {
 	created_at: string;
 }
 
+export interface AgentHandoffReview {
+	agentLabel: string;
+	status: string;
+	command: string;
+	promptPath: string;
+	approval: string;
+	source: string;
+	allowedVerbs: string[];
+	mcpTools: string[];
+	writeRoots: string[];
+	boundaries: string[];
+	runbook: string[];
+	eventProtocol: string;
+	promptExcerpt: string;
+	opId?: string | null;
+}
+
 export interface AgentHandoffResponse {
 	handoff: AgentHandoff;
 	session: SessionSnapshot;
@@ -869,6 +886,134 @@ export function agentReadiness(
 function componentIdForAgent(agentId: string): string {
 	if (agentId === 'openai-codex') return 'codex';
 	return agentId;
+}
+
+export function buildAgentHandoffReview(
+	session: SessionSnapshot | null | undefined,
+	agentId: string,
+	latestHandoff: AgentHandoff | null | undefined
+): AgentHandoffReview {
+	const ops = session?.op_log ?? [];
+	const matchingHandoff =
+		latestHandoff &&
+		latestHandoff.session_id === session?.session_id &&
+		(!agentId || latestHandoff.agent_id === agentId)
+			? latestHandoff
+			: null;
+	const sourceOp = latestAgentHandoffOp(ops, agentId);
+	const handoff = matchingHandoff ?? handoffFromOp(sourceOp);
+	if (!handoff) {
+		return {
+			agentLabel: agentId === 'claude-code' ? 'Claude Code' : 'OpenAI Codex',
+			status: 'Not generated',
+			command: 'Generate a handoff before supervised execution',
+			promptPath: '.x07/studio/handoffs/',
+			approval: 'Human checkpoint before execute',
+			source: sourceOp?.op ?? 'No handoff operation recorded',
+			allowedVerbs: session?.allowed_verbs.slice(0, 6) ?? [],
+			mcpTools: session?.contract?.global_doctrine.mcp_tools.slice(0, 5) ?? canonicalMcpTools,
+			writeRoots: session?.contract?.project_doctrine.write_policy.paths ?? ['spec/', 'src/', 'tests/'],
+			boundaries: ['Generate a handoff to compile execution boundaries from the approved session.'],
+			runbook: ['Approve the spec before supervised agent execution.'],
+			eventProtocol: 'agent_event JSONL is advertised after handoff generation',
+			promptExcerpt: 'No handoff prompt generated yet.',
+			opId: sourceOp?.id ?? null
+		};
+	}
+	const boundaries = markdownSectionLines(handoff.prompt, 'Execution Boundary');
+	const runbook = markdownSectionLines(handoff.prompt, 'Automation Runbook');
+	const eventProtocol = markdownSectionText(handoff.prompt, 'Agent Event Protocol')
+		.split('\n')
+		.map((line) => line.trim())
+		.find((line) => line.includes('kind') || line.includes('agent_event')) ??
+		'Emit x07.studio.agent_event@0.1.0 JSONL milestones.';
+	return {
+		agentLabel: handoff.agent_label,
+		status: sourceOp ? `${sourceOp.op} / ${sourceOp.status}` : 'Handoff response ready',
+		command: handoff.command.join(' '),
+		promptPath: handoff.prompt_path,
+		approval: handoff.approval_required
+			? 'Human checkpoint before execute'
+			: 'Execution allowed by profile',
+		source: sourceOp?.op ?? 'latest handoff response',
+		allowedVerbs: handoff.allowed_verbs,
+		mcpTools: handoff.mcp_tools,
+		writeRoots: handoff.write_roots,
+		boundaries: boundaries.length ? boundaries : ['solve-pure default lane; widening requires approval.'],
+		runbook: runbook.length ? runbook : ['Use x07 docs/MCP tools before selecting commands.'],
+		eventProtocol,
+		promptExcerpt: handoff.prompt.split('\n').slice(0, 10).join('\n').trim(),
+		opId: sourceOp?.id ?? null
+	};
+}
+
+function latestAgentHandoffOp(ops: OpRecord[], agentId: string): OpRecord | null {
+	const agentNeedles = agentId ? [`agent.handoff.${agentId}`, `agent.supervise.${agentId}`, `agent.run.${agentId}`] : [];
+	const genericNeedles = ['agent.handoff.', 'agent.supervise.', 'agent.run.'];
+	return latestMatchingOp(ops, agentNeedles.length ? agentNeedles : genericNeedles);
+}
+
+function handoffFromOp(op: OpRecord | null): AgentHandoff | null {
+	const report = asPlainRecord(op?.report_json);
+	if (!report) return null;
+	const direct = parseAgentHandoff(report);
+	if (direct) return direct;
+	const nested = asPlainRecord(report.handoff);
+	return parseAgentHandoff(nested);
+}
+
+function parseAgentHandoff(value: Record<string, unknown> | null): AgentHandoff | null {
+	if (!value || value.schema_version !== 'x07.studio.agent_handoff@0.1.0') return null;
+	const command = stringArray(value.command);
+	const allowedVerbs = stringArray(value.allowed_verbs);
+	const mcpTools = stringArray(value.mcp_tools);
+	const writeRoots = stringArray(value.write_roots);
+	const artifacts = stringArray(value.artifacts);
+	if (!command.length || !allowedVerbs.length) return null;
+	return {
+		schema_version: 'x07.studio.agent_handoff@0.1.0',
+		session_id: String(value.session_id ?? ''),
+		agent_id: String(value.agent_id ?? ''),
+		agent_label: String(value.agent_label ?? value.agent_id ?? 'Agent'),
+		command,
+		prompt_path: String(value.prompt_path ?? command.at(-1) ?? '.x07/studio/handoffs/'),
+		prompt: String(value.prompt ?? ''),
+		allowed_verbs: allowedVerbs,
+		mcp_tools: mcpTools,
+		write_roots: writeRoots,
+		approval_required: Boolean(value.approval_required),
+		artifacts,
+		created_at: String(value.created_at ?? '')
+	};
+}
+
+function markdownSectionLines(markdown: string, heading: string): string[] {
+	return markdownSectionText(markdown, heading)
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line.startsWith('- '))
+		.map((line) => line.slice(2).trim())
+		.filter(Boolean)
+		.slice(0, 6);
+}
+
+function markdownSectionText(markdown: string, heading: string): string {
+	const marker = `## ${heading}`;
+	const start = markdown.indexOf(marker);
+	if (start < 0) return '';
+	const rest = markdown.slice(start + marker.length);
+	const next = rest.indexOf('\n## ');
+	return (next >= 0 ? rest.slice(0, next) : rest).trim();
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === 'object' && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function stringArray(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
 const ONBOARDING_BOOTSTRAP_COMMAND =

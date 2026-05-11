@@ -482,3 +482,16 @@ This document records friction found while implementing the Studio web surface.
    integration path explicit: `x07-wasm app` evidence feeds provenance and
    deploy planning, `x07lp` owns local delivery state, and incidents return to
    `xtal.ingest` / `xtal.improve` instead of becoming ad hoc follow-up work.
+
+46. Agent handoffs must be reviewable before execution.
+
+   Codex and Claude Code integration already generated session-contract
+   handoff prompts and supervised commands, but the browser mostly surfaced the
+   saved prompt path. That hid the actual operating doctrine from the human who
+   approves the external agent run. The Agents room now derives a handoff
+   contract view from the same handoff response or recorded `agent.*` operation:
+   command, prompt path, approval gate, execution boundaries, automation
+   runbook, allowed verbs, MCP tools, write roots, prompt excerpt, and
+   `x07.studio.agent_event@0.1.0` protocol are visible before execution. This
+   keeps Codex/Claude integration aligned with XTAL's rule that agents act
+   through finite, reviewable lifecycle verbs instead of an opaque chat prompt.
