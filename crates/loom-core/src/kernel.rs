@@ -1994,6 +1994,17 @@ fn render_agent_handoff_prompt(
     out.push_str(
         "- Record every x07 command and artifact path so Studio can show the worklog.\n\n",
     );
+    out.push_str("## Execution Boundary\n\n");
+    out.push_str(
+        "- Use `x07 run` as the default execution front door for runnable X07 programs.\n",
+    );
+    out.push_str(
+        "- Keep solve-pure deterministic by default; OS, sandbox, network, release, provenance, and budget widening require approval.\n",
+    );
+    for boundary in handoff_execution_boundaries(session) {
+        out.push_str(&format!("- {boundary}\n"));
+    }
+    out.push('\n');
     out.push_str("## Allowed Verbs\n\n");
     for verb in &agent.allowed_verbs {
         out.push_str(&format!("- `{verb}`\n"));
@@ -2059,6 +2070,91 @@ fn render_agent_handoff_prompt(
     out.push_str("3. Produce or update artifacts only inside the permitted roots.\n");
     out.push_str("4. Run the canonical XTAL checks before reporting completion.\n");
     out
+}
+
+fn handoff_execution_boundaries(session: &SessionSnapshot) -> Vec<String> {
+    let haystack = handoff_haystack(session);
+    let has = |needle: &str| haystack.contains(needle);
+    let mut boundaries = vec![
+        "solve-pure: default lane for spec, generated tests, implementation checks, and verification."
+            .to_string(),
+    ];
+    if has("solve-rr") || has("/rr/") || has("cassette") || has("replay") {
+        boundaries.push(
+            "solve-rr: replay fixtures and cassettes must be recorded as evidence before trust review."
+                .to_string(),
+        );
+    }
+    if has("sandbox") || has("run-os") || has("dbguard") || has("migration") {
+        boundaries.push(
+            "sandbox/run-os: OS, filesystem, database, and network capability changes require human approval."
+                .to_string(),
+        );
+    }
+    if has("x07-wasm") || has("wasm") || has("app profile") || has("app build") {
+        boundaries.push(
+            "WASM app: profile validation, trace replay, pack verification, and app artifacts must stay visible."
+                .to_string(),
+        );
+    }
+    if has("release") || has("provenance") || has("deploy") || has("pack") {
+        boundaries.push(
+            "release/provenance: pack, provenance, deploy, and trust evidence are separate approval gates."
+                .to_string(),
+        );
+    }
+    if has("budget") || has("slo") || has("profile") {
+        boundaries.push(
+            "SLO/budget: budget profile and SLO evidence must be preserved before certification."
+                .to_string(),
+        );
+    }
+    boundaries
+}
+
+fn handoff_haystack(session: &SessionSnapshot) -> String {
+    let mut parts = Vec::new();
+    parts.push(format!("{:?}", session.task_type));
+    parts.push(format!("{:?}", session.phase));
+    if let Some(intent) = &session.intent {
+        for target in &intent.targets {
+            parts.push(target.module_id.clone());
+            if let Some(entry) = &target.entry {
+                parts.push(entry.clone());
+            }
+        }
+        parts.extend(intent.examples.iter().cloned());
+        parts.extend(intent.constraints.iter().cloned());
+        parts.extend(intent.policy_implications.iter().cloned());
+        parts.extend(intent.ambiguities.iter().cloned());
+        parts.extend(intent.assumptions.iter().cloned());
+        for witness in &intent.witnesses {
+            parts.push(witness.text.clone());
+        }
+        match &intent.source {
+            IntentSource::Text { raw } | IntentSource::Spec { raw } => parts.push(raw.clone()),
+            IntentSource::Voice { transcript } => parts.push(transcript.clone()),
+            IntentSource::Incident { path } => parts.push(path.clone()),
+        }
+    }
+    if let Some(contract) = &session.contract {
+        parts.extend(contract.global_doctrine.doc_refs.iter().cloned());
+        parts.extend(contract.global_doctrine.mcp_tools.iter().cloned());
+        parts.push(contract.project_doctrine.xtal_manifest.clone());
+        parts.push(contract.project_doctrine.agent_md.clone());
+        parts.extend(contract.project_doctrine.write_policy.paths.iter().cloned());
+        parts.extend(contract.task_doctrine.focus_paths.iter().cloned());
+        parts.extend(contract.task_doctrine.baseline_refs.iter().cloned());
+    }
+    for op in &session.op_log {
+        parts.push(op.op.clone());
+        parts.extend(op.command.iter().cloned());
+        parts.extend(op.artifacts.iter().cloned());
+        if let Some(notes) = &op.notes {
+            parts.push(notes.clone());
+        }
+    }
+    parts.join(" ").to_ascii_lowercase()
 }
 
 fn agent_run_is_approved(session: &SessionSnapshot, agent_id: &str) -> bool {
@@ -2551,6 +2647,7 @@ mod tests {
         AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
         OperationStatus, TaskType, Witness, WitnessKind,
     };
+    use loom_types::ops::SessionEvent;
     use loom_types::session::SessionSnapshot;
 
     use super::{
@@ -2708,6 +2805,41 @@ mod tests {
             entry_from_spec_operation("toy.sort", "op.sort_u8_asc.v1"),
             "sort_u8_asc"
         );
+    }
+
+    #[test]
+    fn agent_handoff_prompt_names_world_and_budget_boundaries() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("atlas app", TaskType::NewBehavior)
+            .expect("create session");
+        kernel
+            .formalize_intent(
+                session.session_id,
+                "Use docs/examples/wasm_showcases/x07_atlas with x07-wasm app profile validation, trace replay, release pack verification, provenance, deploy planning, and SLO evidence.",
+                IntentInputMode::Text,
+                &[],
+            )
+            .expect("formalize intent");
+        kernel
+            .dispatch_event(session.session_id, SessionEvent::DraftSpec)
+            .expect("draft spec");
+        kernel
+            .dispatch_event(session.session_id, SessionEvent::ApproveSpec)
+            .expect("approve spec");
+
+        let (handoff, _session) = kernel
+            .create_agent_handoff(session.session_id, "openai-codex")
+            .expect("create handoff");
+
+        assert!(handoff.prompt.contains("## Execution Boundary"));
+        assert!(handoff.prompt.contains("`x07 run`"));
+        assert!(handoff.prompt.contains("WASM app"));
+        assert!(handoff.prompt.contains("release/provenance"));
+        assert!(handoff.prompt.contains("SLO/budget"));
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[tokio::test]

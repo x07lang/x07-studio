@@ -303,6 +303,12 @@ failed status. While streaming, the kernel also appends bounded
 `agent.event.*` records when output lines report artifact paths, diagnostics,
 write activity, or approval/policy requests.
 
+Generated handoff prompts include the approved intent, session contract,
+allowed verbs, MCP tools, write roots, required XTAL loop, and an execution
+boundary section. That boundary names `x07 run` as the default execution front
+door and calls out solve-rr, sandbox/run-os, WASM app, release/provenance, and
+SLO/budget lanes when the session evidence implies those gates.
+
 If the agent profile has `approval_required: true`, `mode: "execute"` first
 records a pending `agent.approval.*` checkpoint unless the latest relevant
 agent operation is a succeeded approval. A later handoff, plan, or run consumes

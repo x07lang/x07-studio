@@ -124,6 +124,12 @@ Profiles marked `approval_required` are gated by pending `agent.approval.*`
 records; humans approve or reject those checkpoints in the same visible worklog
 before Studio starts the supervised command. Approval checkpoints are one-shot:
 the next relevant handoff, plan, or run requires a fresh approval.
+The handoff prompt is the concrete operating contract that Studio gives to
+coding agents. It includes the approved intent, session contract, allowed
+verbs, MCP tools, write roots, required XTAL loop, and an execution-boundary
+section that names `x07 run` as the default front door while calling out
+solve-rr, sandbox/run-os, WASM app, release/provenance, and SLO/budget gates
+when present.
 
 The web intake starts with simple, intermediate, advanced, complex, and expert
 x07 project briefs. They are intentionally editable form seeds, not hidden

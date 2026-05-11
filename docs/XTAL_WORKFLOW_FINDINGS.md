@@ -256,3 +256,14 @@ This document records friction found while implementing the Studio web surface.
    `Approve Spec` stays disabled until `Polish Intent` runs again, and the
    Intent room shows an approval ledger with the input source, polish step,
    revision notes, human decision, and write-contract lock.
+
+25. Agent handoffs need the same execution boundaries that humans see.
+
+   The right rail now shows world and budget gates, but the daemon-generated
+   Codex/Claude handoff prompt still only listed generic guardrails, verbs,
+   tools, write roots, contract, and intent. That left complex projects at risk
+   of asking an agent to infer solve-rr, sandbox/run-os, WASM app,
+   release/provenance, or SLO/budget boundaries from prose. The handoff prompt
+   now includes an explicit Execution Boundary section: `x07 run` is the default
+   execution front door, solve-pure is the default lane, and any detected
+   capability or release/budget widening is named as an approval-gated surface.
