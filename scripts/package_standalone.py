@@ -199,6 +199,9 @@ source checkouts when they are available, refreshes `defaults.env`, starts
 `http://{manifest["web_addr"]}` or the next free local port, and proxies
 `/v1/**` to the daemon. The native desktop shell is available at
 `bin/{binary_name("x07-studio")}`.
+It runs the same packaged component bootstrap before starting its embedded
+daemon unless launched with `--skip-bootstrap`; pass `--no-install-missing` for
+detect-only first-run setup.
 The generated `defaults.env` sets a first-run workspace at
 `~/x07-studio-workspace`, local daemon/web addresses, and any bundled component
 paths.

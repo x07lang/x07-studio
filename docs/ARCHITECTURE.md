@@ -25,16 +25,21 @@ separate product surface:
   and bundled component paths
 
 The native desktop shell starts an embedded local daemon by default, so first
-launch works without a manual background process. The packaged web launcher
-starts `loom-daemon`, serves the built Svelte app on the preferred local port or
-the next free port, and proxies `/v1/**` to the daemon. Both surfaces consume the
-daemon health component report so onboarding can show whether `x07`,
+launch works without a manual background process. Before that daemon starts, the
+native shell runs the packaged component bootstrap when available so
+`defaults.env` is refreshed with bundled or locally built component paths. The
+packaged web launcher uses the same bootstrap, starts `loom-daemon`, serves the
+built Svelte app on the preferred local port or the next free port, and proxies
+`/v1/**` to the daemon. Both surfaces consume the daemon health component report
+so onboarding can show whether `x07`,
 `x07-wasm`, `x07lp`, Codex, and Claude Code are available, missing, or optional.
 The browser and native egui shells render a setup plan from that same health
 payload: first-run defaults, bootstrap command, resolved component paths, and
 required/optional install work. The launcher refreshes component paths without
-discarding user-edited onboarding defaults, and the daemon reports the runtime
-address selected by the launcher or embedded native shell.
+discarding user-edited onboarding defaults; the native shell exposes
+`--skip-bootstrap` and `--no-install-missing` for controlled first-run behavior.
+The daemon reports the runtime address selected by the launcher or embedded
+native shell.
 
 ## Runtime shape
 

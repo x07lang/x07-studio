@@ -22,12 +22,14 @@
 - MCP stdio transport with newline-delimited JSON-RPC
 - daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, existing specs, incident notes, revision notes, and visible intent operation records
 - browser voice transcript capture that appends spoken witnesses into the same approval-gated intent path, with paste-transcript fallback when Web Speech is unavailable
+- draft witness preview that classifies raw written/spoken/spec/incident input before polish as desired behavior, forbidden behavior, policy requirement, or incident evidence
 - opt-in provider-backed intent polish that records model suggestions as review evidence while keeping deterministic intent generation as the fallback
 - daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs
 - browser and native egui onboarding plans render first-run defaults, bootstrap command, resolved component sources, and required/optional setup work from the daemon health report
 - daemon-side coding-agent readiness checks reject disabled profiles and missing execute commands even when clients bypass the browser controls
 - standalone packaging scripts assemble the daemon, native desktop shell, Forge shell, and static Svelte web app into a portable bundle
 - standalone launcher refreshes setup defaults, selects free local daemon/web ports, and reports the actual runtime addresses through daemon health
+- native desktop shell runs packaged first-run component bootstrap before starting its embedded daemon, with skip/detect-only flags for controlled onboarding
 - standalone CI validates bundle manifest, static web app, launcher scripts, first-run defaults, bundled `x07-wasm` wiring, and live launcher startup behind occupied default ports
 - connected browser E2E starts a real Loom daemon and runs the web app through simple XTAL and Atlas-level x07-wasm/platform sessions without falling back to demo mode
 - OpenAI-compatible provider probing through `/models`, `/responses`, and `/chat/completions`

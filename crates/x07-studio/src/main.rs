@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path as StdPath, PathBuf};
+use std::process::Command;
 
 use clap::Parser;
 use eframe::egui;
@@ -45,10 +47,26 @@ struct Cli {
 
     #[arg(long, help = "Load x07 Studio component defaults from this env file")]
     defaults_env: Option<PathBuf>,
+
+    #[arg(long, help = "Skip packaged first-run component bootstrap")]
+    skip_bootstrap: bool,
+
+    #[arg(
+        long,
+        help = "Detect components without building missing sibling source checkouts"
+    )]
+    no_install_missing: bool,
 }
 
 fn main() -> eframe::Result<()> {
     let cli = Cli::parse();
+    if !cli.skip_bootstrap {
+        if let Err(error) =
+            prepare_first_run_defaults(cli.defaults_env.as_deref(), !cli.no_install_missing)
+        {
+            eprintln!("could not refresh x07 Studio first-run defaults: {error}");
+        }
+    }
     if let Err(error) = load_first_defaults_env(cli.defaults_env.as_deref()) {
         eprintln!("could not load x07 Studio defaults: {error}");
     }
@@ -710,6 +728,98 @@ fn load_first_defaults_env(explicit: Option<&StdPath>) -> anyhow::Result<Option<
     Ok(None)
 }
 
+fn prepare_first_run_defaults(
+    explicit_defaults: Option<&StdPath>,
+    install_missing: bool,
+) -> anyhow::Result<Option<PathBuf>> {
+    let Some(bundle_root) = standalone_bundle_root() else {
+        return Ok(None);
+    };
+    let script = bundle_root.join("scripts/bootstrap_components.py");
+    if !script.is_file() {
+        return Ok(None);
+    }
+    let defaults_path = explicit_defaults
+        .map(PathBuf::from)
+        .unwrap_or_else(|| bundle_root.join("defaults.env"));
+    run_bootstrap_script(&bundle_root, &defaults_path, install_missing)?;
+    Ok(Some(defaults_path))
+}
+
+fn standalone_bundle_root() -> Option<PathBuf> {
+    let current_exe = std::env::current_exe().ok()?;
+    standalone_bundle_root_from_exe(&current_exe)
+}
+
+fn standalone_bundle_root_from_exe(current_exe: &StdPath) -> Option<PathBuf> {
+    let bundle_root = current_exe.parent()?.parent()?.to_path_buf();
+    if bundle_root
+        .join("scripts/bootstrap_components.py")
+        .is_file()
+    {
+        Some(bundle_root)
+    } else {
+        None
+    }
+}
+
+fn run_bootstrap_script(
+    bundle_root: &StdPath,
+    defaults_path: &StdPath,
+    install_missing: bool,
+) -> anyhow::Result<()> {
+    let mut last_error = None;
+    for python in ["python3", "python"] {
+        let output = Command::new(python)
+            .args(bootstrap_args(bundle_root, defaults_path, install_missing))
+            .output();
+        match output {
+            Ok(output) if output.status.success() => {
+                if !output.stdout.is_empty() {
+                    eprintln!("{}", String::from_utf8_lossy(&output.stdout).trim_end());
+                }
+                if !output.stderr.is_empty() {
+                    eprintln!("{}", String::from_utf8_lossy(&output.stderr).trim_end());
+                }
+                return Ok(());
+            }
+            Ok(output) => {
+                last_error = Some(anyhow::anyhow!(
+                    "{python} exited with {}: {}{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout).trim(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            Err(error) => {
+                last_error = Some(anyhow::anyhow!("{python}: {error}"));
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no Python interpreter attempted")))
+}
+
+fn bootstrap_args(
+    bundle_root: &StdPath,
+    defaults_path: &StdPath,
+    install_missing: bool,
+) -> Vec<OsString> {
+    let mut args = vec![
+        bundle_root
+            .join("scripts/bootstrap_components.py")
+            .into_os_string(),
+        "--repo-root".into(),
+        bundle_root.as_os_str().to_os_string(),
+        "--write-env".into(),
+        defaults_path.as_os_str().to_os_string(),
+        "--allow-missing".into(),
+    ];
+    if install_missing {
+        args.push("--install-missing".into());
+    }
+    args
+}
+
 fn load_defaults_env(path: &StdPath) -> anyhow::Result<()> {
     let base = path.parent().unwrap_or_else(|| StdPath::new("."));
     for line in fs::read_to_string(path)?.lines() {
@@ -779,8 +889,8 @@ fn parse_vars_map(input: &str) -> anyhow::Result<BTreeMap<String, String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_onboarding_plan, expand_user_path, parse_defaults_line, set_managed_daemon_env,
-        ONBOARDING_BOOTSTRAP_COMMAND,
+        bootstrap_args, build_onboarding_plan, expand_user_path, parse_defaults_line,
+        set_managed_daemon_env, standalone_bundle_root_from_exe, ONBOARDING_BOOTSTRAP_COMMAND,
     };
     use loom_types::api::{
         HealthResponse, RuntimeComponentState, RuntimeComponentStatus, StudioDefaults,
@@ -896,6 +1006,75 @@ mod tests {
             std::env::var("X07_STUDIO_DAEMON_URL").as_deref(),
             Ok("http://127.0.0.1:7788")
         );
+    }
+
+    #[test]
+    fn standalone_bundle_root_requires_packaged_bootstrap_script() {
+        let root = temp_root();
+        let bundle = root.join("bundle");
+        let bin = bundle.join("bin");
+        let script = bundle.join("scripts/bootstrap_components.py");
+        std::fs::create_dir_all(&bin).expect("create bin");
+        std::fs::create_dir_all(script.parent().expect("script parent")).expect("create scripts");
+        std::fs::write(&script, "#!/usr/bin/env python3\n").expect("write script");
+
+        let exe = bin.join(if cfg!(windows) {
+            "x07-studio.exe"
+        } else {
+            "x07-studio"
+        });
+
+        assert_eq!(
+            standalone_bundle_root_from_exe(exe.as_std_path()).as_deref(),
+            Some(bundle.as_std_path())
+        );
+
+        std::fs::remove_file(&script).expect("remove script");
+        assert!(standalone_bundle_root_from_exe(exe.as_std_path()).is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn bootstrap_args_refresh_defaults_and_install_missing_by_default() {
+        let bundle = Path::new("/tmp/x07-studio-bundle");
+        let defaults = bundle.join("defaults.env");
+        let args = bootstrap_args(bundle, &defaults, true)
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args[0],
+            "/tmp/x07-studio-bundle/scripts/bootstrap_components.py"
+        );
+        assert!(args.contains(&"--repo-root".to_string()));
+        assert!(args.contains(&"/tmp/x07-studio-bundle".to_string()));
+        assert!(args.contains(&"--write-env".to_string()));
+        assert!(args.contains(&"/tmp/x07-studio-bundle/defaults.env".to_string()));
+        assert!(args.contains(&"--allow-missing".to_string()));
+        assert!(args.contains(&"--install-missing".to_string()));
+    }
+
+    #[test]
+    fn bootstrap_args_can_skip_installing_missing_components() {
+        let bundle = Path::new("/tmp/x07-studio-bundle");
+        let args = bootstrap_args(bundle, &bundle.join("defaults.env"), false)
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(!args.contains(&"--install-missing".to_string()));
+    }
+
+    fn temp_root() -> camino::Utf8PathBuf {
+        camino::Utf8PathBuf::from_path_buf(std::env::temp_dir())
+            .expect("utf8 temp")
+            .join(format!(
+                "x07-studio-gui-test-{}-{}",
+                std::process::id(),
+                uuid::Uuid::new_v4()
+            ))
     }
 
     fn runtime_component(

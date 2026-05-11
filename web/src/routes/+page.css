@@ -248,11 +248,12 @@ dd {
 .workspace {
 	min-width: 0;
 	min-height: 0;
-	overflow: hidden;
+	overflow: auto;
 	padding: 12px;
 	display: grid;
 	gap: 12px;
-	grid-template-rows: auto auto auto auto minmax(220px, 1fr) minmax(96px, 0.26fr) auto;
+	align-content: start;
+	grid-template-rows: auto auto auto auto auto auto auto;
 }
 
 .topbar {
@@ -700,18 +701,20 @@ button:focus-visible {
 .main-grid {
 	display: grid;
 	grid-template-columns: minmax(420px, 1.12fr) minmax(330px, 0.88fr);
+	grid-template-rows: minmax(430px, auto) minmax(240px, auto);
 	grid-template-areas:
 		'intent agent'
 		'graph worklog';
 	gap: 12px;
 	align-items: stretch;
-	min-height: 0;
-	overflow: hidden;
+	min-height: 682px;
+	overflow: visible;
 }
 
 .intent-panel {
 	grid-area: intent;
 	min-height: 0;
+	height: 100%;
 	max-height: none;
 	overflow: auto;
 }
@@ -719,12 +722,14 @@ button:focus-visible {
 .graph-panel {
 	grid-area: graph;
 	min-height: 0;
+	height: 100%;
 	overflow: auto;
 }
 
 .agent-panel {
 	grid-area: agent;
 	min-height: 0;
+	height: 100%;
 	max-height: none;
 	overflow: auto;
 }
@@ -732,6 +737,7 @@ button:focus-visible {
 .worklog-panel {
 	grid-area: worklog;
 	min-height: 0;
+	height: 100%;
 	overflow: auto;
 }
 
@@ -892,6 +898,69 @@ textarea {
 	padding: 12px;
 	line-height: 1.55;
 	background: rgba(4, 6, 9, 0.44);
+}
+
+.draft-witness-preview {
+	display: grid;
+	gap: 7px;
+	margin-top: 10px;
+	border: 1px solid rgba(85, 214, 231, 0.22);
+	border-radius: var(--radius);
+	padding: 9px;
+	background: rgba(85, 214, 231, 0.045);
+}
+
+.draft-witness-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.draft-witness-head strong,
+.draft-witness span,
+.draft-witness strong,
+.draft-witness-preview p {
+	font-size: 12px;
+}
+
+.draft-witness-head strong {
+	color: var(--text);
+}
+
+.draft-witness-head span,
+.draft-witness span,
+.draft-witness-preview p {
+	color: var(--muted);
+}
+
+.draft-witness {
+	display: grid;
+	grid-template-columns: minmax(118px, 0.34fr) minmax(0, 1fr);
+	gap: 8px;
+	align-items: start;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 7px 8px;
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.draft-witness.desired_behavior {
+	border-color: rgba(114, 228, 180, 0.28);
+}
+
+.draft-witness.forbidden_behavior,
+.draft-witness.policy_requirement {
+	border-color: rgba(255, 195, 91, 0.32);
+}
+
+.draft-witness.incident_report {
+	border-color: rgba(255, 106, 106, 0.32);
+}
+
+.draft-witness strong {
+	color: var(--text);
+	overflow-wrap: anywhere;
 }
 
 .revision-lane {
@@ -1540,7 +1609,8 @@ textarea {
 }
 
 .operation-log {
-	min-height: 0;
+	min-height: 220px;
+	max-height: 360px;
 	overflow: auto;
 }
 
@@ -1847,6 +1917,9 @@ textarea {
 	grid-template-columns: minmax(188px, 0.8fr) minmax(260px, 1.45fr) 104px 104px 126px auto minmax(132px, 0.55fr) auto;
 	gap: 9px;
 	align-items: center;
+	position: sticky;
+	bottom: 0;
+	z-index: 4;
 	min-height: 56px;
 	padding: 6px 10px;
 }

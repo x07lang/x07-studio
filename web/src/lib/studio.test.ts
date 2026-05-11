@@ -18,6 +18,7 @@ import {
 	demoSession,
 	nextPrimaryAction,
 	phaseIndex,
+	previewIntentWitnesses,
 	projectTemplates,
 	reduceDemoEvent,
 	workflowChecklist
@@ -151,6 +152,28 @@ describe('x07 Studio XTAL web model', () => {
 		expect(incident.witnesses.map((witness) => witness.kind)).toContain('incident_report');
 		expect(incident.constraints).toContain(
 			'Revision request: Keep repair spec-preserving unless a witness changes.'
+		);
+	});
+
+	it('previews witness types before intent polish', () => {
+		const witnesses = previewIntentWitnesses(
+			'Build a workflow graph. Reject cycles. Never call the network in solve-pure.',
+			'voice'
+		);
+
+		expect(witnesses.map((witness) => witness.kind)).toEqual([
+			'desired_behavior',
+			'forbidden_behavior',
+			'policy_requirement'
+		]);
+		expect(witnesses.find((witness) => witness.kind === 'forbidden_behavior')?.text).toBe(
+			'Reject cycles.'
+		);
+		expect(witnesses.find((witness) => witness.kind === 'policy_requirement')?.text).toBe(
+			'Never call the network in solve-pure.'
+		);
+		expect(previewIntentWitnesses('Production crashed on payload length 0.', 'incident')[0]?.kind).toBe(
+			'incident_report'
 		);
 	});
 

@@ -34,6 +34,15 @@ export type SessionPhase =
 
 export type OperationStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 export type IntentInputMode = 'text' | 'voice' | 'spec' | 'incident';
+export type IntentWitnessKind =
+	| 'desired_behavior'
+	| 'forbidden_behavior'
+	| 'policy_requirement'
+	| 'incident_report';
+export type IntentWitness = {
+	kind: IntentWitnessKind;
+	text: string;
+};
 export type ProjectDifficulty =
 	| 'simple'
 	| 'intermediate'
@@ -53,10 +62,7 @@ export interface IntentPacket {
 	policy_implications: string[];
 	ambiguities: string[];
 	assumptions: string[];
-	witnesses: Array<{
-		kind: 'desired_behavior' | 'forbidden_behavior' | 'policy_requirement' | 'incident_report';
-		text: string;
-	}>;
+	witnesses: IntentWitness[];
 	source:
 		| { kind: 'text'; raw: string }
 		| { kind: 'voice'; transcript: string }
@@ -1105,6 +1111,7 @@ export function createIntentPacket(
 			: isStateMachine
 				? ['Generated outputs, arch contracts, and budget profiles require drift evidence before certify.']
 				: [];
+	const draftWitnesses = previewIntentWitnesses(normalized, inputMode);
 	return {
 		schema_version: 'x07.studio.intent_packet@0.1.0',
 		session_id: session.session_id,
@@ -1136,13 +1143,13 @@ export function createIntentPacket(
 			'Agent may edit implementation paths after spec approval.',
 			'Agent may not widen specs or architecture policy without approval.'
 		],
-		witnesses: [
-			{ kind: 'desired_behavior', text: normalized },
+		witnesses: uniqueWitnesses([
+			...draftWitnesses,
 			{ kind: 'policy_requirement', text: 'All agent work must flow through canonical x07/XTAL bindings.' },
 			{ kind: 'forbidden_behavior', text: 'Do not turn the prompt directly into unchecked source code.' },
 			...specWitness,
 			...incidentWitness
-		],
+		]),
 		source:
 			inputMode === 'voice'
 				? { kind: 'voice', transcript: normalized }
@@ -1152,6 +1159,78 @@ export function createIntentPacket(
 					? { kind: 'incident', path: `.x07/studio/incidents/${session.session_id}` }
 					: { kind: 'text', raw: normalized }
 	};
+}
+
+export function previewIntentWitnesses(raw: string, inputMode: IntentInputMode = 'text'): IntentWitness[] {
+	const normalized = raw.replace(/\s+/g, ' ').trim();
+	if (!normalized) return [];
+	const lowered = normalized.toLowerCase();
+	const witnesses: IntentWitness[] = [];
+	if (inputMode === 'incident') {
+		witnesses.push({ kind: 'incident_report', text: normalized });
+	} else {
+		witnesses.push({ kind: 'desired_behavior', text: normalized });
+	}
+	if (inputMode === 'spec') {
+		witnesses.push({
+			kind: 'policy_requirement',
+			text: 'Use the provided x07 spec as the canonical behavioral source.'
+		});
+	}
+	if (hasForbiddenCue(lowered)) {
+		witnesses.push({ kind: 'forbidden_behavior', text: forbiddenWitnessText(normalized) });
+	}
+	if (hasPolicyCue(lowered)) {
+		witnesses.push({ kind: 'policy_requirement', text: policyWitnessText(normalized) });
+	}
+	return uniqueWitnesses(witnesses);
+}
+
+function hasForbiddenCue(lowered: string) {
+	return /\b(rejects?|rejected|rejecting|forbids?|forbidden|never|must not|do not|don't|without|no\s+unchecked)\b/.test(
+		lowered
+	);
+}
+
+function hasPolicyCue(lowered: string) {
+	return /\b(network|sandbox|policy|capability|capabilities|budget|world|os world|trust|approval|provenance|slo)\b/.test(
+		lowered
+	);
+}
+
+function forbiddenWitnessText(text: string) {
+	return (
+		sentenceWithCue(text, /(rejects?|rejected|rejecting|forbids?|forbidden|never|must not|do not|don't|without|no unchecked)/i) ??
+		text
+	);
+}
+
+function policyWitnessText(text: string) {
+	return (
+		sentenceWithCue(
+			text,
+			/(network|sandbox|policy|capability|capabilities|budget|world|os world|trust|approval|provenance|slo)/i
+		) ?? text
+	);
+}
+
+function sentenceWithCue(text: string, cue: RegExp) {
+	return (
+		text
+			.match(/[^.!?]+[.!?]?/g)
+			?.map((sentence) => sentence.trim())
+			.find((sentence) => cue.test(sentence)) ?? null
+	);
+}
+
+function uniqueWitnesses(witnesses: IntentWitness[]) {
+	const seen = new Set<string>();
+	return witnesses.filter((witness) => {
+		const key = `${witness.kind}:${witness.text}`;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
 }
 
 function specTargetFromRaw(raw: string): { moduleId: string; entry: string } | null {

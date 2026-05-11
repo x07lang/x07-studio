@@ -22,6 +22,7 @@
 		lifecycle,
 		nextPrimaryAction,
 		phaseIndex,
+		previewIntentWitnesses,
 		projectTemplates,
 		providerCards,
 		rooms,
@@ -240,6 +241,7 @@
 	$: approvalLedger = buildApprovalLedger(selected, revisionHistory, approvalState);
 	$: automationPlan = buildAutomationPlan(selected, selectedProjectTemplate, approvalState);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
+	$: draftWitnessPreview = previewIntentWitnesses(promptText, inputMode);
 	$: canApproveSpec =
 		approvalState !== 'changes' && (selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft');
 	$: canRequestChanges =
@@ -1333,6 +1335,22 @@
 										<code>{transcript}</code>
 									{/each}
 								</div>
+							{/if}
+						</div>
+						<div class="draft-witness-preview" aria-label="Draft witness preview">
+							<div class="draft-witness-head">
+								<strong>Witness Preview</strong>
+								<span>{draftWitnessPreview.length ? 'before polish' : 'waiting for input'}</span>
+							</div>
+							{#if draftWitnessPreview.length}
+								{#each draftWitnessPreview.slice(0, 4) as witness}
+									<div class={`draft-witness ${witness.kind}`}>
+										<span>{witness.kind.replaceAll('_', ' ')}</span>
+										<strong>{witness.text}</strong>
+									</div>
+								{/each}
+							{:else}
+								<p>Write or speak desired behavior, forbidden behavior, policy requirements, or incident evidence.</p>
 							{/if}
 						</div>
 						<textarea bind:value={promptText} aria-label="Initial plan"></textarea>

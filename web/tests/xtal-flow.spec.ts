@@ -152,6 +152,8 @@ test('voice transcript capture appends a spoken witness before spec approval', a
 	await expect(page.getByLabel('Captured voice witnesses')).toContainText(
 		'Build a workflow graph optimizer'
 	);
+	await expect(page.getByLabel('Draft witness preview')).toContainText('desired behavior');
+	await expect(page.getByLabel('Draft witness preview')).toContainText('forbidden behavior');
 	await page.getByRole('button', { name: 'Stop voice capture' }).click();
 	await expect(page.getByLabel('Speech witness capture')).toContainText(
 		'Voice witness captured; polish before approval'
@@ -170,7 +172,9 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.goto('/');
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.getByText('Demo projection active')).toBeVisible();
+	await page.getByLabel('Operation log').scrollIntoViewIfNeeded();
 	await expect(page.getByLabel('Operation log')).toBeInViewport();
+	await expect(page.getByLabel('Operation log')).toContainText('intent.formalize');
 	await expect(page.getByLabel('Canonical command lane')).toContainText('x07 canonical command lane');
 	await expect(page.getByLabel('XTAL automation plan')).toContainText('approval gated');
 	await expect(page.getByLabel('XTAL automation plan')).toContainText('Project scaffold');

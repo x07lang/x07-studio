@@ -95,8 +95,10 @@ Inside a standalone bundle, `python3 scripts/launch_studio_web.py --bundle-root 
 is the preferred entry point. It detects bundled components, builds missing
 sibling source checkouts when they are present, refreshes `defaults.env`, starts
 the daemon, and opens the Svelte Studio surface with the same onboarding panel.
-The native shell under `bin/x07-studio` also reads the bundle `defaults.env`
-before it starts its embedded daemon. The generated defaults choose
+The native shell under `bin/x07-studio` runs the same packaged bootstrap first
+unless `--skip-bootstrap` is passed, then reads the bundle `defaults.env` before
+it starts its embedded daemon. Use `--no-install-missing` when the desktop shell
+should only detect existing components. The generated defaults choose
 `~/x07-studio-workspace`, local daemon/web addresses, and bundled component
 paths when release automation includes them.
 

@@ -451,6 +451,8 @@ This document records friction found while implementing the Studio web surface.
    control that appends final transcript segments as `Voice witness:` lines in
    the same initial-plan textarea, keeps the user in the approval-gated intent
    path, and falls back to paste-transcript guidance when speech capture is not
-   available. The Playwright test injects a deterministic `SpeechRecognition`
-   shim so CI verifies that a spoken workflow-graph witness reaches spec review
-   before approval.
+   available. Studio also classifies the draft input before polish so the user
+   can see whether the text is being treated as desired behavior, forbidden
+   behavior, policy requirement, or incident evidence. The Playwright test
+   injects a deterministic `SpeechRecognition` shim so CI verifies that a
+   spoken workflow-graph witness reaches spec review before approval.
