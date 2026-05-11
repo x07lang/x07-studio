@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use anyhow::{anyhow, Context};
@@ -774,6 +775,7 @@ impl WorkspaceKernel {
             .into_iter()
             .find(|profile| profile.id == agent_id)
             .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        ensure_agent_enabled(&agent, "creating a handoff")?;
         let handoff = agent_handoff_from_session(&session, &agent);
         let prompt_path = self.store.save_agent_handoff(&handoff)?;
         let now = now_string();
@@ -843,6 +845,7 @@ impl WorkspaceKernel {
             .into_iter()
             .find(|profile| profile.id == agent_id)
             .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        ensure_agent_enabled(&agent, "planning or executing a supervised run")?;
         let handoff = agent_handoff_from_session(&session, &agent);
         let prompt_path = self.store.save_agent_handoff(&handoff)?;
 
@@ -852,6 +855,7 @@ impl WorkspaceKernel {
                 None,
             ),
             AgentRunMode::Execute => {
+                ensure_agent_command_available(&agent)?;
                 if agent.approval_required && !agent_run_is_approved(&session, &agent.id) {
                     let op = agent_approval_op(
                         session_id,
@@ -2634,14 +2638,39 @@ fn default_agent_profiles() -> Vec<AgentProfile> {
 }
 
 fn status_for_command(command: &str) -> AgentStatus {
-    if command_in_path(command) {
+    if command_available(command) {
         AgentStatus::Available
     } else {
         AgentStatus::NeedsInstall
     }
 }
 
-fn command_in_path(command: &str) -> bool {
+fn ensure_agent_enabled(agent: &AgentProfile, action: &str) -> anyhow::Result<()> {
+    if agent.status == AgentStatus::Disabled {
+        return Err(anyhow!(
+            "agent profile `{}` is disabled; enable it before {action}",
+            agent.id
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_agent_command_available(agent: &AgentProfile) -> anyhow::Result<()> {
+    if command_available(&agent.command) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "agent command `{}` for profile `{}` is not available; install it or update the profile command before supervised execution",
+        agent.command,
+        agent.id
+    ))
+}
+
+fn command_available(command: &str) -> bool {
+    let path = Path::new(command);
+    if path.is_absolute() || command.contains('/') || command.contains('\\') {
+        return path.is_file();
+    }
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
     };
@@ -3923,6 +3952,82 @@ mod tests {
         assert_eq!(blocked_again.op.op, "agent.approval.echo-agent");
         assert_eq!(blocked_again.op.status, OperationStatus::Pending);
         assert!(blocked_again.command.is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn disabled_agent_profile_is_rejected_by_daemon_policy() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("disabled agent", TaskType::NewBehavior)
+            .expect("create session");
+        let mut agent = AgentProfile::codex();
+        agent.id = "disabled-agent".to_string();
+        agent.label = "Disabled Agent".to_string();
+        agent.command = "/bin/sh".to_string();
+        agent.status = AgentStatus::Disabled;
+        kernel.save_agent_profile(&agent).expect("save agent");
+
+        let handoff_error = kernel
+            .create_agent_handoff(session.session_id, "disabled-agent")
+            .expect_err("disabled handoff should fail")
+            .to_string();
+        assert!(handoff_error.contains("disabled"));
+
+        let run_error = kernel
+            .start_agent_handoff(
+                session.session_id,
+                "disabled-agent",
+                AgentRunMode::Plan,
+                None,
+            )
+            .expect_err("disabled run should fail")
+            .to_string();
+        assert!(run_error.contains("disabled"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn missing_agent_command_cannot_execute_from_daemon_api() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("missing agent", TaskType::NewBehavior)
+            .expect("create session");
+        let mut agent = AgentProfile::codex();
+        agent.id = "missing-agent".to_string();
+        agent.label = "Missing Agent".to_string();
+        agent.command = "x07-studio-missing-agent-command".to_string();
+        agent.status = AgentStatus::Available;
+        agent.approval_required = false;
+        kernel.save_agent_profile(&agent).expect("save agent");
+
+        let (_handoff, plan_op, _plan_session) = kernel
+            .run_agent_handoff(
+                session.session_id,
+                "missing-agent",
+                AgentRunMode::Plan,
+                None,
+            )
+            .await
+            .expect("planning should not require launching the command");
+        assert_eq!(plan_op.op, "agent.supervise.missing-agent");
+        assert_eq!(plan_op.status, OperationStatus::Succeeded);
+
+        let execute_error = kernel
+            .start_agent_handoff(
+                session.session_id,
+                "missing-agent",
+                AgentRunMode::Execute,
+                Some(5),
+            )
+            .expect_err("missing command should fail before supervised launch")
+            .to_string();
+        assert!(execute_error.contains("not available"));
+        assert!(execute_error.contains("missing-agent"));
 
         std::fs::remove_dir_all(root).ok();
     }

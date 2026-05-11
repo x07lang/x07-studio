@@ -363,6 +363,32 @@ describe('x07 Studio XTAL web model', () => {
 		}
 	});
 
+	it('does not replace connected agent policy failures with demo content', async () => {
+		const originalFetch = globalThis.fetch;
+		const api = new StudioApi();
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const path = String(input);
+			if (path.endsWith('/v1/health')) {
+				return new Response(JSON.stringify({ ok: true, workspace_root: '/workspace' }), {
+					status: 200
+				});
+			}
+			if (path.includes('/agents/openai-codex/run')) {
+				return new Response('agent command `codex` is not available', { status: 409 });
+			}
+			return new Response('not found', { status: 404 });
+		}) as typeof fetch;
+		try {
+			await api.health();
+			await expect(api.runAgentHandoff(demoSession(), 'openai-codex', 'execute')).rejects.toThrow(
+				'agent command `codex` is not available'
+			);
+			expect(api.isDemoMode).toBe(false);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	it('models supervised agent launch records', () => {
 		const session = appendDemoOp(
 			demoSession(),

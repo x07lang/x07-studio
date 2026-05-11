@@ -353,3 +353,12 @@ This document records friction found while implementing the Studio web surface.
    verification, repair/certification gates, and WASM/release/provenance/SLO
    commands when the session implies those surfaces. This keeps supervised
    coding agents aligned with the same plan that humans review.
+
+34. Agent readiness must be enforced by Loom, not only the browser.
+
+   The browser disabled run controls for missing or disabled Codex/Claude
+   profiles, but direct daemon API calls could still generate handoffs or start
+   supervised runs. Loom now rejects disabled agent profiles for handoff, plan,
+   and execute operations, and `mode: "execute"` checks the configured command
+   before appending a supervised `agent.run.*` record. This keeps the UI
+   readiness panel and daemon policy aligned.

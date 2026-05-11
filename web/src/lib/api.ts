@@ -285,7 +285,8 @@ export class StudioApi {
 				);
 				this.replaceDemo(response.session);
 				return response;
-			} catch {
+			} catch (error) {
+				if (error instanceof HttpRequestError) throw error;
 				this.demoMode = true;
 			}
 		}
@@ -329,7 +330,8 @@ export class StudioApi {
 				);
 				this.replaceDemo(response.session);
 				return response;
-			} catch {
+			} catch (error) {
+				if (error instanceof HttpRequestError) throw error;
 				this.demoMode = true;
 			}
 		}
@@ -624,7 +626,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 		}
 	});
 	if (!response.ok) {
-		throw new Error(await response.text());
+		throw new HttpRequestError(response.status, await response.text());
 	}
 	return response.json() as Promise<T>;
+}
+
+class HttpRequestError extends Error {
+	constructor(
+		readonly status: number,
+		message: string
+	) {
+		super(message || `HTTP ${status}`);
+		this.name = 'HttpRequestError';
+	}
 }

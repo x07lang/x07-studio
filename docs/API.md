@@ -355,6 +355,13 @@ emit one JSON object per line with
 which gives the browser approval and artifact signals without relying on
 free-form terminal text.
 
+The daemon enforces coding-agent readiness at the API boundary. Disabled agent
+profiles cannot create handoffs, plans, or runs. `mode: "execute"` also checks
+that the configured agent command exists before appending a supervised
+`agent.run.*` operation; missing commands must be installed or the profile
+command must be updated first. `mode: "plan"` may still record a launch plan
+for a non-disabled profile because it does not spawn the command.
+
 If the agent profile has `approval_required: true`, `mode: "execute"` first
 records a pending `agent.approval.*` checkpoint unless the latest relevant
 agent operation is a succeeded approval. A later handoff, plan, or run consumes

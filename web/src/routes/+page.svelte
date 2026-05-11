@@ -713,6 +713,9 @@
 			await replaceSession(response.session);
 			handoffStatus = `${response.handoff.agent_label} handoff saved to ${response.handoff.prompt_path}`;
 			statusLine = handoffStatus;
+		} catch (error) {
+			handoffStatus = error instanceof Error ? error.message : 'Agent handoff failed';
+			statusLine = handoffStatus;
 		} finally {
 			busy = false;
 		}
@@ -745,6 +748,9 @@
 						? `${label} supervised command ${response.op.status}`
 						: `${label} supervised launch plan recorded`;
 			}
+			statusLine = handoffStatus;
+		} catch (error) {
+			handoffStatus = error instanceof Error ? error.message : `${agentLabel} supervised command failed`;
 			statusLine = handoffStatus;
 		} finally {
 			if (poll) clearInterval(poll);
