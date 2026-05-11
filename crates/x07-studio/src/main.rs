@@ -897,7 +897,7 @@ mod tests {
     };
     use std::ffi::OsString;
     use std::net::SocketAddr;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn defaults_env_resolves_relative_component_paths() {
@@ -908,7 +908,10 @@ mod tests {
         .expect("parsed env line");
 
         assert_eq!(parsed.0, "X07_STUDIO_X07_WASM_EXE");
-        assert_eq!(parsed.1, "/tmp/x07-studio-bundle/components/x07-wasm");
+        assert_eq!(
+            PathBuf::from(parsed.1),
+            Path::new("/tmp/x07-studio-bundle").join("components/x07-wasm")
+        );
     }
 
     #[test]
@@ -1039,32 +1042,26 @@ mod tests {
     fn bootstrap_args_refresh_defaults_and_install_missing_by_default() {
         let bundle = Path::new("/tmp/x07-studio-bundle");
         let defaults = bundle.join("defaults.env");
-        let args = bootstrap_args(bundle, &defaults, true)
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+        let args = bootstrap_args(bundle, &defaults, true);
 
         assert_eq!(
-            args[0],
-            "/tmp/x07-studio-bundle/scripts/bootstrap_components.py"
+            PathBuf::from(&args[0]),
+            bundle.join("scripts/bootstrap_components.py")
         );
-        assert!(args.contains(&"--repo-root".to_string()));
-        assert!(args.contains(&"/tmp/x07-studio-bundle".to_string()));
-        assert!(args.contains(&"--write-env".to_string()));
-        assert!(args.contains(&"/tmp/x07-studio-bundle/defaults.env".to_string()));
-        assert!(args.contains(&"--allow-missing".to_string()));
-        assert!(args.contains(&"--install-missing".to_string()));
+        assert!(args.contains(&OsString::from("--repo-root")));
+        assert!(args.contains(&bundle.as_os_str().to_os_string()));
+        assert!(args.contains(&OsString::from("--write-env")));
+        assert!(args.contains(&defaults.as_os_str().to_os_string()));
+        assert!(args.contains(&OsString::from("--allow-missing")));
+        assert!(args.contains(&OsString::from("--install-missing")));
     }
 
     #[test]
     fn bootstrap_args_can_skip_installing_missing_components() {
         let bundle = Path::new("/tmp/x07-studio-bundle");
-        let args = bootstrap_args(bundle, &bundle.join("defaults.env"), false)
-            .into_iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
+        let args = bootstrap_args(bundle, &bundle.join("defaults.env"), false);
 
-        assert!(!args.contains(&"--install-missing".to_string()));
+        assert!(!args.contains(&OsString::from("--install-missing")));
     }
 
     fn temp_root() -> camino::Utf8PathBuf {
