@@ -34,6 +34,12 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.getByText('Demo projection active')).toBeVisible();
 
+	await page.getByRole('button', { name: 'Refresh Studio' }).click();
+	await expect(page.getByText('Demo projection active')).toBeVisible();
+	await page.getByLabel('Active room').selectOption('verify');
+	await expect(page.getByRole('tab', { name: 'Verify' })).toHaveAttribute('aria-selected', 'true');
+	await page.getByLabel('Active room').selectOption('intent');
+
 	for (const room of ['Spec', 'Realize', 'Verify', 'Repair', 'Trust', 'Ops', 'Agents', 'Intent']) {
 		await page.getByRole('tab', { name: room }).click();
 		await expect(page.getByRole('tab', { name: room })).toHaveAttribute('aria-selected', 'true');
@@ -72,6 +78,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await expect(page.getByText('incident report:', { exact: false })).toBeVisible();
 
+	await page.getByLabel('Revision').fill('Add a deterministic repair witness before implementation.');
 	await page.getByRole('button', { name: 'Request Changes' }).click();
 	await expect(page.getByText('Revision routed back to intent review')).toBeVisible();
 
@@ -102,6 +109,17 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.locator('code').filter({ hasText: 'impl.sync.write' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'xtal.verify' })).toBeVisible();
 
+	await page.getByLabel('Worklog filter').selectOption('claude');
+	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();
+	await page.getByLabel('Worklog filter').selectOption('all');
+	await page.getByLabel('Auto-scroll').uncheck();
+	await expect(page.getByLabel('Auto-scroll')).not.toBeChecked();
+	await page.getByLabel('Auto-scroll').check();
+	await expect(page.getByLabel('Auto-scroll')).toBeChecked();
+
+	await page.getByLabel('Active binding').selectOption('spec.check');
+	await page.getByRole('button', { name: 'Run Binding' }).click();
+	await expect(page.getByText('Ran spec.check')).toBeVisible();
 	await page.getByRole('button', { name: 'spec.check' }).click();
 	await expect(page.getByText('Ran spec.check')).toBeVisible();
 });
