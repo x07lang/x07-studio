@@ -64,7 +64,7 @@ describe('x07 Studio XTAL web model', () => {
 
 		expect(session.op_log).toHaveLength(1);
 		expect(session.op_log[0].command.join(' ')).toContain('x07 xtal verify');
-		expect(session.op_log[0].artifacts[0]).toContain('target/xtal');
+		expect(session.op_log[0].artifacts[0]).toBe('target/xtal/verify/summary.json');
 	});
 
 	it('models supervised agent launch records', () => {

@@ -55,7 +55,9 @@ export interface IntentPacket {
 }
 
 export interface OpRecord {
+	schema_version?: string;
 	id: string;
+	session_id?: string;
 	op: string;
 	backend: string;
 	command: string[];
@@ -67,6 +69,9 @@ export interface OpRecord {
 	notes?: string | null;
 	stdout?: string | null;
 	stderr?: string | null;
+	stdout_json?: unknown;
+	stderr_json?: unknown;
+	report_json?: unknown;
 	report_path?: string | null;
 }
 
@@ -633,11 +638,36 @@ export function appendDemoOp(
 			finished_at: String(Date.now()),
 			status,
 			exit_code: status === 'succeeded' ? 0 : status === 'failed' ? 1 : null,
-			artifacts: artifacts ?? [`target/xtal/${bindingId.replaceAll('.', '/')}/summary.json`],
+			artifacts: artifacts ?? demoArtifactsFor(bindingId),
 			notes: 'visible agent operation record'
 		}
 	];
 	return next;
+}
+
+function demoArtifactsFor(bindingId: string): string[] {
+	switch (bindingId) {
+		case 'project.init.xtal-pure':
+			return ['x07.json', 'spec/', 'src/', 'gen/xtal/'];
+		case 'spec.scaffold':
+			return ['spec/workflow.graph.x07spec.json'];
+		case 'spec.check':
+			return ['target/xtal/spec.check.report.json'];
+		case 'tests.gen.write':
+			return ['gen/xtal/tests.json'];
+		case 'impl.sync.write':
+			return ['src/', 'target/xtal/impl-sync.patchset.json'];
+		case 'impl.check':
+			return ['target/xtal/impl.check.report.json'];
+		case 'xtal.verify':
+			return ['target/xtal/verify/summary.json'];
+		case 'xtal.repair':
+			return ['target/xtal/repair/summary.json', 'target/xtal/repair/patchset.json'];
+		case 'xtal.certify':
+			return ['target/xtal/cert/summary.json', 'target/xtal/cert/bundle.json'];
+		default:
+			return [`target/xtal/${bindingId.replaceAll('.', '/')}/summary.json`];
+	}
 }
 
 export function phaseIndex(phase: SessionPhase): number {

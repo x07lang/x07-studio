@@ -16,6 +16,7 @@
 		type BindingDescriptor,
 		type HealthResponse,
 		type IntentInputMode,
+		type OpRecord,
 		type ProjectDifficulty,
 		type Room,
 		type SessionSnapshot,
@@ -45,8 +46,22 @@
 	let approvalState: 'drafting' | 'awaiting' | 'changes' | 'approved' = 'drafting';
 	let visibleAgent = 'Codex';
 	let selectedBindingId = '';
+	let selectedOpId = '';
 	let worklogFilter: 'all' | 'codex' | 'claude' | 'xtal' = 'all';
 	let autoScroll = true;
+
+	const placeholderOp: OpRecord = {
+		id: 'op-seed',
+		op: 'intent.formalize',
+		backend: 'demo',
+		command: ['x07', 'flow', 'await-input'],
+		started_at: '10:51:23',
+		finished_at: null,
+		status: 'pending',
+		exit_code: null,
+		artifacts: [],
+		notes: 'visible agent operation record'
+	};
 
 	const roomStatus = {
 		intent: {
@@ -109,9 +124,14 @@
 	];
 
 	$: selected = sessions.find((session) => session.session_id === selectedId) ?? sessions[0];
+	$: allOps = selected?.op_log ?? [];
 	$: if (selected && selected.session_id !== selectedSessionForRoom) {
 		selectedRoom = selected.room;
 		selectedSessionForRoom = selected.session_id;
+		selectedOpId = '';
+	}
+	$: if (selectedOpId && !allOps.some((op) => op.id === selectedOpId)) {
+		selectedOpId = '';
 	}
 	$: selectedProjectTemplate =
 		projectTemplates.find((template) => template.id === projectDifficulty) ?? initialProject;
@@ -134,10 +154,20 @@
 	$: pendingApprovals = worklog.filter(
 		(op) => op.op.startsWith('agent.approval.') && op.status === 'pending'
 	);
+	$: selectedOp =
+		(selectedOpId ? allOps.find((op) => op.id === selectedOpId) : undefined) ??
+		allOps.at(-1) ??
+		null;
+	$: selectedOpDiagnostics = collectDiagnostics(selectedOp);
+	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
 	$: canApproveSpec = selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft';
 	$: canRunProject =
-		selected?.phase === 'spec_approved' || selected?.phase === 'realization_proposed';
+		Boolean(selected) &&
+		(canApproveSpec ||
+			selected?.phase === 'intent_drafting' ||
+			selected?.phase === 'spec_approved' ||
+			selected?.phase === 'realization_proposed');
 	$: currentRoomStatus = roomStatus[selectedRoom];
 	$: currentLifecycle = lifecycle[Math.min(progress, lifecycle.length - 1)] ?? lifecycle[0];
 	$: consumedCredits = Math.min(42, Number((2.7 + progress * 3.6 + worklog.length * 0.9).toFixed(1)));
@@ -156,22 +186,7 @@
 			ok: Boolean(selected && phaseIndex(selected.phase) >= phaseIndex('trust_review'))
 		}
 	];
-	$: operationRows = worklog.length
-		? worklog
-		: [
-				{
-					id: 'op-seed',
-					op: 'intent.formalize',
-					backend: 'demo',
-					command: ['x07', 'flow', 'await-input'],
-					started_at: '10:51:23',
-					finished_at: null,
-					status: 'pending' as const,
-					exit_code: null,
-					artifacts: [],
-					notes: 'visible agent operation record'
-				}
-			];
+	$: operationRows = worklog.length ? worklog : [placeholderOp];
 
 	onMount(async () => {
 		await refresh();
@@ -235,6 +250,60 @@
 	function selectRoomFromControl(event: Event) {
 		const target = event.currentTarget as HTMLSelectElement;
 		focusRoom(target.value as Room);
+	}
+
+	function selectOperation(op: OpRecord) {
+		selectedOpId = op.id;
+		statusLine = `Inspecting ${op.op}`;
+	}
+
+	function collectDiagnostics(op: OpRecord | null): Array<{ code: string; severity: string; message: string }> {
+		const report = asRecord(op?.report_json);
+		const topLevel = diagnosticsFrom(report?.diagnostics);
+		if (topLevel.length) return topLevel;
+		const result = asRecord(report?.result);
+		const stdoutJson = asRecord(result?.stdout_json);
+		return diagnosticsFrom(stdoutJson?.diagnostics);
+	}
+
+	function diagnosticsFrom(value: unknown): Array<{ code: string; severity: string; message: string }> {
+		if (!Array.isArray(value)) return [];
+		return value.flatMap((item) => {
+			const record = asRecord(item);
+			if (!record) return [];
+			return [
+				{
+					code: String(record.code ?? 'diagnostic'),
+					severity: String(record.severity ?? 'info'),
+					message: String(record.message ?? '')
+				}
+			];
+		});
+	}
+
+	function operationOutput(op: OpRecord | null): string {
+		if (!op) return '';
+		const direct = [op.stdout, op.stderr].filter(Boolean).join('\n').trim();
+		if (direct) return direct.slice(0, 1200);
+		const report = asRecord(op.report_json);
+		const result = asRecord(report?.result);
+		const stdout = asRecord(result?.stdout);
+		const stderr = asRecord(result?.stderr);
+		return [textValue(stdout?.text), textValue(stderr?.text)]
+			.filter(Boolean)
+			.join('\n')
+			.trim()
+			.slice(0, 1200);
+	}
+
+	function textValue(value: unknown): string {
+		return typeof value === 'string' ? value : '';
+	}
+
+	function asRecord(value: unknown): Record<string, unknown> | null {
+		return value && typeof value === 'object' && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: null;
 	}
 
 	async function runSelectedBinding() {
@@ -824,12 +893,17 @@
 					</div>
 				</div>
 				<div class="worklog">
-					{#each visibleWorklog.length ? visibleWorklog : [{ op: 'intent.formalize', status: 'pending', command: ['awaiting', 'approval'], artifacts: [] }] as op}
-						<div>
+					{#each visibleWorklog.length ? visibleWorklog : [placeholderOp] as op}
+						<button
+							type="button"
+							class:active={selectedOp?.id === op.id}
+							aria-label={`Inspect ${op.op}`}
+							on:click={() => selectOperation(op)}
+						>
 							<span class:failed={op.status === 'failed'} class:succeeded={op.status === 'succeeded'}></span>
 							<code>{op.op}</code>
 							<small>{op.command.join(' ')}</small>
-						</div>
+						</button>
 					{/each}
 				</div>
 			</section>
@@ -845,14 +919,67 @@
 			</div>
 			<div class="terminal-log">
 				{#each operationRows as op}
-					<div>
+					<button
+						type="button"
+						class:active={selectedOp?.id === op.id}
+						aria-label={`Inspect operation ${op.op}`}
+						on:click={() => selectOperation(op)}
+					>
 						<time>{op.started_at}</time>
 						<span class="terminal-op">{op.op}</span>
 						<span>{op.status}</span>
 						<small>{op.command.join(' ')}</small>
-					</div>
+					</button>
 				{/each}
 			</div>
+			{#if selectedOp}
+				<div class="op-inspector" aria-label="Selected operation inspector">
+					<div class="inspector-head">
+						<div>
+							<span>Selected operation</span>
+							<strong>{selectedOp.op}</strong>
+						</div>
+						<em>{selectedOp.backend} / {selectedOp.status}</em>
+					</div>
+					<dl>
+						<div>
+							<dt>Exit</dt>
+							<dd>{selectedOp.exit_code ?? 'pending'}</dd>
+						</div>
+						<div>
+							<dt>Report</dt>
+							<dd>{selectedOp.report_path ?? 'inline or unavailable'}</dd>
+						</div>
+						<div>
+							<dt>Notes</dt>
+							<dd>{selectedOp.notes ?? 'none'}</dd>
+						</div>
+					</dl>
+					<div class="artifact-list" aria-label="Operation artifacts">
+						<span>Artifacts</span>
+						{#each selectedOp.artifacts.length ? selectedOp.artifacts : ['No artifacts recorded'] as artifact}
+							<code>{artifact}</code>
+						{/each}
+					</div>
+					<div class="diagnostic-list" aria-label="Operation diagnostics">
+						<span>Diagnostics</span>
+						{#if selectedOpDiagnostics.length}
+							{#each selectedOpDiagnostics.slice(0, 4) as diagnostic}
+								<div>
+									<strong>{diagnostic.code}</strong>
+									<em>{diagnostic.severity}</em>
+									<p>{diagnostic.message}</p>
+								</div>
+							{/each}
+						{:else}
+							<p>No diagnostics recorded for this operation.</p>
+						{/if}
+					</div>
+					{#if selectedOpOutput}
+						<pre aria-label="Operation output">{selectedOpOutput}</pre>
+					{/if}
+				</div>
+			{/if}
 		</section>
 
 		<footer class="statusbar">

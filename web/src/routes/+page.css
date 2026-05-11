@@ -838,13 +838,28 @@ textarea {
 	gap: 4px;
 }
 
-.worklog div {
+.worklog button {
 	display: grid;
 	grid-template-columns: 10px minmax(118px, 0.46fr) minmax(0, 1fr);
 	gap: 9px;
 	align-items: center;
 	padding: 7px 0;
 	border-top: 1px solid rgba(255, 255, 255, 0.06);
+	border-right: 0;
+	border-bottom: 0;
+	border-left: 0;
+	border-radius: 0;
+	background: transparent;
+	text-align: left;
+	min-width: 0;
+	width: 100%;
+	color: inherit;
+	font: inherit;
+}
+
+.worklog button.active,
+.terminal-log button.active {
+	background: rgba(81, 211, 255, 0.08);
 }
 
 .worklog span {
@@ -881,13 +896,140 @@ textarea {
 	font-size: 12px;
 }
 
-.terminal-log div {
+.terminal-log button {
 	display: grid;
 	grid-template-columns: 84px minmax(164px, 0.45fr) 78px minmax(0, 1fr);
 	gap: 10px;
 	align-items: baseline;
 	padding: 3px 0;
 	border-top: 1px solid rgba(255, 255, 255, 0.045);
+	border-right: 0;
+	border-bottom: 0;
+	border-left: 0;
+	border-radius: 0;
+	background: transparent;
+	text-align: left;
+	min-width: 0;
+	width: 100%;
+	color: inherit;
+	font: inherit;
+}
+
+.op-inspector {
+	margin-top: 14px;
+	border: 1px solid rgba(81, 211, 255, 0.18);
+	border-radius: var(--radius);
+	background: rgba(3, 10, 18, 0.68);
+	padding: 12px;
+	display: grid;
+	gap: 12px;
+}
+
+.inspector-head {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 10px;
+	align-items: start;
+}
+
+.inspector-head div,
+.artifact-list,
+.diagnostic-list {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+}
+
+.inspector-head span,
+.artifact-list > span,
+.diagnostic-list > span,
+.op-inspector dt {
+	color: var(--muted);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0;
+}
+
+.inspector-head strong,
+.op-inspector dd {
+	color: var(--text);
+	overflow-wrap: anywhere;
+}
+
+.inspector-head em,
+.diagnostic-list em {
+	color: var(--muted);
+	font-style: normal;
+	font-size: 12px;
+}
+
+.op-inspector dl {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+	margin: 0;
+}
+
+.op-inspector dl div {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 8px;
+	background: rgba(255, 255, 255, 0.035);
+	min-width: 0;
+}
+
+.op-inspector dt,
+.op-inspector dd {
+	margin: 0;
+}
+
+.artifact-list {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.artifact-list > span,
+.diagnostic-list > span {
+	grid-column: 1 / -1;
+}
+
+.artifact-list code {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 7px;
+	color: var(--cyan);
+	overflow-wrap: anywhere;
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.diagnostic-list div {
+	border: 1px solid rgba(255, 195, 91, 0.24);
+	border-radius: var(--radius);
+	padding: 8px;
+	background: rgba(255, 195, 91, 0.06);
+	display: grid;
+	gap: 5px;
+}
+
+.diagnostic-list p {
+	margin: 0;
+	color: var(--muted);
+	line-height: 1.42;
+	overflow-wrap: anywhere;
+}
+
+.op-inspector pre {
+	margin: 0;
+	max-height: 180px;
+	overflow: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.26);
+	padding: 10px;
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 12px;
 }
 
 .statusbar {
@@ -1007,9 +1149,7 @@ textarea {
 	}
 
 	.rail {
-		position: sticky;
-		top: 0;
-		z-index: 3;
+		position: static;
 		flex-direction: row;
 		align-items: center;
 		overflow-x: auto;
@@ -1063,7 +1203,9 @@ textarea {
 		grid-template-columns: 1fr;
 	}
 
-	.terminal-log div {
+	.terminal-log button,
+	.op-inspector dl,
+	.artifact-list {
 		grid-template-columns: 1fr;
 		gap: 3px;
 	}

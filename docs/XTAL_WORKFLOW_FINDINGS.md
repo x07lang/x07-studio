@@ -87,3 +87,14 @@ This document records friction found while implementing the Studio web surface.
    explicit pending `agent.approval.*` records for approval-gated profiles. The
    remaining gap is streaming stdout/stderr chunks while the command is still
    running and binding those chunks to finer-grained approval prompts.
+
+11. The starter-template path needs a cleaner scaffold contract.
+
+   A live Studio run against `x07 init --template xtal-pure` can initialize and
+   verify a project end to end, but the generic `spec.scaffold` step may rewrite
+   the starter's existing `toy.sorter` operation with Studio-derived names. The
+   project still verifies, but `xtal impl check` reports warnings such as
+   `WXTAL_IMPL_PARAM_NAME_MISMATCH` and extra contract clauses. Studio should
+   detect template-provided specs before scaffolding the same module/op, and the
+   x07 CLI could expose a machine-readable "operation already exists" or
+   "merge/update scaffold" mode for agentic workflows.

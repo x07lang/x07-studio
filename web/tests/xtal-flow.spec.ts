@@ -103,6 +103,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await expect(page.getByText('incident report:', { exact: false })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeEnabled();
 
 	await page.getByLabel('Revision').fill('Add a deterministic repair witness before implementation.');
 	await page.getByRole('button', { name: 'Request Changes' }).click();
@@ -134,6 +135,11 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.locator('code').filter({ hasText: 'project.init.xtal-pure' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'impl.sync.write' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'xtal.verify' })).toBeVisible();
+	await page.getByRole('button', { name: /Inspect xtal\.verify/ }).first().click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('xtal.verify');
+	await expect(page.getByLabel('Operation artifacts')).toContainText(
+		'target/xtal/verify/summary.json'
+	);
 
 	await page.getByLabel('Worklog filter').selectOption('claude');
 	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();
@@ -146,6 +152,6 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByLabel('Active binding').selectOption('spec.check');
 	await page.getByRole('button', { name: 'Run Binding' }).click();
 	await expect(page.getByText('Ran spec.check')).toBeVisible();
-	await page.getByRole('button', { name: 'spec.check' }).click();
+	await page.getByRole('button', { name: 'spec.check', exact: true }).click();
 	await expect(page.getByText('Ran spec.check')).toBeVisible();
 });
