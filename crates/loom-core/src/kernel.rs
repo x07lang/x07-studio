@@ -4,12 +4,13 @@ use anyhow::{anyhow, Context};
 use camino::{Utf8Path, Utf8PathBuf};
 use uuid::Uuid;
 
+use loom_adapters::command_runner::now_string;
 use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
 use loom_types::artifacts::{
-    AgentProfile, AgentStatus, IntentPacket, IntentSource, OpRecord, OperationStatus,
+    AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, OpRecord, OperationStatus,
     ProviderProbeReport, ProviderProfile, TaskType,
 };
 use loom_types::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
@@ -210,6 +211,55 @@ impl WorkspaceKernel {
         self.store.save_agent_profile(profile)
     }
 
+    pub fn create_agent_handoff(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+    ) -> anyhow::Result<(AgentHandoff, SessionSnapshot)> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let agent = self
+            .list_agent_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        let handoff = agent_handoff_from_session(&session, &agent);
+        let prompt_path = self.store.save_agent_handoff(&handoff)?;
+        let now = now_string();
+        let op = OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id,
+            op: format!("agent.handoff.{agent_id}"),
+            backend: "studio".to_string(),
+            command: std::iter::once(agent.command.clone())
+                .chain(agent.args.clone())
+                .chain(std::iter::once(handoff.prompt_path.clone()))
+                .collect(),
+            started_at: now.clone(),
+            finished_at: Some(now),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: vec![prompt_path.to_string()],
+            notes: Some(format!("Generated {} handoff prompt.", agent.label)),
+            stdout: Some(handoff.prompt.clone()),
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: serde_json::to_value(&handoff).ok(),
+            report_path: None,
+        };
+        let snapshot = self
+            .model
+            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op)))
+            .map_err(|error| anyhow!(error.to_string()))?;
+        self.store.save_session(&snapshot)?;
+        Ok((handoff, snapshot))
+    }
+
     pub fn save_provider_profile(&self, profile: &ProviderProfile) -> anyhow::Result<()> {
         self.store.save_provider_profile(profile)
     }
@@ -354,6 +404,152 @@ fn command_in_path(command: &str) -> bool {
     std::env::split_paths(&paths).any(|dir| dir.join(command).is_file())
 }
 
+fn agent_handoff_from_session(session: &SessionSnapshot, agent: &AgentProfile) -> AgentHandoff {
+    let prompt_path = format!(
+        ".x07/studio/handoffs/{}-{}.md",
+        session.session_id, agent.id
+    );
+    let command = std::iter::once(agent.command.clone())
+        .chain(agent.args.clone())
+        .chain(std::iter::once(prompt_path.clone()))
+        .collect::<Vec<_>>();
+    let artifacts = vec![
+        prompt_path.clone(),
+        format!(".x07/studio/sessions/{}.json", session.session_id),
+        "x07.json".to_string(),
+        "target/xtal/verify/summary.json".to_string(),
+    ];
+    let prompt = render_agent_handoff_prompt(session, agent, &command);
+    AgentHandoff {
+        schema_version: "x07.studio.agent_handoff@0.1.0".to_string(),
+        session_id: session.session_id,
+        agent_id: agent.id.clone(),
+        agent_label: agent.label.clone(),
+        command,
+        prompt_path,
+        prompt,
+        allowed_verbs: agent.allowed_verbs.clone(),
+        mcp_tools: agent.mcp_tools.clone(),
+        write_roots: agent.write_roots.clone(),
+        approval_required: agent.approval_required,
+        artifacts,
+        created_at: now_string(),
+    }
+}
+
+fn render_agent_handoff_prompt(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    command: &[String],
+) -> String {
+    let mut out = String::new();
+    out.push_str("# x07 Studio Agent Handoff\n\n");
+    out.push_str(&format!("- Agent: {} (`{}`)\n", agent.label, agent.id));
+    out.push_str(&format!(
+        "- Session: {} (`{}`)\n",
+        session.title, session.session_id
+    ));
+    out.push_str(&format!("- Workspace: `{}`\n", session.root));
+    out.push_str(&format!("- Phase: `{:?}`\n", session.phase));
+    out.push_str(&format!("- Command: `{}`\n", command.join(" ")));
+    out.push_str("\n## Guardrails\n\n");
+    out.push_str("- Stay inside the XTAL lifecycle; do not generate unchecked source directly from the prompt.\n");
+    out.push_str("- Use only the allowed verbs and write roots listed below.\n");
+    out.push_str("- Ask for human approval before changing specs, architecture, policy, network access, or trust boundaries.\n");
+    out.push_str(
+        "- Record every x07 command and artifact path so Studio can show the worklog.\n\n",
+    );
+    out.push_str("## Allowed Verbs\n\n");
+    for verb in &agent.allowed_verbs {
+        out.push_str(&format!("- `{verb}`\n"));
+    }
+    out.push_str("\n## MCP Tools\n\n");
+    for tool in &agent.mcp_tools {
+        out.push_str(&format!("- `{tool}`\n"));
+    }
+    out.push_str("\n## Write Roots\n\n");
+    for root in &agent.write_roots {
+        out.push_str(&format!("- `{root}`\n"));
+    }
+    if let Some(contract) = &session.contract {
+        out.push_str("\n## Session Contract\n\n");
+        out.push_str(&format!(
+            "- XTAL manifest: `{}`\n",
+            contract.project_doctrine.xtal_manifest
+        ));
+        out.push_str(&format!(
+            "- Agent instructions: `{}`\n",
+            contract.project_doctrine.agent_md
+        ));
+        out.push_str(&format!(
+            "- Focus paths: `{}`\n",
+            contract.task_doctrine.focus_paths.join("`, `")
+        ));
+        out.push_str(&format!(
+            "- Baseline refs: `{}`\n",
+            contract.task_doctrine.baseline_refs.join("`, `")
+        ));
+    }
+    if let Some(intent) = &session.intent {
+        out.push_str("\n## Approved Intent\n\n");
+        out.push_str("Targets:\n");
+        for target in &intent.targets {
+            out.push_str(&format!(
+                "- `{}` / `{}`\n",
+                target.module_id,
+                target.entry.as_deref().unwrap_or("run_v1")
+            ));
+        }
+        out.push_str("\nConstraints:\n");
+        for constraint in &intent.constraints {
+            out.push_str(&format!("- {constraint}\n"));
+        }
+        out.push_str("\nWitnesses:\n");
+        for witness in &intent.witnesses {
+            out.push_str(&format!("- `{:?}`: {}\n", witness.kind, witness.text));
+        }
+    }
+    out.push_str("\n## Required Loop\n\n");
+    out.push_str("1. Re-read this handoff and the session contract.\n");
+    out.push_str("2. Use x07 docs/MCP tools before selecting commands.\n");
+    out.push_str("3. Produce or update artifacts only inside the permitted roots.\n");
+    out.push_str("4. Run the canonical XTAL checks before reporting completion.\n");
+    out
+}
+
+fn op_record_from_binding(
+    session_id: Uuid,
+    binding_id: &str,
+    executed: ExecutedBinding,
+) -> OpRecord {
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: binding_id.to_string(),
+        backend: "cli".to_string(),
+        command: std::iter::once(executed.execution.program.clone())
+            .chain(executed.execution.args.clone())
+            .collect(),
+        started_at: executed.execution.started_at,
+        finished_at: Some(executed.execution.finished_at),
+        status: if executed.execution.exit_code == Some(0) {
+            OperationStatus::Succeeded
+        } else {
+            OperationStatus::Failed
+        },
+        exit_code: executed.execution.exit_code,
+        artifacts: executed.rendered.artifacts,
+        notes: Some(executed.rendered.notes),
+        stdout: Some(executed.execution.stdout),
+        stderr: Some(executed.execution.stderr),
+        stdout_json: executed.execution.stdout_json,
+        stderr_json: executed.execution.stderr_json,
+        report_json: executed.report_json,
+        report_path: executed.report_path.map(|path| path.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
@@ -417,38 +613,5 @@ mod tests {
             Some("classify_and_repair")
         );
         assert_eq!(vars.get("result").map(String::as_str), Some("bytes"));
-    }
-}
-
-fn op_record_from_binding(
-    session_id: Uuid,
-    binding_id: &str,
-    executed: ExecutedBinding,
-) -> OpRecord {
-    OpRecord {
-        schema_version: "x07.studio.op_record@0.1.0".to_string(),
-        id: Uuid::new_v4(),
-        session_id,
-        op: binding_id.to_string(),
-        backend: "cli".to_string(),
-        command: std::iter::once(executed.execution.program.clone())
-            .chain(executed.execution.args.clone())
-            .collect(),
-        started_at: executed.execution.started_at,
-        finished_at: Some(executed.execution.finished_at),
-        status: if executed.execution.exit_code == Some(0) {
-            OperationStatus::Succeeded
-        } else {
-            OperationStatus::Failed
-        },
-        exit_code: executed.execution.exit_code,
-        artifacts: executed.rendered.artifacts,
-        notes: Some(executed.rendered.notes),
-        stdout: Some(executed.execution.stdout),
-        stderr: Some(executed.execution.stderr),
-        stdout_json: executed.execution.stdout_json,
-        stderr_json: executed.execution.stderr_json,
-        report_json: executed.report_json,
-        report_path: executed.report_path.map(|path| path.to_string()),
     }
 }

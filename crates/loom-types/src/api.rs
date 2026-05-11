@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::artifacts::{AgentProfile, ProviderProbeReport, ProviderProfile, TaskType};
+use crate::artifacts::{
+    AgentHandoff, AgentProfile, ProviderProbeReport, ProviderProfile, TaskType,
+};
 use crate::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use crate::ops::SessionEvent;
 use crate::session::SessionSnapshot;
@@ -88,4 +90,10 @@ pub struct ProviderProbeResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpCallResponse {
     pub result: McpToolCallResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentHandoffResponse {
+    pub handoff: AgentHandoff,
+    pub session: SessionSnapshot,
 }

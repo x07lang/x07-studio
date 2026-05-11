@@ -550,6 +550,13 @@ textarea {
 	font-size: 12px;
 }
 
+.handoff-status {
+	margin: 10px 0 0;
+	color: var(--muted);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
 .worklog {
 	display: grid;
 	gap: 8px;

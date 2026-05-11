@@ -74,3 +74,11 @@ This document records friction found while implementing the Studio web surface.
    approval gates, and allowed verbs. Studio now exposes them through
    `x07.studio.agent_profile@0.1.0`, but still needs a future execution bridge
    that can launch those agents under the session contract.
+
+10. Coding agents need portable handoff artifacts.
+
+   A profile alone does not keep an external agent inside the approved XTAL
+   contract. Studio now writes `.x07/studio/handoffs/*.md` prompts with the
+   approved intent, allowed verbs, MCP tools, write roots, and required loop.
+   The remaining gap is a supervised execution bridge that streams Codex/Claude
+   progress back into `OpRecord`s instead of only preparing the handoff.

@@ -141,6 +141,27 @@ export interface AgentProfile {
 	notes: string;
 }
 
+export interface AgentHandoff {
+	schema_version: 'x07.studio.agent_handoff@0.1.0';
+	session_id: string;
+	agent_id: string;
+	agent_label: string;
+	command: string[];
+	prompt_path: string;
+	prompt: string;
+	allowed_verbs: string[];
+	mcp_tools: string[];
+	write_roots: string[];
+	approval_required: boolean;
+	artifacts: string[];
+	created_at: string;
+}
+
+export interface AgentHandoffResponse {
+	handoff: AgentHandoff;
+	session: SessionSnapshot;
+}
+
 export interface ProjectTemplate {
 	id: ProjectDifficulty;
 	label: string;

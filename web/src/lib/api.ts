@@ -5,6 +5,7 @@ import {
 	demoBindings,
 	demoSession,
 	reduceDemoEvent,
+	type AgentHandoffResponse,
 	type AgentProfile,
 	type BindingDescriptor,
 	type HealthResponse,
@@ -155,6 +156,43 @@ export class StudioApi {
 		current = reduceDemoEvent(current, 'verification_passed');
 		this.replaceDemo(current);
 		return current;
+	}
+
+	async createAgentHandoff(session: SessionSnapshot, agentId: string): Promise<AgentHandoffResponse> {
+		if (!this.demoMode) {
+			try {
+				const response = await request<AgentHandoffResponse>(
+					`/v1/sessions/${session.session_id}/agents/${agentId}/handoff`,
+					{ method: 'POST' }
+				);
+				this.replaceDemo(response.session);
+				return response;
+			} catch {
+				this.demoMode = true;
+			}
+		}
+
+		const agent =
+			defaultAgentProfiles.find((profile) => profile.id === agentId) ?? defaultAgentProfiles[0];
+		const promptPath = `.x07/studio/handoffs/${session.session_id}-${agent.id}.md`;
+		const handoff = {
+			schema_version: 'x07.studio.agent_handoff@0.1.0' as const,
+			session_id: session.session_id,
+			agent_id: agent.id,
+			agent_label: agent.label,
+			command: [agent.command, promptPath],
+			prompt_path: promptPath,
+			prompt: `# x07 Studio Agent Handoff\n\nAgent: ${agent.label}\nSession: ${session.title}\n`,
+			allowed_verbs: agent.allowed_verbs,
+			mcp_tools: agent.mcp_tools,
+			write_roots: agent.write_roots,
+			approval_required: agent.approval_required,
+			artifacts: [promptPath],
+			created_at: String(Date.now())
+		};
+		const next = appendDemoOp(session, `agent.handoff.${agent.id}`, 'succeeded');
+		this.replaceDemo(next);
+		return { handoff, session: next };
 	}
 
 	formalizeLocal(

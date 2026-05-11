@@ -115,6 +115,7 @@ Provider probe request:
 
 - `GET /agents`
 - `POST /agents`
+- `POST /sessions/{session_id}/agents/{agent_id}/handoff`
 
 Agent profile response:
 
@@ -131,6 +132,21 @@ Agent profile response:
   "approval_required": true,
   "status": "available",
   "notes": "Remote coding-agent runner gated by x07 session contract."
+}
+```
+
+Agent handoff response:
+
+```json
+{
+  "handoff": {
+    "schema_version": "x07.studio.agent_handoff@0.1.0",
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "agent_id": "openai-codex",
+    "prompt_path": ".x07/studio/handoffs/00000000-0000-0000-0000-000000000000-openai-codex.md",
+    "command": ["codex", ".x07/studio/handoffs/00000000-0000-0000-0000-000000000000-openai-codex.md"]
+  },
+  "session": {}
 }
 ```
 

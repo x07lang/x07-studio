@@ -73,6 +73,9 @@ Studio also exposes command-capable coding agents through
 `x07.studio.agent_profile@0.1.0`. The daemon returns default Codex and Claude
 Code profiles, marks whether their commands are available on `PATH`, and stores
 workspace overrides under `.x07/studio/agents/`.
+Per-session handoffs are generated under `.x07/studio/handoffs/` so Codex or
+Claude Code receives the approved intent, session contract, allowed verbs, MCP
+tools, write roots, and required XTAL loop as a concrete prompt artifact.
 
 The web intake starts with simple, intermediate, and complex x07 project briefs.
 They are intentionally editable form seeds, not hidden generators: a user or

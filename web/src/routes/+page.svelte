@@ -40,6 +40,7 @@
 	let revisionText = initialProject.revision;
 	let revisionHistory: string[] = [];
 	let statusLine = 'Starting Studio surface';
+	let handoffStatus = 'No agent handoff generated';
 	let busy = false;
 	let approvalState: 'drafting' | 'awaiting' | 'changes' | 'approved' = 'drafting';
 	let visibleAgent = 'Codex';
@@ -168,6 +169,19 @@
 		const snapshot = await api.runBinding(selected, bindingId);
 		await replaceSession(snapshot);
 		statusLine = `Ran ${bindingId}`;
+	}
+
+	async function generateAgentHandoff(agentId: string) {
+		if (!selected) return;
+		busy = true;
+		try {
+			const response = await api.createAgentHandoff(selected, agentId);
+			await replaceSession(response.session);
+			handoffStatus = `${response.handoff.agent_label} handoff saved to ${response.handoff.prompt_path}`;
+			statusLine = handoffStatus;
+		} finally {
+			busy = false;
+		}
 	}
 
 	async function approveAndRun() {
@@ -455,9 +469,18 @@
 							<span>{agent.command} · {agent.status.replaceAll('_', ' ')}</span>
 							<small>{agent.allowed_verbs.join(' -> ')}</small>
 							<em>{agent.approval_required ? 'Approval gated' : 'Autonomous'} · {agent.write_roots.join(', ')}</em>
+							<button
+								class="segmented-button"
+								type="button"
+								on:click={() => generateAgentHandoff(agent.id)}
+								disabled={busy || !selected}
+							>
+								Generate {agent.label} Handoff
+							</button>
 						</div>
 					{/each}
 				</div>
+				<p class="handoff-status">{handoffStatus}</p>
 				<div class="agent-lanes">
 					{#each agentLanes as lane}
 						<div>

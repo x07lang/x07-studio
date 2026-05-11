@@ -3,7 +3,7 @@ use std::io::Write;
 
 use anyhow::Context;
 use camino::{Utf8Path, Utf8PathBuf};
-use loom_types::artifacts::{AgentProfile, ProviderProbeReport, ProviderProfile};
+use loom_types::artifacts::{AgentHandoff, AgentProfile, ProviderProbeReport, ProviderProfile};
 use loom_types::session::SessionSnapshot;
 
 #[derive(Debug, Clone)]
@@ -21,6 +21,7 @@ impl FsStore {
     pub fn init(&self) -> anyhow::Result<()> {
         fs::create_dir_all(self.sessions_dir())?;
         fs::create_dir_all(self.agents_dir())?;
+        fs::create_dir_all(self.handoffs_dir())?;
         fs::create_dir_all(self.providers_dir())?;
         fs::create_dir_all(self.reports_dir())?;
         Ok(())
@@ -36,6 +37,10 @@ impl FsStore {
 
     pub fn agents_dir(&self) -> Utf8PathBuf {
         self.root.join("agents")
+    }
+
+    pub fn handoffs_dir(&self) -> Utf8PathBuf {
+        self.root.join("handoffs")
     }
 
     pub fn reports_dir(&self) -> Utf8PathBuf {
@@ -76,6 +81,15 @@ impl FsStore {
         }
         profiles.sort_by(|a, b| a.label.cmp(&b.label));
         Ok(profiles)
+    }
+
+    pub fn save_agent_handoff(&self, handoff: &AgentHandoff) -> anyhow::Result<Utf8PathBuf> {
+        let stem = format!("{}-{}", handoff.session_id, handoff.agent_id);
+        let json_path = self.handoffs_dir().join(format!("{stem}.json"));
+        let markdown_path = self.handoffs_dir().join(format!("{stem}.md"));
+        write_json(&json_path, handoff)?;
+        write_text(&markdown_path, &handoff.prompt)?;
+        Ok(markdown_path)
     }
 
     pub fn save_provider_profile(&self, profile: &ProviderProfile) -> anyhow::Result<()> {
@@ -157,14 +171,24 @@ fn write_json<T: serde::Serialize>(path: &Utf8Path, value: &T) -> anyhow::Result
     Ok(())
 }
 
+fn write_text(path: &Utf8Path, value: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = fs::File::create(path)?;
+    file.write_all(value.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
 
     use camino::Utf8PathBuf;
     use loom_types::artifacts::{
-        AgentProfile, ProbeStatus, ProviderCapabilities, ProviderProbeMode, ProviderProbeReport,
-        ProviderProfile,
+        AgentHandoff, AgentProfile, ProbeStatus, ProviderCapabilities, ProviderProbeMode,
+        ProviderProbeReport, ProviderProfile,
     };
     use loom_types::session::SessionSnapshot;
     use uuid::Uuid;
@@ -241,6 +265,43 @@ mod tests {
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].id, "codex-local");
         assert_eq!(profiles[0].command, "codex");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn agent_handoffs_persist_markdown_and_json() {
+        let root = temp_root();
+        let store = FsStore::new(root.as_path());
+        store.init().expect("store init");
+        let handoff = AgentHandoff {
+            schema_version: "x07.studio.agent_handoff@0.1.0".to_string(),
+            session_id: Uuid::nil(),
+            agent_id: "openai-codex".to_string(),
+            agent_label: "OpenAI Codex".to_string(),
+            command: vec!["codex".to_string()],
+            prompt_path:
+                ".x07/studio/handoffs/00000000-0000-0000-0000-000000000000-openai-codex.md"
+                    .to_string(),
+            prompt: "# Handoff\n\nRun XTAL.".to_string(),
+            allowed_verbs: vec!["xtal.verify".to_string()],
+            mcp_tools: vec!["x07.exec_v1".to_string()],
+            write_roots: vec!["src/".to_string()],
+            approval_required: true,
+            artifacts: vec!["x07.json".to_string()],
+            created_at: "1".to_string(),
+        };
+
+        let path = store.save_agent_handoff(&handoff).expect("save handoff");
+
+        assert!(path.exists());
+        assert!(fs::read_to_string(&path)
+            .expect("read markdown")
+            .contains("Run XTAL."));
+        let saved: AgentHandoff = serde_json::from_str(
+            &fs::read_to_string(path.with_extension("json")).expect("read json"),
+        )
+        .expect("parse handoff");
+        assert_eq!(saved, handoff);
         fs::remove_dir_all(root).ok();
     }
 

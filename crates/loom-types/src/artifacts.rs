@@ -188,6 +188,23 @@ pub struct AgentProfile {
     pub notes: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentHandoff {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub agent_id: String,
+    pub agent_label: String,
+    pub command: Vec<String>,
+    pub prompt_path: String,
+    pub prompt: String,
+    pub allowed_verbs: Vec<String>,
+    pub mcp_tools: Vec<String>,
+    pub write_roots: Vec<String>,
+    pub approval_required: bool,
+    pub artifacts: Vec<String>,
+    pub created_at: String,
+}
+
 impl AgentProfile {
     pub fn codex() -> Self {
         Self {
