@@ -414,3 +414,11 @@ This document records friction found while implementing the Studio web surface.
    free daemon and web ports when defaults are busy, exports those choices to the
    daemon process, and daemon health reports the runtime defaults back to the
    browser onboarding plan.
+
+40. Standalone CI should launch the artifact, not only inspect it.
+
+   The package validator proved the manifest, scripts, web build, and bundled
+   components existed, but it did not start the launcher as an end user would.
+   The desktop matrix now occupies the default daemon/web ports, starts the
+   packaged web launcher, fetches the built app, and verifies `/v1/health`
+   reports the runtime fallback daemon address.

@@ -89,7 +89,19 @@ def main() -> int:
     try:
         url = f"http://{web_addr}"
         server = make_server(web_addr, web_root, f"http://{daemon_addr}")
-        print(json.dumps({"studio_url": url, "workspace_root": str(workspace_root)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "studio_url": url,
+                    "workspace_root": str(workspace_root),
+                    "daemon_addr": daemon_addr,
+                    "daemon_url": f"http://{daemon_addr}",
+                    "web_addr": web_addr,
+                },
+                indent=2,
+            ),
+            flush=True,
+        )
         if not args.no_open:
             webbrowser.open(url)
         server.serve_forever()

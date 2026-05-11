@@ -101,6 +101,7 @@ jobs:
           cargo build --release -p loom-daemon -p x07-studio -p x07-studio-forge
           python3 scripts/package_standalone.py --target-dir target/release --web-dir web/build --out-dir dist/standalone-smoke
           python3 scripts/validate_standalone_bundle.py --dist-dir dist/standalone-smoke
+          python3 scripts/smoke_standalone_launcher.py --dist-dir dist/standalone-smoke
 
   standalone-desktop:
     name: desktop / ${{ matrix.os }}
@@ -170,6 +171,9 @@ jobs:
 
       - name: Validate standalone onboarding bundle
         run: python scripts/validate_standalone_bundle.py --dist-dir dist/standalone --require-component x07-wasm
+
+      - name: Smoke standalone web launcher
+        run: python scripts/smoke_standalone_launcher.py --dist-dir dist/standalone
 
       - name: Upload standalone bundle
         uses: actions/upload-artifact@v7
