@@ -174,3 +174,13 @@ This document records friction found while implementing the Studio web surface.
    package metadata and saw an `ext-net` version conflict. The seeder now skips
    `.x07` alongside `target`, `dist`, and `node_modules`, forcing new projects
    to hydrate dependencies from the current lockfile and registry metadata.
+
+18. Crawler-shaped projects need explicit CLI-argument run bindings.
+
+   `x07crawl` is not a spec-only XTAL starter: its documented flow passes
+   process arguments after `--` and writes `out/crawl.json`. The browser intent
+   parser already mapped crawler prompts to `crawl.plan`, but Studio previously
+   had no seeded template or binding that could run the crawler replay flow.
+   Studio now maps `crawl.plan` to `docs/examples/apps/x07crawl`, prepares
+   `out/`, runs the crawler replay command with explicit sandbox fallback when
+   needed, and bundles `dist/x07crawl`.

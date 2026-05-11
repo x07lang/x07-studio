@@ -126,3 +126,5 @@ from the intent packet, initializes an `xtal-pure` project only when `x07.json`
 is absent, or seeds a supported `x07/docs/examples` project when the intent maps
 to one. It then runs the template's generation, arch/package, test, run, bundle,
 and verification commands while appending each command as an `OpRecord`.
+Supported complex seeds include workflow graph, state-machine contracts,
+API gateway, x07crawl, and x07dbguard examples.

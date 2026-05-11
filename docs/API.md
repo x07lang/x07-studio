@@ -158,6 +158,7 @@ example first and then runs its canonical workflow:
 - `workflow.graph`: `docs/examples/agent-gate/xtal/workflow-graph`
 - `workflow.lifecycle`: `docs/examples/readiness-checks/x07-sm-arch-contracts-smoke`
 - `gateway.core`: `docs/examples/apps/x07-api-gateway`
+- `crawl.plan`: `docs/examples/apps/x07crawl`
 - `db.guard`: `docs/examples/apps/x07dbguard`
 
 Each seeded workflow appends its `project.seed.*`, generation, arch/package,

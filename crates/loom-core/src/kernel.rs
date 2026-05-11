@@ -912,6 +912,7 @@ enum WorkflowTemplate {
     WorkflowGraph,
     StateMachineArch,
     ApiGateway,
+    X07Crawl,
     DbGuard,
 }
 
@@ -922,6 +923,7 @@ impl WorkflowTemplate {
             Self::WorkflowGraph => "workflow-graph",
             Self::StateMachineArch => "state-machine-arch",
             Self::ApiGateway => "x07-api-gateway",
+            Self::X07Crawl => "x07crawl",
             Self::DbGuard => "x07dbguard",
         }
     }
@@ -932,6 +934,7 @@ impl WorkflowTemplate {
             Self::WorkflowGraph => Some("agent-gate/xtal/workflow-graph"),
             Self::StateMachineArch => Some("readiness-checks/x07-sm-arch-contracts-smoke"),
             Self::ApiGateway => Some("apps/x07-api-gateway"),
+            Self::X07Crawl => Some("apps/x07crawl"),
             Self::DbGuard => Some("apps/x07dbguard"),
         }
     }
@@ -971,6 +974,18 @@ impl WorkflowTemplate {
                 "run.sandbox.os",
                 "bundle.api_gateway.sandbox.os",
             ],
+            Self::X07Crawl if has_vm_guest_bundle => &[
+                "pkg.lock",
+                "test.manifest",
+                "run.x07crawl.sandbox",
+                "bundle.x07crawl.sandbox",
+            ],
+            Self::X07Crawl => &[
+                "pkg.lock",
+                "test.manifest",
+                "run.x07crawl.sandbox.os",
+                "bundle.x07crawl.sandbox.os",
+            ],
             Self::DbGuard if has_vm_guest_bundle => &[
                 "pkg.lock",
                 "arch.check.write_lock",
@@ -1002,6 +1017,8 @@ impl WorkflowTemplate {
 
     fn directory_for_step(self, step: &str) -> Option<&'static str> {
         match (self, step) {
+            (Self::X07Crawl, "run.x07crawl.sandbox") => Some("out/"),
+            (Self::X07Crawl, "run.x07crawl.sandbox.os") => Some("out/"),
             (Self::DbGuard, "run.sandbox.stdin") => Some("out/"),
             (Self::DbGuard, "run.sandbox.stdin.os") => Some("out/"),
             _ => None,
@@ -1027,6 +1044,8 @@ fn workflow_template_from_intent(intent: &IntentPacket) -> WorkflowTemplate {
         WorkflowTemplate::DbGuard
     } else if haystack.contains("x07-api-gateway") || module_id == "gateway.core" {
         WorkflowTemplate::ApiGateway
+    } else if haystack.contains("x07crawl") || module_id == "crawl.plan" {
+        WorkflowTemplate::X07Crawl
     } else if haystack.contains("x07-sm-arch-contracts-smoke") || module_id == "workflow.lifecycle"
     {
         WorkflowTemplate::StateMachineArch
@@ -2826,6 +2845,16 @@ mod tests {
             },
             ..workflow.clone()
         };
+        let crawler = IntentPacket {
+            targets: vec![IntentTarget {
+                module_id: "crawl.plan".to_string(),
+                entry: Some("plan_crawl_v1".to_string()),
+            }],
+            source: IntentSource::Text {
+                raw: "Use docs/examples/apps/x07crawl".to_string(),
+            },
+            ..workflow.clone()
+        };
         let dbguard = IntentPacket {
             targets: vec![IntentTarget {
                 module_id: "db.guard".to_string(),
@@ -2878,6 +2907,23 @@ mod tests {
         assert_eq!(
             workflow_template_from_intent(&dbguard),
             WorkflowTemplate::DbGuard
+        );
+        assert_eq!(
+            workflow_template_from_intent(&crawler),
+            WorkflowTemplate::X07Crawl
+        );
+        assert_eq!(
+            WorkflowTemplate::X07Crawl.workflow_steps_for_environment(false),
+            &[
+                "pkg.lock",
+                "test.manifest",
+                "run.x07crawl.sandbox.os",
+                "bundle.x07crawl.sandbox.os"
+            ]
+        );
+        assert_eq!(
+            WorkflowTemplate::X07Crawl.directory_for_step("run.x07crawl.sandbox.os"),
+            Some("out/")
         );
         assert_eq!(
             WorkflowTemplate::StateMachineArch.stdin_for_step("run.stdin"),

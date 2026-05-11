@@ -595,6 +595,8 @@ export function demoBindings(): BindingDescriptor[] {
 		{ id: 'run.sandbox.stdin.os', category: 'x07/run', program: 'x07', notes: 'Run sandbox profile with Studio stdin and OS-backed isolation.' },
 		{ id: 'bundle.api_gateway.sandbox.os', category: 'x07/bundle', program: 'x07', notes: 'Bundle API gateway with OS-backed sandbox isolation.' },
 		{ id: 'bundle.dbguard.sandbox.os', category: 'x07/bundle', program: 'x07', notes: 'Bundle DB guard with OS-backed sandbox isolation.' },
+		{ id: 'run.x07crawl.sandbox.os', category: 'x07/run', program: 'x07', notes: 'Run x07crawl replay with OS-backed sandbox isolation.' },
+		{ id: 'bundle.x07crawl.sandbox.os', category: 'x07/bundle', program: 'x07', notes: 'Bundle x07crawl with OS-backed sandbox isolation.' },
 		{ id: 'impl.check', category: 'xtal/impl', program: 'x07', notes: 'Inspect realization drift.' },
 		{ id: 'impl.sync.write', category: 'xtal/impl', program: 'x07', notes: 'Synchronize implementation.' },
 		{ id: 'impl.sync.patchset', category: 'xtal/impl', program: 'x07', notes: 'Generate implementation patchset.' },
