@@ -141,3 +141,13 @@ This document records friction found while implementing the Studio web surface.
    `LOOM_DAEMON_ORIGIN`, and the Playwright web server points that origin at a
    closed local port so demo-mode e2e coverage stays hermetic even when a live
    daemon is active for separate rendered QA.
+
+15. Trust review needs a queue, not only a long log.
+
+   The operation log is canonical, but reviewers still need a small set of
+   high-signal items when agent output, implementation sync, and verification
+   records accumulate. The browser now derives a review queue from `OpRecord`s:
+   agent artifacts, diagnostics, writes, approval requests, patchsets, verify
+   evidence, and certify evidence become clickable signals that select the
+   original operation in the inspector. The remaining gap is a visual patch diff
+   for patchset contents instead of path-level surfacing only.

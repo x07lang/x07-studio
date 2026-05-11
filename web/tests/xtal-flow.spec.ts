@@ -60,6 +60,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByText('Demo projection active')).toBeVisible();
 	await expect(page.getByLabel('Operation log')).toBeInViewport();
 	await expect(page.getByText('Agent Lane')).toBeVisible();
+	await expect(page.getByLabel('Trust review signals')).toContainText('No review signals recorded');
 
 	await page.getByRole('button', { name: 'Refresh Studio' }).click();
 	await expect(page.getByText('Demo projection active')).toBeVisible();
@@ -130,10 +131,17 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByRole('button', { name: 'Run Claude Code Command' }).click();
 	await expect(page.locator('footer').getByText('Claude Code supervised command succeeded')).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.event.claude-code.artifact' })).toBeVisible();
+	await expect(page.getByLabel('Trust review signals')).toContainText('Artifact surfaced');
+	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Artifact surfaced/ }).click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText(
+		'agent.event.claude-code.artifact'
+	);
 	await page.getByRole('tab', { name: 'Intent' }).click();
 
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
+	await expect(page.getByLabel('Trust review signals')).toContainText('Verify evidence');
+	await expect(page.getByLabel('Trust review signals')).toContainText('Implementation write');
 	await expect(page.getByText('Agent Visible Worklog')).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.event.claude-code.artifact' })).toBeVisible();
@@ -148,6 +156,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Operation artifacts')).toContainText(
 		'target/xtal/verify/summary.json'
 	);
+	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Verify evidence/ }).click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('xtal.verify');
 
 	await page.getByLabel('Worklog filter').selectOption('claude');
 	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();

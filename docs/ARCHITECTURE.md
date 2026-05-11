@@ -95,6 +95,11 @@ process exit. The kernel also observes those chunks for bounded semantic
 signals and appends `agent.event.*` records for reported artifacts, diagnostics,
 write activity, and approval/policy requests, giving humans filterable evidence
 without hiding the raw stream.
+The browser derives a compact trust review queue from those same `OpRecord`s:
+artifact, diagnostic, write, patchset, verify, and certify records become
+clickable signals that select the source operation in the inspector. Review
+focus stays grounded in the canonical log instead of becoming a second state
+model.
 Profiles marked `approval_required` are gated by pending `agent.approval.*`
 records; humans approve or reject those checkpoints in the same visible worklog
 before Studio starts the supervised command. Approval checkpoints are one-shot:

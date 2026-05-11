@@ -1093,6 +1093,87 @@ textarea {
 	line-height: 1.45;
 }
 
+.review-panel {
+	display: grid;
+	gap: 9px;
+}
+
+.review-signal-list {
+	display: grid;
+	gap: 7px;
+}
+
+.review-signal {
+	display: grid;
+	gap: 4px;
+	width: 100%;
+	min-width: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 9px;
+	background: rgba(255, 255, 255, 0.038);
+	color: inherit;
+	text-align: left;
+	font: inherit;
+}
+
+.review-signal.info {
+	border-color: rgba(85, 214, 231, 0.25);
+}
+
+.review-signal.warn {
+	border-color: rgba(255, 195, 91, 0.38);
+	background: rgba(255, 195, 91, 0.055);
+}
+
+.review-signal.ok {
+	border-color: rgba(114, 228, 180, 0.34);
+	background: rgba(114, 228, 180, 0.055);
+}
+
+.review-signal span,
+.review-empty {
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0;
+}
+
+.review-signal strong,
+.review-signal code,
+.review-signal em {
+	overflow-wrap: anywhere;
+}
+
+.review-signal strong {
+	color: var(--text);
+	font-size: 12px;
+	line-height: 1.35;
+}
+
+.review-signal code,
+.review-signal em {
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.review-signal code {
+	color: var(--cyan);
+}
+
+.review-signal em {
+	color: var(--faint);
+	font-style: normal;
+}
+
+.review-empty {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 10px;
+	background: rgba(255, 255, 255, 0.035);
+}
+
 .wide {
 	width: 100%;
 }
