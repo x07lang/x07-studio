@@ -71,9 +71,25 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Operation log')).toBeInViewport();
 	await expect(page.getByText('Agent Lane')).toBeVisible();
 	await expect(page.getByLabel('Trust review signals')).toContainText('No review signals recorded');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('XTAL readiness');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Active sessions');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Last verify');
+	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Provider');
 
 	await page.getByRole('button', { name: 'Refresh Studio' }).click();
 	await expect(page.getByText('Demo projection active')).toBeVisible();
+	await page.getByRole('button', { name: 'Brownfield Extract' }).click();
+	await expect(page.getByText('Brownfield extract intake prepared')).toBeVisible();
+	await expect(page.getByLabel('Task type')).toHaveValue('brownfield_extract');
+	await expect(page.getByLabel('Initial plan')).toHaveValue(/Extract the current project behavior/);
+	await page.getByRole('button', { name: 'Incident Improve' }).click();
+	await expect(page.getByText('Incident improve intake prepared')).toBeVisible();
+	await expect(page.getByLabel('Task type')).toHaveValue('incident_repair');
+	await expect(page.getByLabel('Incident Note')).toBeChecked();
+	await page.getByRole('button', { name: 'Intent', exact: true }).click();
+	await expect(page.getByText('Intent intake prepared')).toBeVisible();
+	await expect(page.getByLabel('Task type')).toHaveValue('new_behavior');
+	await expect(page.getByLabel('Written Plan')).toBeChecked();
 	await page.getByLabel('Active room').selectOption('verify');
 	await expect(page.getByRole('tab', { name: 'Verify' })).toHaveAttribute('aria-selected', 'true');
 	await page.getByLabel('Active room').selectOption('intent');

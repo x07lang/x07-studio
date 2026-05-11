@@ -60,6 +60,10 @@
 .rail-card small,
 .eyebrow,
 .field label,
+.radar-identity code,
+.radar-metric span,
+.radar-metric small,
+.radar-actions span,
 .mode-row label,
 .template-meta span,
 .evidence-list span,
@@ -236,7 +240,7 @@ dd {
 	padding: 12px;
 	display: grid;
 	gap: 12px;
-	grid-template-rows: auto auto auto minmax(250px, 1fr) minmax(138px, 0.42fr) auto;
+	grid-template-rows: auto auto auto auto minmax(220px, 1fr) minmax(126px, 0.36fr) auto;
 }
 
 .topbar {
@@ -281,6 +285,91 @@ dd {
 
 .top-actions {
 	justify-content: flex-end;
+}
+
+.workspace-radar {
+	display: grid;
+	grid-template-columns: minmax(210px, 0.54fr) minmax(520px, 1.38fr) minmax(220px, 0.62fr);
+	gap: 12px;
+	align-items: stretch;
+	padding: 11px;
+}
+
+.radar-identity {
+	display: grid;
+	align-content: center;
+	gap: 5px;
+	min-width: 0;
+}
+
+.radar-identity h1 {
+	font-size: 21px;
+}
+
+.radar-identity code,
+.radar-metric small {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	overflow-wrap: anywhere;
+}
+
+.radar-grid {
+	display: grid;
+	grid-template-columns: repeat(6, minmax(0, 1fr));
+	gap: 8px;
+	min-width: 0;
+}
+
+.radar-metric {
+	display: grid;
+	align-content: center;
+	gap: 3px;
+	min-height: 72px;
+	min-width: 0;
+	border: 1px solid rgba(85, 214, 231, 0.16);
+	border-radius: var(--radius);
+	padding: 9px;
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.radar-metric strong {
+	color: var(--text);
+	font-size: 18px;
+	line-height: 1.08;
+}
+
+.radar-metric span {
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.radar-metric small {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.radar-actions {
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 7px;
+	align-content: center;
+	min-width: 0;
+}
+
+.radar-actions div {
+	display: flex;
+	justify-content: space-between;
+	gap: 10px;
+	border: 1px solid rgba(114, 228, 180, 0.18);
+	border-radius: var(--radius);
+	padding: 7px 9px;
+	background: rgba(114, 228, 180, 0.055);
+}
+
+.radar-actions button {
+	justify-content: center;
 }
 
 .project-form {
@@ -1413,6 +1502,19 @@ textarea {
 		grid-template-columns: 1fr 1fr 1fr auto;
 	}
 
+	.workspace-radar {
+		grid-template-columns: 1fr;
+	}
+
+	.radar-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+
+	.radar-actions {
+		grid-template-columns: minmax(180px, 1fr) repeat(3, auto);
+		align-items: center;
+	}
+
 	.form-title {
 		grid-column: 1 / -1;
 	}
@@ -1500,9 +1602,18 @@ textarea {
 	}
 
 	.topbar,
+	.workspace-radar,
 	.project-form,
 	.intent-spec-grid,
 	.template-meta {
+		grid-template-columns: 1fr;
+	}
+
+	.radar-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.radar-actions {
 		grid-template-columns: 1fr;
 	}
 
@@ -1559,6 +1670,10 @@ textarea {
 
 	h1 {
 		font-size: 22px;
+	}
+
+	.radar-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
 	.lineage-map {

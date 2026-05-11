@@ -183,6 +183,46 @@
 	$: currentLifecycle = lifecycle[Math.min(progress, lifecycle.length - 1)] ?? lifecycle[0];
 	$: consumedCredits = Math.min(42, Number((2.7 + progress * 3.6 + worklog.length * 0.9).toFixed(1)));
 	$: budgetPercent = Math.min(98, Math.round((consumedCredits / 42) * 100));
+	$: workspaceRoot = health.workspace_root || '/workspace/x07-project';
+	$: workspaceName = workspaceLabel(workspaceRoot);
+	$: readinessPercent = Math.round((progress / Math.max(lifecycle.length - 1, 1)) * 100);
+	$: latestVerifyOp = latestOperation(allOps, ['xtal.verify', '.verify', 'test.']);
+	$: latestCertifyOp = latestOperation(allOps, ['xtal.certify', 'certify', 'provenance.verify']);
+	$: activeIncidentCount = sessions.filter((session) => session.task_type === 'incident_repair').length;
+	$: availableAgentCount = agentProfiles.filter((profile) => profile.status === 'available').length;
+	$: providerSummary = api.isDemoMode ? 'demo projection' : 'Loom daemon';
+	$: radarMetrics = [
+		{
+			label: 'XTAL readiness',
+			value: `${readinessPercent}%`,
+			detail: currentLifecycle.label
+		},
+		{
+			label: 'Active sessions',
+			value: String(sessions.length),
+			detail: selected?.phase.replaceAll('_', ' ') ?? 'none'
+		},
+		{
+			label: 'Last verify',
+			value: statusLabel(latestVerifyOp),
+			detail: latestVerifyOp?.op ?? 'not run'
+		},
+		{
+			label: 'Last certify',
+			value: statusLabel(latestCertifyOp),
+			detail: latestCertifyOp?.op ?? 'not run'
+		},
+		{
+			label: 'Runtime incidents',
+			value: String(activeIncidentCount),
+			detail: activeIncidentCount ? 'repair lanes open' : 'none active'
+		},
+		{
+			label: 'Agents',
+			value: `${availableAgentCount}/${agentProfiles.length}`,
+			detail: agentProfiles.length ? 'profiles configured' : 'loading profiles'
+		}
+	];
 	$: worldState = [
 		{ label: 'Services', value: selected ? '1 / 1' : '0 / 1', ok: Boolean(selected) },
 		{ label: 'Specs', value: selected?.intent ? '2 / 2' : '0 / 2', ok: Boolean(selected?.intent) },
@@ -264,6 +304,40 @@
 		statusLine = `Focused ${label} room`;
 	}
 
+	function primeRadarAction(action: 'intent' | 'brownfield' | 'incident') {
+		selectedRoom = 'intent';
+		const focusedSessionId = selected?.session_id || selectedId;
+		if (focusedSessionId) selectedSessionForRoom = focusedSessionId;
+		approvalState = 'drafting';
+		revisionHistory = [];
+		if (action === 'brownfield') {
+			projectTitle = 'Brownfield XTAL extract';
+			projectTaskType = 'brownfield_extract';
+			inputMode = 'text';
+			promptText =
+				'Extract the current project behavior into XTAL specs, examples, write-scope doctrine, generated tests, and a human approval gate before any implementation changes.';
+			revisionText = 'Keep implementation writes blocked until the extracted spec is approved.';
+			statusLine = 'Brownfield extract intake prepared';
+			return;
+		}
+		if (action === 'incident') {
+			projectTitle = 'Incident improvement loop';
+			projectTaskType = 'incident_repair';
+			inputMode = 'incident';
+			promptText =
+				'Incident note: ingest the failure as read-only evidence, classify the violated spec clause, propose a spec-preserving repair first, and require human review before widening behavior or policy.';
+			revisionText = 'Require regression evidence tied to the incident artifact.';
+			statusLine = 'Incident improve intake prepared';
+			return;
+		}
+		projectTitle = selectedProjectTemplate.title;
+		projectTaskType = selectedProjectTemplate.taskType;
+		inputMode = 'text';
+		promptText = selectedProjectTemplate.prompt;
+		revisionText = selectedProjectTemplate.revision;
+		statusLine = 'Intent intake prepared';
+	}
+
 	function isX07WorkflowOp(op: string) {
 		return [
 			'project.',
@@ -279,6 +353,19 @@
 			'impl.',
 			'xtal.'
 		].some((prefix) => op.startsWith(prefix));
+	}
+
+	function latestOperation(ops: OpRecord[], needles: string[]) {
+		return [...ops].reverse().find((op) => needles.some((needle) => op.op.includes(needle))) ?? null;
+	}
+
+	function statusLabel(op: OpRecord | null) {
+		return op?.status ? op.status.replaceAll('_', ' ') : 'pending';
+	}
+
+	function workspaceLabel(root: string) {
+		const parts = root.split('/').filter(Boolean);
+		return parts.at(-1) ?? root;
 	}
 
 	function focusRoomFromKey(event: KeyboardEvent, room: Room) {
@@ -693,6 +780,38 @@
 				</button>
 			</div>
 		</header>
+
+		<section class="workspace-radar panel" aria-label="Workspace radar">
+			<div class="radar-identity">
+				<p class="eyebrow">Workspace Radar</p>
+				<h1>{workspaceName}</h1>
+				<code>{workspaceRoot}</code>
+			</div>
+			<div class="radar-grid">
+				{#each radarMetrics as metric}
+					<div class="radar-metric">
+						<span>{metric.label}</span>
+						<strong>{metric.value}</strong>
+						<small>{metric.detail}</small>
+					</div>
+				{/each}
+			</div>
+			<div class="radar-actions" aria-label="Radar quick actions">
+				<div>
+					<span>Provider</span>
+					<strong>{providerSummary}</strong>
+				</div>
+				<button class="command-button primary" type="button" on:click={() => primeRadarAction('intent')}>
+					Intent
+				</button>
+				<button class="command-button" type="button" on:click={() => primeRadarAction('brownfield')}>
+					Brownfield Extract
+				</button>
+				<button class="command-button warning" type="button" on:click={() => primeRadarAction('incident')}>
+					Incident Improve
+				</button>
+			</div>
+		</section>
 
 		<section class="project-form panel" aria-label="Project intake">
 			<div class="form-title">
