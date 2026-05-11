@@ -57,7 +57,8 @@
 	let handoffStatus = 'No agent handoff generated';
 	let busy = false;
 	let approvalState: ApprovalLoopState = 'drafting';
-	let visibleAgent = 'Codex';
+	let selectedAgentId = 'openai-codex';
+	let visibleAgent = 'OpenAI Codex';
 	let selectedBindingId = '';
 	let selectedOpId = '';
 	let worklogFilter: 'all' | 'codex' | 'claude' | 'xtal' = 'all';
@@ -209,6 +210,9 @@
 		workspaceRadar?.incident_count ??
 		sessions.filter((session) => session.task_type === 'incident_repair').length;
 	$: availableAgentCount = agentProfiles.filter((profile) => profile.status === 'available').length;
+	$: activeAgentProfile = agentProfiles.find((profile) => profile.id === selectedAgentId);
+	$: visibleAgent =
+		activeAgentProfile?.label ?? (selectedAgentId === 'claude-code' ? 'Claude Code' : 'OpenAI Codex');
 	$: providerSummary = api.isDemoMode ? 'demo projection' : 'Loom daemon';
 	$: radarMetrics = [
 		{
@@ -277,6 +281,9 @@
 		sessions = await api.listSessions();
 		bindings = await api.listBindings();
 		agentProfiles = await api.listAgents();
+		if (agentProfiles.length && !agentProfiles.some((profile) => profile.id === selectedAgentId)) {
+			selectedAgentId = agentProfiles[0].id;
+		}
 		workspaceRadar = await api.workspaceRadar();
 		selectedId = selectedId || sessions[0]?.session_id || '';
 		statusLine = api.isDemoMode ? 'Demo projection active' : 'Connected to Loom daemon';
@@ -810,9 +817,15 @@
 			</div>
 			<div class="flow-select">
 				<label for="active-agent">Agent Lane</label>
-				<select id="active-agent" bind:value={visibleAgent} aria-label="Active coding agent">
-					<option>Codex</option>
-					<option>Claude Code</option>
+				<select id="active-agent" bind:value={selectedAgentId} aria-label="Active coding agent">
+					{#if agentProfiles.length}
+						{#each agentProfiles as agent}
+							<option value={agent.id}>{agent.label}</option>
+						{/each}
+					{:else}
+						<option value="openai-codex">OpenAI Codex</option>
+						<option value="claude-code">Claude Code</option>
+					{/if}
 				</select>
 			</div>
 			<div class="top-actions">

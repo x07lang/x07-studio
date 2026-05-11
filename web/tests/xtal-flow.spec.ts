@@ -134,7 +134,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	).toBeVisible();
 	await page.getByRole('tab', { name: 'Intent' }).click();
 
-	await page.getByLabel('Active coding agent').selectOption('Claude Code');
+	await page.getByLabel('Active coding agent').selectOption({ label: 'Claude Code' });
+	await expect(page.getByLabel('Active coding agent')).toHaveValue('claude-code');
 
 	for (const project of projects) {
 		await page.getByLabel('Project difficulty').selectOption(project.difficulty);
