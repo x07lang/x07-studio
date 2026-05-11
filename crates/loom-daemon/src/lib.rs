@@ -198,13 +198,26 @@ async fn run_agent_handoff(
     State(state): State<ApiState>,
     Json(request): Json<AgentRunRequest>,
 ) -> Result<Json<AgentRunResponse>, (StatusCode, String)> {
-    let mut kernel = state.kernel.lock().await;
-    let (handoff, op, session) = kernel
-        .run_agent_handoff(session_id, &agent_id, request.mode, request.timeout_seconds)
-        .await
-        .map_err(internal_error)?;
+    let prepared = {
+        let mut kernel = state.kernel.lock().await;
+        kernel
+            .start_agent_handoff(session_id, &agent_id, request.mode, request.timeout_seconds)
+            .map_err(internal_error)?
+    };
+    let (op, session) = if let Some(command) = prepared.command {
+        let op = WorkspaceKernel::execute_agent_command(command).await;
+        let session = {
+            let mut kernel = state.kernel.lock().await;
+            kernel
+                .complete_agent_run(op.clone())
+                .map_err(internal_error)?
+        };
+        (op, session)
+    } else {
+        (prepared.op.clone(), prepared.session.clone())
+    };
     Ok(Json(AgentRunResponse {
-        handoff,
+        handoff: prepared.handoff,
         op,
         session,
     }))

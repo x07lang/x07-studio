@@ -161,6 +161,13 @@ pub fn apply_event(
         SessionEvent::AppendOp(op) => {
             session.op_log.push(*op);
         }
+        SessionEvent::UpdateOp(op) => {
+            if let Some(existing) = session.op_log.iter_mut().find(|item| item.id == op.id) {
+                *existing = *op;
+            } else {
+                session.op_log.push(*op);
+            }
+        }
     }
 
     session.allowed_verbs = allowed_verbs_for_phase(&session.phase);

@@ -81,6 +81,8 @@ This document records friction found while implementing the Studio web surface.
    contract. Studio now writes `.x07/studio/handoffs/*.md` prompts with the
    approved intent, allowed verbs, MCP tools, write roots, and required loop.
    Studio can now record supervised launch plans and run configured agent
-   commands with a bounded timeout into visible `OpRecord`s. The remaining gap
-   is streaming live Codex/Claude progress and approvals while the command is
-   still running, rather than appending one completed operation.
+   commands with a bounded timeout into visible `OpRecord`s. The daemon now
+   appends a `running` record before execution and updates the same record on
+   completion, so the web UI can poll active work. The remaining gap is
+   streaming stdout/stderr chunks and approval checkpoints while the command is
+   still running.

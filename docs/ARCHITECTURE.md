@@ -78,7 +78,9 @@ Claude Code receives the approved intent, session contract, allowed verbs, MCP
 tools, write roots, and required XTAL loop as a concrete prompt artifact.
 Studio can also record a supervised launch plan, or execute the configured agent
 command with a bounded timeout, and append the resulting stdout/stderr and
-artifacts as `agent.supervise.*` or `agent.run.*` operation records.
+artifacts as `agent.supervise.*` or `agent.run.*` operation records. Agent run
+execution is split into a `running` record and a later completion update so web
+clients can poll active progress without holding the daemon session lock.
 
 The web intake starts with simple, intermediate, and complex x07 project briefs.
 They are intentionally editable form seeds, not hidden generators: a user or

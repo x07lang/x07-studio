@@ -47,6 +47,20 @@ export class StudioApi {
 		return this.demoSessions;
 	}
 
+	async getSession(sessionId: string): Promise<SessionSnapshot> {
+		if (!this.demoMode) {
+			try {
+				return await request<SessionSnapshot>(`/v1/sessions/${sessionId}`);
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		return (
+			this.demoSessions.find((session) => session.session_id === sessionId) ??
+			this.demoSessions[0]
+		);
+	}
+
 	async listBindings(): Promise<BindingDescriptor[]> {
 		if (!this.demoMode) {
 			try {

@@ -20,4 +20,5 @@ pub enum SessionEvent {
     IngestIncident,
     MoveRoom(Room),
     AppendOp(Box<OpRecord>),
+    UpdateOp(Box<OpRecord>),
 }

@@ -136,6 +136,11 @@
 		selectedRoom = snapshot.room;
 	}
 
+	async function refreshSession(sessionId: string) {
+		const snapshot = await api.getSession(sessionId);
+		await replaceSession(snapshot);
+	}
+
 	async function polishIntent() {
 		if (!selected) return;
 		busy = true;
@@ -186,9 +191,21 @@
 
 	async function runAgentHandoff(agentId: string, mode: 'plan' | 'execute') {
 		if (!selected) return;
+		const sessionId = selected.session_id;
+		const agentLabel =
+			agentProfiles.find((profile) => profile.id === agentId)?.label ?? 'Agent';
 		busy = true;
+		let poll: ReturnType<typeof setInterval> | undefined;
 		try {
-			const response = await api.runAgentHandoff(selected, agentId, mode);
+			const pending = api.runAgentHandoff(selected, agentId, mode);
+			if (mode === 'execute') {
+				handoffStatus = `${agentLabel} supervised command running`;
+				statusLine = handoffStatus;
+				poll = setInterval(() => {
+					void refreshSession(sessionId);
+				}, 500);
+			}
+			const response = await pending;
 			await replaceSession(response.session);
 			const label = response.handoff.agent_label;
 			handoffStatus =
@@ -197,6 +214,7 @@
 					: `${label} supervised launch plan recorded`;
 			statusLine = handoffStatus;
 		} finally {
+			if (poll) clearInterval(poll);
 			busy = false;
 		}
 	}

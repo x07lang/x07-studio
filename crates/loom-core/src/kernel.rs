@@ -29,6 +29,27 @@ pub struct WorkspaceKernel {
     mcp_connections: HashMap<String, Box<dyn McpClient>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedAgentRun {
+    pub handoff: AgentHandoff,
+    pub op: OpRecord,
+    pub session: SessionSnapshot,
+    pub command: Option<AgentCommandPlan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentCommandPlan {
+    pub session_id: Uuid,
+    pub op_id: Uuid,
+    pub agent: AgentProfile,
+    pub handoff: AgentHandoff,
+    pub prompt_path: Utf8PathBuf,
+    pub cwd: Utf8PathBuf,
+    pub program: String,
+    pub args: Vec<String>,
+    pub timeout_seconds: u64,
+}
+
 impl WorkspaceKernel {
     pub fn open(root: impl Into<Utf8PathBuf>) -> anyhow::Result<Self> {
         let root = root.into();
@@ -268,6 +289,24 @@ impl WorkspaceKernel {
         mode: AgentRunMode,
         timeout_seconds: Option<u64>,
     ) -> anyhow::Result<(AgentHandoff, OpRecord, SessionSnapshot)> {
+        let prepared = self.start_agent_handoff(session_id, agent_id, mode, timeout_seconds)?;
+        let handoff = prepared.handoff.clone();
+        if let Some(command) = prepared.command {
+            let op = Self::execute_agent_command(command).await;
+            let session = self.complete_agent_run(op.clone())?;
+            Ok((handoff, op, session))
+        } else {
+            Ok((handoff, prepared.op, prepared.session))
+        }
+    }
+
+    pub fn start_agent_handoff(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        mode: AgentRunMode,
+        timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<PreparedAgentRun> {
         let session = self
             .model
             .get_session(session_id)
@@ -281,32 +320,60 @@ impl WorkspaceKernel {
         let handoff = agent_handoff_from_session(&session, &agent);
         let prompt_path = self.store.save_agent_handoff(&handoff)?;
 
-        let op = match mode {
-            AgentRunMode::Plan => agent_plan_op(session_id, &agent, &handoff, &prompt_path),
+        let (op, command) = match mode {
+            AgentRunMode::Plan => (
+                agent_plan_op(session_id, &agent, &handoff, &prompt_path),
+                None,
+            ),
             AgentRunMode::Execute => {
-                let args = handoff.command.iter().skip(1).cloned().collect::<Vec<_>>();
-                let timeout = timeout_seconds.unwrap_or(30).clamp(1, 300);
-                match CommandRunner
-                    .run_with_timeout(
-                        self.root.as_path(),
-                        &agent.command,
-                        &args,
-                        &BTreeMap::new(),
-                        Some(timeout),
-                    )
-                    .await
-                {
-                    Ok(execution) => {
-                        agent_execution_op(session_id, &agent, &handoff, &prompt_path, execution)
-                    }
-                    Err(error) => {
-                        agent_spawn_error_op(session_id, &agent, &handoff, &prompt_path, error)
-                    }
-                }
+                let op = agent_running_op(session_id, &agent, &handoff, &prompt_path);
+                let command = AgentCommandPlan {
+                    session_id,
+                    op_id: op.id,
+                    agent: agent.clone(),
+                    handoff: handoff.clone(),
+                    prompt_path: prompt_path.clone(),
+                    cwd: self.root.clone(),
+                    program: agent.command.clone(),
+                    args: handoff.command.iter().skip(1).cloned().collect(),
+                    timeout_seconds: timeout_seconds.unwrap_or(30).clamp(1, 300),
+                };
+                (op, Some(command))
             }
         };
         let snapshot = self.append_op(session_id, op.clone())?;
-        Ok((handoff, op, snapshot))
+        Ok(PreparedAgentRun {
+            handoff,
+            op,
+            session: snapshot,
+            command,
+        })
+    }
+
+    pub async fn execute_agent_command(command: AgentCommandPlan) -> OpRecord {
+        match CommandRunner
+            .run_with_timeout(
+                command.cwd.as_path(),
+                &command.program,
+                &command.args,
+                &BTreeMap::new(),
+                Some(command.timeout_seconds),
+            )
+            .await
+        {
+            Ok(execution) => agent_execution_op(command, execution),
+            Err(error) => agent_spawn_error_op(command, error),
+        }
+    }
+
+    pub fn complete_agent_run(&mut self, op: OpRecord) -> anyhow::Result<SessionSnapshot> {
+        let session_id = op.session_id;
+        let snapshot = self
+            .model
+            .dispatch(session_id, SessionEvent::UpdateOp(Box::new(op)))
+            .map_err(|error| anyhow!(error.to_string()))?;
+        self.store.save_session(&snapshot)?;
+        Ok(snapshot)
     }
 
     pub fn save_provider_profile(&self, profile: &ProviderProfile) -> anyhow::Result<()> {
@@ -614,18 +681,51 @@ fn agent_plan_op(
     }
 }
 
-fn agent_execution_op(
+fn agent_running_op(
     session_id: Uuid,
     agent: &AgentProfile,
     handoff: &AgentHandoff,
     prompt_path: &Utf8Path,
-    execution: CommandExecution,
 ) -> OpRecord {
+    let now = now_string();
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
         id: Uuid::new_v4(),
         session_id,
         op: format!("agent.run.{}", agent.id),
+        backend: "agent-supervisor".to_string(),
+        command: handoff.command.clone(),
+        started_at: now,
+        finished_at: None,
+        status: OperationStatus::Running,
+        exit_code: None,
+        artifacts: vec![prompt_path.to_string()],
+        notes: Some(format!(
+            "{} is running under Studio supervision.",
+            agent.label
+        )),
+        stdout: Some(format!(
+            "Supervised command started.\nCommand: {}\nPrompt: {}\n",
+            handoff.command.join(" "),
+            handoff.prompt_path
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "mode": "execute",
+            "handoff": handoff,
+        })),
+        report_path: None,
+    }
+}
+
+fn agent_execution_op(command: AgentCommandPlan, execution: CommandExecution) -> OpRecord {
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: command.op_id,
+        session_id: command.session_id,
+        op: format!("agent.run.{}", command.agent.id),
         backend: "agent-supervisor".to_string(),
         command: std::iter::once(execution.program.clone())
             .chain(execution.args.clone())
@@ -638,48 +738,45 @@ fn agent_execution_op(
             OperationStatus::Failed
         },
         exit_code: execution.exit_code,
-        artifacts: vec![prompt_path.to_string()],
-        notes: Some(format!("Ran {} under Studio supervision.", agent.label)),
+        artifacts: vec![command.prompt_path.to_string()],
+        notes: Some(format!(
+            "Ran {} under Studio supervision.",
+            command.agent.label
+        )),
         stdout: Some(execution.stdout),
         stderr: Some(execution.stderr),
         stdout_json: execution.stdout_json,
         stderr_json: execution.stderr_json,
         report_json: Some(serde_json::json!({
             "mode": "execute",
-            "handoff": handoff,
+            "handoff": command.handoff,
         })),
         report_path: None,
     }
 }
 
-fn agent_spawn_error_op(
-    session_id: Uuid,
-    agent: &AgentProfile,
-    handoff: &AgentHandoff,
-    prompt_path: &Utf8Path,
-    error: anyhow::Error,
-) -> OpRecord {
+fn agent_spawn_error_op(command: AgentCommandPlan, error: anyhow::Error) -> OpRecord {
     let now = now_string();
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
-        id: Uuid::new_v4(),
-        session_id,
-        op: format!("agent.run.{}", agent.id),
+        id: command.op_id,
+        session_id: command.session_id,
+        op: format!("agent.run.{}", command.agent.id),
         backend: "agent-supervisor".to_string(),
-        command: handoff.command.clone(),
+        command: command.handoff.command.clone(),
         started_at: now.clone(),
         finished_at: Some(now),
         status: OperationStatus::Failed,
         exit_code: None,
-        artifacts: vec![prompt_path.to_string()],
-        notes: Some(format!("Failed to launch {}.", agent.label)),
+        artifacts: vec![command.prompt_path.to_string()],
+        notes: Some(format!("Failed to launch {}.", command.agent.label)),
         stdout: None,
         stderr: Some(error.to_string()),
         stdout_json: None,
         stderr_json: None,
         report_json: Some(serde_json::json!({
             "mode": "execute",
-            "handoff": handoff,
+            "handoff": command.handoff,
         })),
         report_path: None,
     }
@@ -824,15 +921,27 @@ mod tests {
             .iter()
             .any(|op| op.op == "agent.supervise.echo-agent"));
 
-        let (_, run_op, run_session) = kernel
-            .run_agent_handoff(
+        let prepared = kernel
+            .start_agent_handoff(
                 session.session_id,
                 "echo-agent",
                 AgentRunMode::Execute,
                 Some(5),
             )
-            .await
-            .expect("execute agent");
+            .expect("start agent");
+        assert_eq!(prepared.op.op, "agent.run.echo-agent");
+        assert_eq!(prepared.op.status, OperationStatus::Running);
+        assert!(prepared
+            .session
+            .op_log
+            .iter()
+            .any(|op| op.op == "agent.run.echo-agent" && op.status == OperationStatus::Running));
+
+        let run_op =
+            WorkspaceKernel::execute_agent_command(prepared.command.expect("agent command")).await;
+        let run_session = kernel
+            .complete_agent_run(run_op.clone())
+            .expect("complete agent");
 
         assert_eq!(run_op.op, "agent.run.echo-agent");
         assert_eq!(run_op.status, OperationStatus::Succeeded);

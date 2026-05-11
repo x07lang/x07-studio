@@ -162,8 +162,10 @@ Agent run request:
 
 `mode: "plan"` records a visible supervised launch plan without executing the
 agent command. `mode: "execute"` runs the configured agent command from the
-workspace root with the handoff prompt path as its final argument, captures
-stdout/stderr, and records a succeeded or failed `agent.run.*` operation.
+workspace root with the handoff prompt path as its final argument. The daemon
+first appends a `running` `agent.run.*` operation so clients can poll the session
+while the command is active, then updates the same operation with captured
+stdout/stderr and a succeeded or failed status.
 
 ## MCP
 
