@@ -130,6 +130,11 @@ verbs, MCP tools, write roots, required XTAL loop, and an execution-boundary
 section that names `x07 run` as the default front door while calling out
 solve-rr, sandbox/run-os, WASM app, release/provenance, and SLO/budget gates
 when present.
+The prompt also tells agents to emit structured
+`x07.studio.agent_event@0.1.0` JSONL records for artifact, diagnostic, write,
+and approval milestones. The daemon turns those records into the same
+`agent.event.*` worklog entries as the text classifier, with attached artifact
+paths and structured payloads for review.
 
 The web intake starts with simple, intermediate, advanced, complex, and expert
 x07 project briefs. They are intentionally editable form seeds, not hidden

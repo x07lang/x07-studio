@@ -316,6 +316,14 @@ boundary section. That boundary names `x07 run` as the default execution front
 door and calls out solve-rr, sandbox/run-os, WASM app, release/provenance, and
 SLO/budget lanes when the session evidence implies those gates.
 
+Handoff prompts also define a structured agent event JSONL protocol. Agents may
+emit one JSON object per line with
+`schema_version: "x07.studio.agent_event@0.1.0"` and `kind` set to `artifact`,
+`diagnostic`, `write`, or `approval`. The daemon records those as
+`agent.event.<agent>.<kind>` operations with any safe artifact path attached,
+which gives the browser approval and artifact signals without relying on
+free-form terminal text.
+
 If the agent profile has `approval_required: true`, `mode: "execute"` first
 records a pending `agent.approval.*` checkpoint unless the latest relevant
 agent operation is a succeeded approval. A later handoff, plan, or run consumes

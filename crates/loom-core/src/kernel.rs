@@ -2379,6 +2379,16 @@ fn render_agent_handoff_prompt(
     out.push_str("2. Use x07 docs/MCP tools before selecting commands.\n");
     out.push_str("3. Produce or update artifacts only inside the permitted roots.\n");
     out.push_str("4. Run the canonical XTAL checks before reporting completion.\n");
+    out.push_str("\n## Agent Event Protocol\n\n");
+    out.push_str("Emit one JSON object per line for machine-visible milestones:\n\n");
+    out.push_str("```json\n");
+    out.push_str(
+        r#"{"schema_version":"x07.studio.agent_event@0.1.0","kind":"artifact","summary":"verify summary ready","artifact":"target/xtal/verify/summary.json"}"#,
+    );
+    out.push_str("\n```\n\n");
+    out.push_str(
+        "`kind` must be one of `artifact`, `diagnostic`, `write`, or `approval`. Use `approval` whenever policy, spec, architecture, world, budget, trust, or release scope would widen.\n",
+    );
     out
 }
 
@@ -2641,9 +2651,10 @@ struct AgentSemanticEventState {
 
 #[derive(Debug)]
 struct AgentSemanticEvent {
-    kind: &'static str,
+    kind: String,
     line: String,
     artifact: Option<String>,
+    structured: Option<serde_json::Value>,
 }
 
 fn agent_semantic_ops(
@@ -2666,6 +2677,9 @@ fn classify_agent_output_line(line: &str) -> Option<AgentSemanticEvent> {
     if line.is_empty() {
         return None;
     }
+    if let Some(event) = parse_structured_agent_event(line) {
+        return Some(event);
+    }
     let lower = line.to_ascii_lowercase();
     if lower.contains("approval")
         || lower.contains("approve")
@@ -2674,9 +2688,10 @@ fn classify_agent_output_line(line: &str) -> Option<AgentSemanticEvent> {
         || lower.contains("policy widening")
     {
         return Some(AgentSemanticEvent {
-            kind: "approval",
+            kind: "approval".to_string(),
             line: line.to_string(),
             artifact: None,
+            structured: None,
         });
     }
     if lower.contains("error:")
@@ -2685,9 +2700,10 @@ fn classify_agent_output_line(line: &str) -> Option<AgentSemanticEvent> {
         || lower.contains("failed:")
     {
         return Some(AgentSemanticEvent {
-            kind: "diagnostic",
+            kind: "diagnostic".to_string(),
             line: line.to_string(),
             artifact: None,
+            structured: None,
         });
     }
     if lower.starts_with("write:")
@@ -2698,19 +2714,48 @@ fn classify_agent_output_line(line: &str) -> Option<AgentSemanticEvent> {
         || lower.starts_with("modified ")
     {
         return Some(AgentSemanticEvent {
-            kind: "write",
+            kind: "write".to_string(),
             line: line.to_string(),
             artifact: extract_artifact_path(line),
+            structured: None,
         });
     }
     if let Some(artifact) = extract_artifact_path(line) {
         return Some(AgentSemanticEvent {
-            kind: "artifact",
+            kind: "artifact".to_string(),
             line: line.to_string(),
             artifact: Some(artifact),
+            structured: None,
         });
     }
     None
+}
+
+fn parse_structured_agent_event(line: &str) -> Option<AgentSemanticEvent> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("schema_version")?.as_str()? != "x07.studio.agent_event@0.1.0" {
+        return None;
+    }
+    let kind = value.get("kind")?.as_str()?;
+    if !matches!(kind, "artifact" | "diagnostic" | "write" | "approval") {
+        return None;
+    }
+    let summary = value
+        .get("summary")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
+        .unwrap_or(kind);
+    let artifact = value
+        .get("artifact")
+        .and_then(serde_json::Value::as_str)
+        .filter(|artifact| looks_like_artifact_path(artifact))
+        .map(str::to_string);
+    Some(AgentSemanticEvent {
+        kind: kind.to_string(),
+        line: summary.to_string(),
+        artifact,
+        structured: Some(value),
+    })
 }
 
 fn extract_artifact_path(line: &str) -> Option<String> {
@@ -2764,7 +2809,7 @@ fn agent_semantic_op(command: &AgentCommandPlan, event: AgentSemanticEvent) -> O
         command: vec![
             "observe-agent".to_string(),
             command.agent.id.clone(),
-            event.kind.to_string(),
+            event.kind.clone(),
         ],
         started_at: now.clone(),
         finished_at: Some(now),
@@ -2784,6 +2829,7 @@ fn agent_semantic_op(command: &AgentCommandPlan, event: AgentSemanticEvent) -> O
             "kind": event.kind,
             "line": event.line,
             "artifact": event.artifact,
+            "structured": event.structured,
             "agent_id": command.agent.id,
             "handoff": command.handoff,
         })),
@@ -3210,7 +3256,7 @@ mod tests {
             command: "/bin/sh".to_string(),
             args: vec![
                 "-c".to_string(),
-                "printf 'artifact: target/xtal/verify/summary.json\\napproval required: policy widening\\nsupervised:%s' \"$1\"".to_string(),
+                "printf '%s\\nartifact: target/xtal/verify/summary.json\\napproval required: policy widening\\nsupervised:%s' '{\"schema_version\":\"x07.studio.agent_event@0.1.0\",\"kind\":\"approval\",\"summary\":\"structured policy gate\",\"artifact\":\"arch/xtal/xtal.json\"}' \"$1\"".to_string(),
                 "x07-studio-agent".to_string(),
             ],
             allowed_verbs: vec!["intent.formalize".to_string()],
@@ -3317,6 +3363,25 @@ mod tests {
         assert!(stream_updates
             .iter()
             .any(|op| op.op == "agent.event.echo-agent.approval"));
+        let structured_approval = stream_updates
+            .iter()
+            .find(|op| {
+                op.op == "agent.event.echo-agent.approval"
+                    && op
+                        .artifacts
+                        .iter()
+                        .any(|artifact| artifact == "arch/xtal/xtal.json")
+            })
+            .expect("structured approval event");
+        assert_eq!(
+            structured_approval
+                .report_json
+                .as_ref()
+                .and_then(|report| report.get("structured"))
+                .and_then(|structured| structured.get("schema_version"))
+                .and_then(serde_json::Value::as_str),
+            Some("x07.studio.agent_event@0.1.0")
+        );
         assert!(run_session
             .op_log
             .iter()
