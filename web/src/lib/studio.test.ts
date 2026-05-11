@@ -347,6 +347,10 @@ describe('x07 Studio XTAL web model', () => {
 		expect(ids).toContain('wasm.app.build.atlas_dev');
 		expect(ids).toContain('wasm.app.verify.atlas_release');
 		expect(ids).toContain('wasm.slo.eval.atlas_canary_ok');
+		expect(ids).toContain('lp.deploy.accept.local');
+		expect(ids).toContain('lp.deploy.run.local.metrics');
+		expect(ids).toContain('lp.deploy.query.local');
+		expect(ids).not.toContain('lp.rollout.status');
 	});
 
 	it('models Codex and Claude Code as coding-agent profiles', () => {
