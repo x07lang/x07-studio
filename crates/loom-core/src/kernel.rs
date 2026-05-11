@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
+use std::io::Read;
 
 use anyhow::{anyhow, Context};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -12,6 +13,7 @@ use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
+use loom_types::api::ArtifactPreviewResponse;
 use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
@@ -103,6 +105,61 @@ impl WorkspaceKernel {
 
     pub fn get_session(&self, session_id: Uuid) -> Option<SessionSnapshot> {
         self.model.get_session(session_id).cloned()
+    }
+
+    pub fn preview_artifact(
+        &self,
+        session_id: Uuid,
+        artifact: &str,
+    ) -> anyhow::Result<ArtifactPreviewResponse> {
+        const MAX_PREVIEW_BYTES: u64 = 128 * 1024;
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if !session_artifact_recorded(session, artifact) {
+            return Err(anyhow!(
+                "artifact `{artifact}` is not recorded on session `{session_id}`"
+            ));
+        }
+        let artifact_path = safe_artifact_path(self.root.as_path(), artifact)?;
+        if !artifact_path.is_file() {
+            return Err(anyhow!("artifact `{artifact}` is not a readable file"));
+        }
+        let size = fs::metadata(&artifact_path)
+            .with_context(|| format!("metadata: {artifact_path}"))?
+            .len();
+        let mut file =
+            fs::File::open(&artifact_path).with_context(|| format!("open: {artifact_path}"))?;
+        let mut bytes = Vec::new();
+        file.by_ref()
+            .take(MAX_PREVIEW_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("read: {artifact_path}"))?;
+        let truncated = size > MAX_PREVIEW_BYTES || bytes.len() as u64 > MAX_PREVIEW_BYTES;
+        if truncated {
+            bytes.truncate(MAX_PREVIEW_BYTES as usize);
+        }
+        let text = String::from_utf8(bytes).ok();
+        let json = text
+            .as_deref()
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok());
+        let media_kind = if json.is_some() {
+            "json"
+        } else if text.is_some() {
+            "text"
+        } else {
+            "binary"
+        };
+        Ok(ArtifactPreviewResponse {
+            schema_version: "x07.studio.artifact_preview@0.1.0".to_string(),
+            artifact: artifact.to_string(),
+            media_kind: media_kind.to_string(),
+            bytes_read: size.min(MAX_PREVIEW_BYTES),
+            truncated,
+            text,
+            json,
+        })
     }
 
     pub fn create_session(
@@ -1282,6 +1339,32 @@ fn last_op_failed(snapshot: &SessionSnapshot) -> bool {
         .is_some_and(|op| op.status == OperationStatus::Failed)
 }
 
+fn session_artifact_recorded(session: &SessionSnapshot, artifact: &str) -> bool {
+    session.op_log.iter().any(|op| {
+        op.artifacts.iter().any(|item| item == artifact)
+            || op.report_path.as_deref() == Some(artifact)
+    })
+}
+
+fn safe_artifact_path(root: &Utf8Path, artifact: &str) -> anyhow::Result<Utf8PathBuf> {
+    if artifact.trim().is_empty() || artifact.contains('\0') {
+        return Err(anyhow!("artifact path is empty or invalid"));
+    }
+    let rel = Utf8Path::new(artifact);
+    if rel.is_absolute() {
+        return Err(anyhow!("artifact path must be relative"));
+    }
+    if rel.components().any(|component| {
+        matches!(
+            component,
+            camino::Utf8Component::ParentDir | camino::Utf8Component::Prefix(_)
+        )
+    }) {
+        return Err(anyhow!("artifact path must stay inside the workspace"));
+    }
+    Ok(root.join(rel))
+}
+
 fn should_scaffold_spec(root: &Utf8Path, vars: &BTreeMap<String, String>) -> bool {
     let Some(input) = vars.get("input") else {
         return true;
@@ -1896,8 +1979,8 @@ mod tests {
 
     use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
     use loom_types::artifacts::{
-        AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OperationStatus,
-        TaskType, Witness, WitnessKind,
+        AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
+        OperationStatus, TaskType, Witness, WitnessKind,
     };
 
     use super::{
@@ -2134,6 +2217,96 @@ mod tests {
     }
 
     #[test]
+    fn preview_artifact_reads_recorded_json_patchset() {
+        let root = temp_root();
+        std::fs::create_dir_all(root.join("target/xtal")).expect("create target/xtal");
+        let artifact = "target/xtal/impl-sync.patchset.json";
+        std::fs::write(
+            root.join(artifact),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": "x07.patchset@0.1.0",
+                "patches": [
+                    {
+                        "path": "src/main.x07.json",
+                        "patch": [
+                            { "op": "replace", "path": "/solve", "value": ["bytes.lit", "ok"] }
+                        ],
+                        "note": "Realize approved operation"
+                    }
+                ]
+            }))
+            .expect("serialize patchset"),
+        )
+        .expect("write patchset");
+
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("artifact preview", TaskType::NewBehavior)
+            .expect("create session");
+        kernel
+            .append_op(
+                session.session_id,
+                test_op(
+                    session.session_id,
+                    "impl.sync.patchset",
+                    vec![artifact.to_string()],
+                ),
+            )
+            .expect("append op");
+
+        let preview = kernel
+            .preview_artifact(session.session_id, artifact)
+            .expect("preview artifact");
+
+        assert_eq!(preview.schema_version, "x07.studio.artifact_preview@0.1.0");
+        assert_eq!(preview.media_kind, "json");
+        assert_eq!(
+            preview
+                .json
+                .as_ref()
+                .and_then(|json| json["schema_version"].as_str()),
+            Some("x07.patchset@0.1.0")
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn preview_artifact_rejects_unrecorded_and_parent_paths() {
+        let root = temp_root();
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::write(root.join("unrecorded.json"), "{}").expect("write unrecorded");
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("artifact preview", TaskType::NewBehavior)
+            .expect("create session");
+
+        let unrecorded = kernel
+            .preview_artifact(session.session_id, "unrecorded.json")
+            .expect_err("unrecorded artifact should be rejected")
+            .to_string();
+        assert!(unrecorded.contains("not recorded"), "{unrecorded}");
+
+        kernel
+            .append_op(
+                session.session_id,
+                test_op(
+                    session.session_id,
+                    "impl.sync.patchset",
+                    vec!["../secret.json".to_string()],
+                ),
+            )
+            .expect("append op");
+        let traversal = kernel
+            .preview_artifact(session.session_id, "../secret.json")
+            .expect_err("parent traversal should be rejected")
+            .to_string();
+        assert!(traversal.contains("workspace"), "{traversal}");
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn xtal_workflow_skips_scaffold_when_template_spec_exists() {
         let root = temp_root();
         let spec_dir = root.join("spec");
@@ -2281,5 +2454,28 @@ mod tests {
     fn temp_root() -> camino::Utf8PathBuf {
         let path = std::env::temp_dir().join(format!("x07-studio-core-test-{}", Uuid::new_v4()));
         camino::Utf8PathBuf::from_path_buf(path).expect("utf8 temp path")
+    }
+
+    fn test_op(session_id: Uuid, op: &str, artifacts: Vec<String>) -> OpRecord {
+        OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id,
+            op: op.to_string(),
+            backend: "test".to_string(),
+            command: vec!["studio-test".to_string()],
+            started_at: "now".to_string(),
+            finished_at: Some("now".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts,
+            notes: Some("test operation".to_string()),
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: None,
+            report_path: None,
+        }
     }
 }

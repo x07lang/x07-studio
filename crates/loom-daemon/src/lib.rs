@@ -12,10 +12,11 @@ use uuid::Uuid;
 use loom_core::WorkspaceKernel;
 use loom_types::api::{
     AgentApprovalRequest, AgentApprovalResponse, AgentHandoffResponse, AgentRunRequest,
-    AgentRunResponse, BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse,
-    CreateSessionRequest, DispatchEventRequest, FormalizeIntentRequest, FormalizeIntentResponse,
-    HealthResponse, McpCallResponse, ProbeProviderRequest, ProviderProbeResponse,
-    ResolveApprovalRequest, RunBindingRequest, SaveAgentProfileRequest, SaveProviderProfileRequest,
+    AgentRunResponse, ArtifactPreviewRequest, ArtifactPreviewResponse, BindingDescriptor,
+    CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest,
+    DispatchEventRequest, FormalizeIntentRequest, FormalizeIntentResponse, HealthResponse,
+    McpCallResponse, ProbeProviderRequest, ProviderProbeResponse, ResolveApprovalRequest,
+    RunBindingRequest, SaveAgentProfileRequest, SaveProviderProfileRequest,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -38,6 +39,10 @@ pub fn router(state: ApiState) -> Router {
             post(formalize_intent),
         )
         .route("/v1/sessions/{session_id}/bindings/run", post(run_binding))
+        .route(
+            "/v1/sessions/{session_id}/artifacts/preview",
+            post(preview_artifact),
+        )
         .route(
             "/v1/sessions/{session_id}/xtal/run",
             post(run_xtal_workflow),
@@ -164,6 +169,18 @@ async fn run_binding(
         .await
         .map_err(internal_error)?;
     Ok(Json(snapshot))
+}
+
+async fn preview_artifact(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<ArtifactPreviewRequest>,
+) -> Result<Json<ArtifactPreviewResponse>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let preview = kernel
+        .preview_artifact(session_id, &request.artifact)
+        .map_err(conflict_error)?;
+    Ok(Json(preview))
 }
 
 async fn run_xtal_workflow(

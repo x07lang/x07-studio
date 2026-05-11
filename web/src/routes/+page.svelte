@@ -16,6 +16,7 @@
 		rooms,
 		workflowChecklist,
 		type AgentProfile,
+		type ArtifactPreviewResponse,
 		type BindingDescriptor,
 		type HealthResponse,
 		type IntentInputMode,
@@ -52,6 +53,9 @@
 	let selectedOpId = '';
 	let worklogFilter: 'all' | 'codex' | 'claude' | 'xtal' = 'all';
 	let autoScroll = true;
+	let artifactPreviewKey = '';
+	let artifactPreviewStatus = 'No artifact preview loaded';
+	let selectedArtifactPreview: ArtifactPreviewResponse | null = null;
 
 	const placeholderOp: OpRecord = {
 		id: 'op-seed',
@@ -161,8 +165,10 @@
 		(selectedOpId ? allOps.find((op) => op.id === selectedOpId) : undefined) ??
 		allOps.at(-1) ??
 		null;
+	$: selectedPatchArtifact = patchsetArtifactForOp(selectedOp);
+	$: selectedOpWithPreview = mergeArtifactPreview(selectedOp, selectedArtifactPreview);
 	$: reviewSignals = buildReviewSignals(allOps);
-	$: selectedPatchReview = buildPatchReview(selectedOp);
+	$: selectedPatchReview = buildPatchReview(selectedOpWithPreview);
 	$: selectedOpDiagnostics = collectDiagnostics(selectedOp);
 	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
@@ -201,6 +207,9 @@
 	$: doctrineAllowedVerbs = selected?.contract?.allowed_verbs.length
 		? selected.contract.allowed_verbs
 		: selected?.allowed_verbs ?? [];
+	$: if (selected && selectedOp && selectedPatchArtifact) {
+		void loadArtifactPreview(selected.session_id, selectedOp.id, selectedPatchArtifact);
+	}
 
 	onMount(async () => {
 		await refresh();
@@ -306,6 +315,49 @@
 		if (signal.op.startsWith('impl.')) selectedRoom = 'realization';
 		if (signal.op.startsWith('agent.')) selectedRoom = 'providers';
 		statusLine = `Reviewing ${signal.label.toLowerCase()}: ${signal.op}`;
+	}
+
+	async function loadArtifactPreview(sessionId: string, opId: string, artifact: string) {
+		const key = `${sessionId}|${opId}|${artifact}`;
+		if (artifactPreviewKey === key) return;
+		artifactPreviewKey = key;
+		selectedArtifactPreview = null;
+		artifactPreviewStatus = `Loading ${artifact}`;
+		const session = sessions.find((item) => item.session_id === sessionId);
+		if (!session) return;
+		try {
+			const preview = await api.previewArtifact(session, artifact);
+			if (artifactPreviewKey !== key) return;
+			selectedArtifactPreview = preview;
+			artifactPreviewStatus = preview.truncated
+				? `Preview truncated at ${preview.bytes_read} bytes`
+				: `Preview loaded from ${preview.artifact}`;
+		} catch (error) {
+			if (artifactPreviewKey !== key) return;
+			selectedArtifactPreview = null;
+			artifactPreviewStatus = error instanceof Error ? error.message : 'Artifact preview failed';
+		}
+	}
+
+	function patchsetArtifactForOp(op: OpRecord | null): string {
+		return op?.artifacts.find((artifact) => artifact.includes('patchset') && artifact.endsWith('.json')) ?? '';
+	}
+
+	function mergeArtifactPreview(
+		op: OpRecord | null,
+		preview: ArtifactPreviewResponse | null
+	): OpRecord | null {
+		if (!op || !preview?.json || !op.artifacts.includes(preview.artifact)) return op;
+		return {
+			...op,
+			report_json: {
+				...(asRecord(op.report_json) ?? {}),
+				artifact_preview: {
+					artifact: preview.artifact,
+					json: preview.json
+				}
+			}
+		};
 	}
 
 	function collectDiagnostics(op: OpRecord | null): Array<{ code: string; severity: string; message: string }> {
@@ -1035,6 +1087,10 @@
 							<div class="patch-command">
 								<span>Command</span>
 								<code>{selectedPatchReview.command}</code>
+							</div>
+							<div class="patch-command">
+								<span>Artifact preview</span>
+								<code>{artifactPreviewStatus}</code>
 							</div>
 						</div>
 					{/if}

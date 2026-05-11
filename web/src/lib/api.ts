@@ -11,6 +11,7 @@ import {
 	type AgentRunMode,
 	type AgentRunResponse,
 	type ApprovalDecision,
+	type ArtifactPreviewResponse,
 	type BindingDescriptor,
 	type FormalizeIntentResponse,
 	type HealthResponse,
@@ -177,6 +178,26 @@ export class StudioApi {
 		const next = appendDemoOp(session, binding_id, failed ? 'failed' : 'succeeded');
 		this.replaceDemo(next);
 		return next;
+	}
+
+	async previewArtifact(
+		session: SessionSnapshot,
+		artifact: string
+	): Promise<ArtifactPreviewResponse> {
+		if (!this.demoMode) {
+			try {
+				return await request<ArtifactPreviewResponse>(
+					`/v1/sessions/${session.session_id}/artifacts/preview`,
+					{
+						method: 'POST',
+						body: JSON.stringify({ artifact })
+					}
+				);
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		return demoArtifactPreview(artifact);
 	}
 
 	async runXtalWorkflow(session: SessionSnapshot): Promise<SessionSnapshot> {
@@ -401,6 +422,42 @@ function bindingVars(session: SessionSnapshot, bindingId: string): Record<string
 		return { ...common, input: '.x07/studio/incidents/manual-note.jsonl' };
 	}
 	return common;
+}
+
+function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
+	const json = artifact.includes('patchset')
+		? {
+				schema_version: 'x07.patchset@0.1.0',
+				patches: [
+					{
+						path: 'src/main.x07.json',
+						patch: [
+							{
+								op: 'add',
+								path: '/decls/0',
+								value: { kind: 'export', names: ['main.run'] }
+							},
+							{
+								op: 'replace',
+								path: '/solve',
+								value: ['bytes.lit', 'ok']
+							}
+						],
+						note: 'Demo implementation sync from approved spec'
+					}
+				]
+			}
+		: null;
+	const text = json ? JSON.stringify(json, null, 2) : '';
+	return {
+		schema_version: 'x07.studio.artifact_preview@0.1.0',
+		artifact,
+		media_kind: json ? 'json' : 'text',
+		bytes_read: text.length,
+		truncated: false,
+		text,
+		json
+	};
 }
 
 function agentRunApproved(session: SessionSnapshot, agentId: string): boolean {

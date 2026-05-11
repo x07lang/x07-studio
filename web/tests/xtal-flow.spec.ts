@@ -146,6 +146,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Selected operation inspector')).toContainText('impl.sync.write');
 	await expect(page.getByLabel('Visual patch review')).toContainText('Write gate: implementation paths');
 	await expect(page.getByLabel('Visual patch review')).toContainText('src/');
+	await expect(page.getByLabel('Visual patch review')).toContainText('src/main.x07.json');
+	await expect(page.getByLabel('Visual patch review')).toContainText('add 1, replace 1');
 	await expect(page.getByLabel('Visual patch review')).toContainText('target/xtal/impl-sync.patchset.json');
 	await expect(page.getByText('Agent Visible Worklog')).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();

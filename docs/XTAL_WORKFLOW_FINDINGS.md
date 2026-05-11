@@ -157,6 +157,8 @@ This document records friction found while implementing the Studio web surface.
    browser previously only showed the artifact path. The operation inspector now
    recognizes embedded x07 patchset payloads, patchset artifact paths, and write
    roots, then renders affected files, JSON Patch operation counts, notes,
-   review gates, and path risk. The remaining gap is reading artifact file
-   contents from the daemon so Studio can show full before/after JSON Patch
-   diffs when the patchset exists only as a file path.
+   review gates, and path risk. Studio now has a bounded daemon preview endpoint
+   for recorded operation artifacts, so patchset artifact paths can become
+   concrete patch entries without granting arbitrary filesystem reads. The
+   remaining gap is full before/after JSON Patch diffs against the current
+   workspace files.

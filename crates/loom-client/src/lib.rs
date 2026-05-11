@@ -4,10 +4,10 @@ use uuid::Uuid;
 
 use loom_types::api::{
     AgentApprovalRequest, AgentApprovalResponse, AgentRunRequest, AgentRunResponse,
-    BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse,
-    CreateSessionRequest, DispatchEventRequest, HealthResponse, McpCallResponse,
-    ProbeProviderRequest, ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest,
-    SaveProviderProfileRequest,
+    ArtifactPreviewRequest, ArtifactPreviewResponse, BindingDescriptor, CallMcpToolRequest,
+    ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest,
+    HealthResponse, McpCallResponse, ProbeProviderRequest, ProviderProbeResponse,
+    ResolveApprovalRequest, RunBindingRequest, SaveProviderProfileRequest,
 };
 use loom_types::artifacts::ProviderProfile;
 use loom_types::mcp::McpToolDescriptor;
@@ -69,6 +69,20 @@ impl DaemonClient {
     ) -> anyhow::Result<SessionSnapshot> {
         self.post(&format!("/v1/sessions/{session_id}/bindings/run"), request)
             .await
+    }
+
+    pub async fn preview_artifact(
+        &self,
+        session_id: Uuid,
+        artifact: &str,
+    ) -> anyhow::Result<ArtifactPreviewResponse> {
+        self.post(
+            &format!("/v1/sessions/{session_id}/artifacts/preview"),
+            &ArtifactPreviewRequest {
+                artifact: artifact.to_string(),
+            },
+        )
+        .await
     }
 
     pub async fn run_agent_handoff(

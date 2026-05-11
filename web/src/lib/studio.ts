@@ -75,6 +75,16 @@ export interface OpRecord {
 	report_path?: string | null;
 }
 
+export interface ArtifactPreviewResponse {
+	schema_version: 'x07.studio.artifact_preview@0.1.0';
+	artifact: string;
+	media_kind: 'json' | 'text' | 'binary';
+	bytes_read: number;
+	truncated: boolean;
+	text?: string | null;
+	json?: unknown;
+}
+
 export interface SessionSnapshot {
 	schema_version: string;
 	session_id: string;

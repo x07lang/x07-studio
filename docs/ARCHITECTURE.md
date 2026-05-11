@@ -103,7 +103,10 @@ model. For implementation sync and repair records, the inspector also derives a
 visual patch review from `x07.patchset@0.1.0` / `x07.arch.patchset@0.1.0`
 payloads when present, plus emitted artifacts and write roots, so humans can see
 the files, JSON Patch operation counts, review gate, and risk level attached to
-the selected operation.
+the selected operation. If a patchset exists only as an artifact path, the
+browser asks the daemon for a bounded artifact preview. The daemon only reads
+paths already recorded on that session's operation log and rejects absolute or
+parent-traversal paths before reading from the workspace root.
 Profiles marked `approval_required` are gated by pending `agent.approval.*`
 records; humans approve or reject those checkpoints in the same visible worklog
 before Studio starts the supervised command. Approval checkpoints are one-shot:

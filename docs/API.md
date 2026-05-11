@@ -29,6 +29,7 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions/{session_id}/events`
 - `POST /sessions/{session_id}/intent/formalize`
 - `POST /sessions/{session_id}/bindings/run`
+- `POST /sessions/{session_id}/artifacts/preview`
 - `POST /sessions/{session_id}/xtal/run`
 
 Create session request:
@@ -88,6 +89,36 @@ Run binding request:
   "vars": {"input": "spec/app.sorter.x07spec.json"}
 }
 ```
+
+Artifact preview request:
+
+```json
+{
+  "artifact": "target/xtal/impl-sync.patchset.json"
+}
+```
+
+Artifact preview response:
+
+```json
+{
+  "schema_version": "x07.studio.artifact_preview@0.1.0",
+  "artifact": "target/xtal/impl-sync.patchset.json",
+  "media_kind": "json",
+  "bytes_read": 481,
+  "truncated": false,
+  "text": "{ ... }",
+  "json": {
+    "schema_version": "x07.patchset@0.1.0",
+    "patches": []
+  }
+}
+```
+
+The daemon only previews paths already recorded in that session's operation
+artifacts or report paths, rejects absolute or parent-traversal paths, reads
+from the workspace root, and caps preview bodies. Browser clients use this to
+turn patchset artifact paths into file-level patch review rows.
 
 Run XTAL workflow request:
 

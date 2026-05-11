@@ -57,6 +57,22 @@ pub struct RunBindingRequest {
     pub vars: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactPreviewRequest {
+    pub artifact: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactPreviewResponse {
+    pub schema_version: String,
+    pub artifact: String,
+    pub media_kind: String,
+    pub bytes_read: u64,
+    pub truncated: bool,
+    pub text: Option<String>,
+    pub json: Option<Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRunMode {
