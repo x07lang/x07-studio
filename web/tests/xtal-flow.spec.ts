@@ -129,12 +129,14 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.locator('footer').getByText('Agent checkpoint approved')).toBeVisible();
 	await page.getByRole('button', { name: 'Run Claude Code Command' }).click();
 	await expect(page.locator('footer').getByText('Claude Code supervised command succeeded')).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'agent.event.claude-code.artifact' })).toBeVisible();
 	await page.getByRole('tab', { name: 'Intent' }).click();
 
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
 	await expect(page.getByText('Agent Visible Worklog')).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.run.claude-code' })).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'agent.event.claude-code.artifact' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.approval.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.supervise.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.handoff.claude-code' })).toBeVisible();

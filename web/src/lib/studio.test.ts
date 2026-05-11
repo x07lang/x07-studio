@@ -137,6 +137,9 @@ describe('x07 Studio XTAL web model', () => {
 		response = await api.runAgentHandoff(session, 'openai-codex', 'execute');
 		expect(response.op.op).toBe('agent.run.openai-codex');
 		expect(response.op.status).toBe('succeeded');
+		expect(response.session.op_log.some((op) => op.op === 'agent.event.openai-codex.artifact')).toBe(
+			true
+		);
 
 		response = await api.runAgentHandoff(response.session, 'openai-codex', 'execute');
 		expect(response.op.op).toBe('agent.approval.openai-codex');

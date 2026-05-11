@@ -6,6 +6,7 @@
 - machine-readable report capture for x07 and x07-wasm
 - structured stdout/stderr capture for x07-platform bindings
 - streaming stdout/stderr updates for supervised coding-agent commands
+- semantic `agent.event.*` records derived from supervised-agent artifacts, diagnostics, writes, and approval/policy requests
 - binding coverage for XTAL authoring, test generation, implementation sync, verify/repair/certify/ingest/improve, core checks, web-ui, device, workload, topology, deploy-plan, and selected platform query/control reads
 - session doctrine surfacing for canonical x07 docs, MCP tools, allowed verbs, and handoff prompt context
 - MCP HTTP transport with initialize + session header handling

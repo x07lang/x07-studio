@@ -306,9 +306,19 @@ export class StudioApi {
 			return { handoff, op: next.op_log.at(-1)!, session: next };
 		}
 		const opId = mode === 'execute' ? `agent.run.${agent.id}` : `agent.supervise.${agent.id}`;
-		const next = appendDemoOp(session, opId, 'succeeded', handoff.command, [promptPath]);
+		let next = appendDemoOp(session, opId, 'succeeded', handoff.command, [promptPath]);
+		const op = next.op_log.at(-1)!;
+		if (mode === 'execute') {
+			next = appendDemoOp(
+				next,
+				`agent.event.${agent.id}.artifact`,
+				'succeeded',
+				['observe-agent', agent.id, 'artifact'],
+				[promptPath, 'target/xtal/verify/summary.json']
+			);
+		}
 		this.replaceDemo(next);
-		return { handoff, op: next.op_log.at(-1)!, session: next };
+		return { handoff, op, session: next };
 	}
 
 	async createAgentApproval(

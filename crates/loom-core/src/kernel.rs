@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 
 use anyhow::{anyhow, Context};
@@ -611,12 +611,16 @@ impl WorkspaceKernel {
                 .await
         };
         tokio::pin!(execution);
+        let mut semantic_events = AgentSemanticEventState::default();
 
         loop {
             tokio::select! {
                 chunk = chunk_rx.recv() => {
                     if let Some(chunk) = chunk {
-                        let _ = updates.send(agent_streaming_op(&command, chunk));
+                        let _ = updates.send(agent_streaming_op(&command, chunk.clone()));
+                        for event in agent_semantic_ops(&command, &chunk, &mut semantic_events) {
+                            let _ = updates.send(event);
+                        }
                     }
                 }
                 result = &mut execution => {
@@ -1634,6 +1638,163 @@ fn agent_streaming_op(command: &AgentCommandPlan, update: CommandStreamUpdate) -
     }
 }
 
+#[derive(Debug, Default)]
+struct AgentSemanticEventState {
+    seen: BTreeSet<String>,
+}
+
+#[derive(Debug)]
+struct AgentSemanticEvent {
+    kind: &'static str,
+    line: String,
+    artifact: Option<String>,
+}
+
+fn agent_semantic_ops(
+    command: &AgentCommandPlan,
+    update: &CommandStreamUpdate,
+    state: &mut AgentSemanticEventState,
+) -> Vec<OpRecord> {
+    update
+        .stdout
+        .lines()
+        .chain(update.stderr.lines())
+        .filter_map(classify_agent_output_line)
+        .filter(|event| state.seen.insert(format!("{}:{}", event.kind, event.line)))
+        .map(|event| agent_semantic_op(command, event))
+        .collect()
+}
+
+fn classify_agent_output_line(line: &str) -> Option<AgentSemanticEvent> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let lower = line.to_ascii_lowercase();
+    if lower.contains("approval")
+        || lower.contains("approve")
+        || lower.contains("requires human")
+        || lower.contains("permission")
+        || lower.contains("policy widening")
+    {
+        return Some(AgentSemanticEvent {
+            kind: "approval",
+            line: line.to_string(),
+            artifact: None,
+        });
+    }
+    if lower.contains("error:")
+        || lower.contains("warning:")
+        || lower.contains("diagnostic")
+        || lower.contains("failed:")
+    {
+        return Some(AgentSemanticEvent {
+            kind: "diagnostic",
+            line: line.to_string(),
+            artifact: None,
+        });
+    }
+    if lower.starts_with("write:")
+        || lower.starts_with("wrote ")
+        || lower.starts_with("created ")
+        || lower.starts_with("updated ")
+        || lower.starts_with("patched ")
+        || lower.starts_with("modified ")
+    {
+        return Some(AgentSemanticEvent {
+            kind: "write",
+            line: line.to_string(),
+            artifact: extract_artifact_path(line),
+        });
+    }
+    if let Some(artifact) = extract_artifact_path(line) {
+        return Some(AgentSemanticEvent {
+            kind: "artifact",
+            line: line.to_string(),
+            artifact: Some(artifact),
+        });
+    }
+    None
+}
+
+fn extract_artifact_path(line: &str) -> Option<String> {
+    line.split_whitespace().find_map(|token| {
+        let candidate = token.trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\'' | '`' | ',' | ';' | ':' | '(' | ')' | '[' | ']'
+            )
+        });
+        if looks_like_artifact_path(candidate) {
+            Some(candidate.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn looks_like_artifact_path(candidate: &str) -> bool {
+    let has_known_prefix = [
+        ".x07/", "arch/", "dist/", "gen/", "out/", "spec/", "src/", "target/", "tests/",
+    ]
+    .iter()
+    .any(|prefix| candidate.starts_with(prefix));
+    let has_known_suffix = [
+        ".json",
+        ".jsonl",
+        ".x07.json",
+        ".x07spec.json",
+        ".patchset.json",
+        ".md",
+        ".txt",
+    ]
+    .iter()
+    .any(|suffix| candidate.ends_with(suffix));
+    has_known_prefix && has_known_suffix
+}
+
+fn agent_semantic_op(command: &AgentCommandPlan, event: AgentSemanticEvent) -> OpRecord {
+    let now = now_string();
+    let mut artifacts = vec![command.prompt_path.to_string()];
+    if let Some(artifact) = &event.artifact {
+        artifacts.push(artifact.clone());
+    }
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id: command.session_id,
+        op: format!("agent.event.{}.{}", command.agent.id, event.kind),
+        backend: "agent-observer".to_string(),
+        command: vec![
+            "observe-agent".to_string(),
+            command.agent.id.clone(),
+            event.kind.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts,
+        notes: Some(format!(
+            "Observed {} event from {} output.",
+            event.kind, command.agent.label
+        )),
+        stdout: Some(event.line.clone()),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.agent_semantic_event@0.1.0",
+            "kind": event.kind,
+            "line": event.line,
+            "artifact": event.artifact,
+            "agent_id": command.agent.id,
+            "handoff": command.handoff,
+        })),
+        report_path: None,
+    }
+}
+
 fn agent_execution_op(command: AgentCommandPlan, execution: CommandExecution) -> OpRecord {
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
@@ -1845,7 +2006,7 @@ mod tests {
             command: "/bin/sh".to_string(),
             args: vec![
                 "-c".to_string(),
-                "printf 'supervised:%s' \"$1\"".to_string(),
+                "printf 'artifact: target/xtal/verify/summary.json\\napproval required: policy widening\\nsupervised:%s' \"$1\"".to_string(),
                 "x07-studio-agent".to_string(),
             ],
             allowed_verbs: vec!["intent.formalize".to_string()],
@@ -1942,6 +2103,16 @@ mod tests {
                     .unwrap_or_default()
                     .contains(&handoff.prompt_path)
         }));
+        assert!(stream_updates.iter().any(|op| {
+            op.op == "agent.event.echo-agent.artifact"
+                && op
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact == "target/xtal/verify/summary.json")
+        }));
+        assert!(stream_updates
+            .iter()
+            .any(|op| op.op == "agent.event.echo-agent.approval"));
         assert!(run_session
             .op_log
             .iter()

@@ -35,8 +35,10 @@ This document records friction found while implementing the Studio web surface.
 
    `OpRecord` persists command details, and Studio now updates supervised
    `agent.run.*` records with stdout/stderr chunks while the command is still
-   running. The next visibility layer is higher-level semantic events: artifact
-   detected, diagnostic classified, approval requested, and write completed.
+   running. Studio also derives bounded `agent.event.*` records from those
+   chunks for artifacts, diagnostics, write activity, and approval/policy
+   requests. The next visibility layer is richer event sources from structured
+   agent protocols instead of output-line classification alone.
 
 5. Documentation is strong on agent quickstart but scattered for Studio.
 
@@ -89,9 +91,11 @@ This document records friction found while implementing the Studio web surface.
    commands with a bounded timeout into visible `OpRecord`s. The daemon now
    appends a `running` record before execution, updates the same record with
    stdout/stderr chunks while the command is active, and then records final
-   status and captured output. Human checkpoints are also explicit pending
-   `agent.approval.*` records for approval-gated profiles. The remaining gap is
-   binding raw chunks to finer-grained semantic approval prompts.
+   status and captured output. Raw chunks are classified into `agent.event.*`
+   records for visible artifact, diagnostic, write, and approval/policy events.
+   Human checkpoints are also explicit pending `agent.approval.*` records for
+   approval-gated profiles. The remaining gap is structured protocol support for
+   richer semantic approval prompts.
 
 11. The starter-template path needs a cleaner scaffold contract.
 

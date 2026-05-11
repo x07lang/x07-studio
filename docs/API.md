@@ -198,7 +198,9 @@ workspace root with the handoff prompt path as its final argument. The daemon
 first appends a `running` `agent.run.*` operation so clients can poll the session
 while the command is active, updates the same operation with streaming
 stdout/stderr chunks, then writes the final captured output and succeeded or
-failed status.
+failed status. While streaming, the kernel also appends bounded
+`agent.event.*` records when output lines report artifact paths, diagnostics,
+write activity, or approval/policy requests.
 
 If the agent profile has `approval_required: true`, `mode: "execute"` first
 records a pending `agent.approval.*` checkpoint unless the latest relevant

@@ -91,7 +91,10 @@ execution is split into a `running` record and a later completion update so web
 clients can poll active progress without holding the daemon session lock. While
 the process is active, stdout/stderr chunks update the same `agent.run.*` record
 so the browser worklog can show live command evidence instead of waiting for
-process exit.
+process exit. The kernel also observes those chunks for bounded semantic
+signals and appends `agent.event.*` records for reported artifacts, diagnostics,
+write activity, and approval/policy requests, giving humans filterable evidence
+without hiding the raw stream.
 Profiles marked `approval_required` are gated by pending `agent.approval.*`
 records; humans approve or reject those checkpoints in the same visible worklog
 before Studio starts the supervised command. Approval checkpoints are one-shot:
