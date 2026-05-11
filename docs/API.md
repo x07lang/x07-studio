@@ -42,20 +42,22 @@ Dispatch event request:
 
 ```json
 {
-  "event": "formalize_intent",
-  "payload": {
-    "schema_version": "x07.studio.intent_packet@0.1.0",
-    "session_id": "00000000-0000-0000-0000-000000000000",
-    "workspace_root": ".",
-    "task_type": "bug_fix",
-    "targets": [{"module_id": "app.sorter", "entry": "sort_ascending"}],
-    "examples": ["[3,1,2] -> [1,2,3]"],
-    "constraints": ["reject empty input"],
-    "policy_implications": [],
-    "ambiguities": [],
-    "assumptions": [],
-    "witnesses": [{"kind": "desired_behavior", "text": "Keep equal items in order."}],
-    "source": {"kind": "text", "raw": "Fix stable sort"}
+  "event": {
+    "event": "formalize_intent",
+    "payload": {
+      "schema_version": "x07.studio.intent_packet@0.1.0",
+      "session_id": "00000000-0000-0000-0000-000000000000",
+      "workspace_root": ".",
+      "task_type": "bug_fix",
+      "targets": [{"module_id": "app.sorter", "entry": "sort_ascending"}],
+      "examples": ["[3,1,2] -> [1,2,3]"],
+      "constraints": ["reject empty input"],
+      "policy_implications": [],
+      "ambiguities": [],
+      "assumptions": [],
+      "witnesses": [{"kind": "desired_behavior", "text": "Keep equal items in order."}],
+      "source": {"kind": "text", "raw": "Fix stable sort"}
+    }
   }
 }
 ```

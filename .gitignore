@@ -2,5 +2,10 @@ target/
 .x07/
 dist/
 build/
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/playwright-report/
+web/test-results/
 *.log
 .DS_Store

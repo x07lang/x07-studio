@@ -5,6 +5,7 @@ Rust-native v0.1 workspace for the x07 Studio system:
 - **Loom**: lifecycle kernel, adapters, store, REST daemon, and client.
 - **x07 Studio**: desktop shell built with `eframe` / `egui`.
 - **Forge**: terminal shell built with `ratatui`.
+- **Studio Web**: browser shell built with SvelteKit over the Loom REST API.
 
 This repo keeps the x07/XTAL lifecycle artifact-centric:
 
@@ -37,7 +38,11 @@ x07-studio/
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── API.md
+│   ├── XTAL_WORKFLOW_FINDINGS.md
 │   └── COMMAND_BINDINGS.md
+├── web/
+│   ├── src/
+│   └── static/mockups/x07-studio-xtal-ui-mockup.png
 ├── schemas/
 │   ├── index.json
 │   ├── x07.studio.intent_packet.schema.json
@@ -69,6 +74,7 @@ x07-studio/
 cargo run -p loom-daemon -- serve --root /path/to/x07/workspace --addr 127.0.0.1:7719
 cargo run -p x07-studio -- --daemon-url http://127.0.0.1:7719
 cargo run -p x07-studio-forge -- --daemon-url http://127.0.0.1:7719
+cd web && npm install && npm run dev
 ```
 
 ## Suggested local setup
@@ -86,6 +92,7 @@ cargo run -p x07-studio-forge -- --daemon-url http://127.0.0.1:7719
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cd web && npm run check && npm test && npm run build
 ```
 
 ## Notes
