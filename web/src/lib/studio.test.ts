@@ -151,6 +151,32 @@ describe('x07 Studio XTAL web model', () => {
 		expect(review?.files.find((file) => file.path === 'src/main.x07.json')?.operations).toBe(2);
 	});
 
+	it('does not replace connected artifact preview failures with demo content', async () => {
+		const originalFetch = globalThis.fetch;
+		const api = new StudioApi();
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const path = String(input);
+			if (path.endsWith('/v1/health')) {
+				return new Response(JSON.stringify({ ok: true, workspace_root: '/workspace' }), {
+					status: 200
+				});
+			}
+			if (path.includes('/artifacts/preview')) {
+				return new Response('artifact is not recorded', { status: 409 });
+			}
+			return new Response('not found', { status: 404 });
+		}) as typeof fetch;
+		try {
+			await api.health();
+			await expect(
+				api.previewArtifact(demoSession(), 'target/xtal/impl-sync.patchset.json')
+			).rejects.toThrow('artifact is not recorded');
+			expect(api.isDemoMode).toBe(false);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	it('models supervised agent launch records', () => {
 		const session = appendDemoOp(
 			demoSession(),

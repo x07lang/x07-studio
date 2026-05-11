@@ -185,17 +185,13 @@ export class StudioApi {
 		artifact: string
 	): Promise<ArtifactPreviewResponse> {
 		if (!this.demoMode) {
-			try {
-				return await request<ArtifactPreviewResponse>(
-					`/v1/sessions/${session.session_id}/artifacts/preview`,
-					{
-						method: 'POST',
-						body: JSON.stringify({ artifact })
-					}
-				);
-			} catch {
-				this.demoMode = true;
-			}
+			return await request<ArtifactPreviewResponse>(
+				`/v1/sessions/${session.session_id}/artifacts/preview`,
+				{
+					method: 'POST',
+					body: JSON.stringify({ artifact })
+				}
+			);
 		}
 		return demoArtifactPreview(artifact);
 	}
