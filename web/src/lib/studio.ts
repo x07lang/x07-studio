@@ -260,6 +260,7 @@ export interface ProjectTemplate {
 }
 
 export type GuardTone = 'ok' | 'review' | 'blocked';
+export type ApprovalLoopState = 'drafting' | 'awaiting' | 'changes' | 'approved';
 
 export interface GuardRailItem {
 	label: string;
@@ -275,6 +276,12 @@ export interface WorldBudgetGuard {
 	capabilities: GuardRailItem[];
 	budgets: GuardRailItem[];
 	gates: string[];
+}
+
+export interface ApprovalLedgerItem {
+	label: string;
+	detail: string;
+	state: 'done' | 'active' | 'blocked';
 }
 
 export const rooms: Array<{ id: Room; label: string }> = [
@@ -668,6 +675,57 @@ export function buildWorldBudgetGuard(
 	};
 }
 
+export function buildApprovalLedger(
+	session: SessionSnapshot | null | undefined,
+	revisionNotes: string[],
+	approvalState: ApprovalLoopState
+): ApprovalLedgerItem[] {
+	const phase = session?.phase ?? 'intent_drafting';
+	const hasIntent = Boolean(session?.intent);
+	const hasFormalizeOp = Boolean(
+		session?.op_log.some((op) => op.op === 'intent.formalize' && op.status === 'succeeded')
+	);
+	const specApproved = phaseIndex(phase) >= phaseIndex('spec_approved');
+	const revisionItems = revisionNotes
+		.map((note) => note.trim())
+		.filter(Boolean)
+		.map((note, index) => ({
+			label: `Revision ${index + 1}`,
+			detail: note,
+			state: approvalState === 'changes' ? ('active' as const) : ('done' as const)
+		}));
+	return [
+		{
+			label: 'Intent source',
+			detail: intentSourceLabel(session),
+			state: hasIntent || hasFormalizeOp ? 'done' : 'active'
+		},
+		{
+			label: 'Agent polish',
+			detail: hasFormalizeOp || hasIntent ? 'intent packet ready for human review' : 'waiting for Polish Intent',
+			state: hasFormalizeOp || hasIntent ? 'done' : 'blocked'
+		},
+		...revisionItems,
+		{
+			label: 'Human decision',
+			detail:
+				approvalState === 'changes'
+					? 'approval blocked until the agent repolishes revisions'
+					: specApproved
+						? 'spec approved and realization unlocked'
+						: 'approve or request changes before realization',
+			state: specApproved ? 'done' : hasIntent && approvalState !== 'changes' ? 'active' : 'blocked'
+		},
+		{
+			label: 'Write contract',
+			detail: session?.contract
+				? 'agent writes are constrained by the session contract'
+				: 'contract locks after human approval',
+			state: session?.contract ? 'done' : 'blocked'
+		}
+	];
+}
+
 export function createIntentPacket(
 	session: SessionSnapshot,
 	raw: string,
@@ -822,6 +880,15 @@ function entryFromSpecOperation(moduleId: string, operationName: string): string
 	if (entry.startsWith(`${moduleId}.`)) entry = entry.slice(moduleId.length + 1);
 	if (entry.endsWith('.v1')) entry = entry.slice(0, -3);
 	return entry.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'run_v1';
+}
+
+function intentSourceLabel(session: SessionSnapshot | null | undefined): string {
+	const source = session?.intent?.source;
+	if (!source) return 'waiting for written, spoken, spec, or incident input';
+	if (source.kind === 'voice') return 'voice transcript';
+	if (source.kind === 'spec') return 'existing x07 spec';
+	if (source.kind === 'incident') return 'incident note';
+	return 'written plan';
 }
 
 export function demoSession(): SessionSnapshot {

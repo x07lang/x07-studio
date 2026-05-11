@@ -10,6 +10,7 @@
 	} from '$lib/review';
 	import {
 		agentLanes,
+		buildApprovalLedger,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
@@ -21,6 +22,7 @@
 		providerCards,
 		rooms,
 		workflowChecklist,
+		type ApprovalLoopState,
 		type AgentProfile,
 		type ArtifactPreviewResponse,
 		type BindingDescriptor,
@@ -54,7 +56,7 @@
 	let statusLine = 'Starting Studio surface';
 	let handoffStatus = 'No agent handoff generated';
 	let busy = false;
-	let approvalState: 'drafting' | 'awaiting' | 'changes' | 'approved' = 'drafting';
+	let approvalState: ApprovalLoopState = 'drafting';
 	let visibleAgent = 'Codex';
 	let selectedBindingId = '';
 	let selectedOpId = '';
@@ -181,10 +183,15 @@
 	$: selectedOpDiagnostics = collectDiagnostics(selectedOp);
 	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
+	$: approvalLedger = buildApprovalLedger(selected, revisionHistory, approvalState);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
-	$: canApproveSpec = selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft';
+	$: canApproveSpec =
+		approvalState !== 'changes' && (selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft');
+	$: canRequestChanges =
+		Boolean(selected) && (selected?.phase === 'intent_drafting' || selected?.phase === 'intent_ready');
 	$: canRunProject =
 		Boolean(selected) &&
+		approvalState !== 'changes' &&
 		(canApproveSpec ||
 			selected?.phase === 'intent_drafting' ||
 			selected?.phase === 'spec_approved' ||
@@ -553,9 +560,11 @@
 	}
 
 	async function requestChanges() {
+		if (!selected || !revisionText.trim()) return;
 		approvalState = 'changes';
-		revisionHistory = [...revisionHistory, revisionText];
-		promptText = `${promptText}\n\nRevision request: ${revisionText}`;
+		const revision = revisionText.trim();
+		revisionHistory = [...revisionHistory, revision];
+		promptText = `${promptText}\n\nRevision request: ${revision}`;
 		statusLine = 'Revision routed back to intent review';
 	}
 
@@ -673,7 +682,7 @@
 
 	async function approveSpecSnapshot(session: SessionSnapshot): Promise<SessionSnapshot> {
 		let current = session;
-		if (!current.intent) {
+		if (!current.intent || approvalState === 'changes') {
 			const response = await api.formalizeIntent(current, promptText, inputMode, revisionHistory);
 			current = response.session;
 		}
@@ -970,7 +979,7 @@
 							<button class="command-button" type="button" on:click={polishIntent} disabled={busy || !selected}>
 								Polish Intent
 							</button>
-							<button class="command-button warning" type="button" on:click={requestChanges} disabled={busy || !selected}>
+							<button class="command-button warning" type="button" on:click={requestChanges} disabled={busy || !canRequestChanges}>
 								Request Changes
 							</button>
 							<button class="command-button" type="button" on:click={approveSpec} disabled={busy || !canApproveSpec}>
@@ -993,6 +1002,15 @@
 							<span></span>
 							<strong>{item.label}</strong>
 							<small>{item.state}</small>
+						</div>
+					{/each}
+				</div>
+				<div class="approval-ledger" aria-label="Approval loop ledger">
+					{#each approvalLedger as item}
+						<div class={item.state}>
+							<span>{item.label}</span>
+							<strong>{item.detail}</strong>
+							<em>{item.state}</em>
 						</div>
 					{/each}
 				</div>

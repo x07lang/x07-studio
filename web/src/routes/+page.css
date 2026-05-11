@@ -66,6 +66,8 @@
 .radar-actions span,
 .mode-row label,
 .template-meta span,
+.approval-ledger span,
+.approval-ledger em,
 .guard-section > span,
 .guard-row small,
 .guard-row em,
@@ -738,6 +740,48 @@ textarea {
 .approval-list small {
 	grid-column: 2;
 	color: var(--muted);
+	font-family: var(--font-mono);
+}
+
+.approval-ledger {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 7px;
+	margin-top: 10px;
+}
+
+.approval-ledger div {
+	display: grid;
+	gap: 4px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 8px;
+	background: rgba(255, 255, 255, 0.035);
+	min-width: 0;
+}
+
+.approval-ledger div.done {
+	border-color: rgba(114, 228, 180, 0.25);
+}
+
+.approval-ledger div.active {
+	border-color: rgba(85, 214, 231, 0.34);
+	background: rgba(85, 214, 231, 0.055);
+}
+
+.approval-ledger div.blocked {
+	border-color: rgba(255, 195, 91, 0.32);
+}
+
+.approval-ledger strong {
+	font-size: 12px;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.approval-ledger em {
+	font-style: normal;
+	font-size: 11px;
 	font-family: var(--font-mono);
 }
 
@@ -1784,6 +1828,7 @@ textarea {
 	}
 
 	.approval-list,
+	.approval-ledger,
 	.spec-grid {
 		grid-template-columns: 1fr;
 	}

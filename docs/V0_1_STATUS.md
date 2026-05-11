@@ -13,6 +13,7 @@
 - bounded daemon artifact preview for recorded operation artifacts, including in-memory JSON Patch previews for x07 patchsets
 - binding coverage for XTAL authoring, test generation, implementation sync, verify/repair/certify/ingest/improve, core checks, app, web-ui, device, workload, topology, deploy-plan, SLO, provenance, and selected platform query/control reads
 - seeded docs-example workflows for workflow graph, state-machine contracts, API gateway, x07crawl, x07dbguard, and x07 Atlas projects
+- approval ledger that blocks stale approvals after human revision requests until the agent repolishes intent
 - session doctrine surfacing for canonical x07 docs, MCP tools, allowed verbs, and handoff prompt context
 - MCP HTTP transport with initialize + session header handling
 - MCP stdio transport with newline-delimited JSON-RPC

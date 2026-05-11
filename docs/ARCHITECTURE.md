@@ -68,6 +68,11 @@ initial plan -> polished intent packet -> approve/change -> spec draft
   -> approved spec -> realization proposal -> verify -> repair/trust
 ```
 
+When the human requests changes, Studio marks approval blocked until the agent
+repolishes the revised intent. The approval ledger keeps the source, polish
+step, revision notes, human decision, and write-contract lock visible in the
+Intent room.
+
 OpenAI Codex and Claude Code are shown as coding-agent lanes with guarded verbs,
 write scopes, and review gates. The current backend provider profile is
 model-transport oriented, so command-capable agent profiles are tracked as a

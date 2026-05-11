@@ -159,6 +159,16 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByLabel('Revision').fill('Add a deterministic repair witness before implementation.');
 	await page.getByRole('button', { name: 'Request Changes' }).click();
 	await expect(page.getByText('Revision routed back to intent review')).toBeVisible();
+	await expect(page.getByLabel('Approval loop ledger')).toContainText('Revision 1');
+	await expect(page.getByLabel('Approval loop ledger')).toContainText(
+		'approval blocked until the agent repolishes revisions'
+	);
+	await expect(page.getByRole('button', { name: 'Approve Spec' })).toBeDisabled();
+	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeDisabled();
+	await page.getByRole('button', { name: 'Polish Intent' }).click();
+	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Approve Spec' })).toBeEnabled();
+	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeEnabled();
 
 	await page.getByRole('button', { name: 'Approve Spec' }).click();
 	await expect(page.getByText('Spec approved; realization lane is unlocked')).toBeVisible();

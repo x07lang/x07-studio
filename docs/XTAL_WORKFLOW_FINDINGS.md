@@ -246,3 +246,13 @@ This document records friction found while implementing the Studio web surface.
    panel keeps deterministic solve-pure visible, flags capability widening, shows
    budget evidence requirements, and lists review gates before supervised agent
    execution.
+
+24. Revision requests must block stale approval.
+
+   The UI had `Request Changes`, but after a revision was appended the same
+   already-polished intent could still be approved. That violates the product
+   requirement that the coding agent keeps improving the plan until human
+   approval. Studio now treats the revision state as an approval blocker:
+   `Approve Spec` stays disabled until `Polish Intent` runs again, and the
+   Intent room shows an approval ledger with the input source, polish step,
+   revision notes, human decision, and write-contract lock.

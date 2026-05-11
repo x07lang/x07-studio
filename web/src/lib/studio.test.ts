@@ -4,6 +4,7 @@ import { StudioApi } from './api';
 import { buildCounterexampleTheater, buildPatchReview, buildReviewSignals } from './review';
 import {
 	appendDemoOp,
+	buildApprovalLedger,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
 	canonicalMcpTools,
@@ -107,6 +108,19 @@ describe('x07 Studio XTAL web model', () => {
 		expect(workflowChecklist(approved).find((item) => item.label === 'Human spec approval')?.state).toBe(
 			'done'
 		);
+	});
+
+	it('marks revision requests as an active approval blocker until repolished', () => {
+		let session = demoSession();
+		session = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, 'Create a sorter.'));
+
+		const blockedLedger = buildApprovalLedger(session, ['Keep empty input explicit.'], 'changes');
+		expect(blockedLedger.find((item) => item.label === 'Revision 1')?.state).toBe('active');
+		expect(blockedLedger.find((item) => item.label === 'Human decision')?.state).toBe('blocked');
+
+		const awaitingLedger = buildApprovalLedger(session, ['Keep empty input explicit.'], 'awaiting');
+		expect(awaitingLedger.find((item) => item.label === 'Revision 1')?.state).toBe('done');
+		expect(awaitingLedger.find((item) => item.label === 'Human decision')?.state).toBe('active');
 	});
 
 	it('models visible canonical operation records', () => {
