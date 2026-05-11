@@ -179,13 +179,20 @@ and the built Svelte Studio web app.
 ## Start
 
 ```bash
-python3 scripts/bootstrap_components.py --repo-root . --write-env defaults.env
 python3 scripts/launch_studio_web.py --bundle-root .
 ```
 
-The launcher starts `loom-daemon`, serves the static web app on
+The launcher checks bundled and local runtime components, builds missing sibling
+source checkouts when they are available, refreshes `defaults.env`, starts
+`loom-daemon`, serves the static web app on
 `http://{manifest["web_addr"]}`, and proxies `/v1/**` to the daemon. The native
 desktop shell is available at `bin/{binary_name("x07-studio")}`.
+
+For a read-only setup check, run:
+
+```bash
+python3 scripts/bootstrap_components.py --repo-root . --write-env defaults.env --allow-missing
+```
 
 Required local components for full Atlas/platform delivery:
 

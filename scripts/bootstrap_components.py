@@ -20,6 +20,7 @@ class Component:
     command: str
     env_var: str | None
     required: bool
+    bundle_candidates: tuple[str, ...]
     sibling_candidates: tuple[str, ...]
     build_repo: str | None
     build_command: tuple[str, ...]
@@ -33,10 +34,14 @@ COMPONENTS = (
         command="x07",
         env_var="X07_STUDIO_X07_EXE",
         required=True,
+        bundle_candidates=("components/x07",),
         sibling_candidates=("x07/target/release/x07", "x07/target/debug/x07"),
         build_repo="x07",
         build_command=("cargo", "build", "--release", "-p", "x07"),
-        install_hint="Install the x07 toolchain, build the sibling x07 repo, or set X07_STUDIO_X07_EXE.",
+        install_hint=(
+            "Install the x07 toolchain, use a bundle with components/x07, "
+            "build the sibling x07 repo, or set X07_STUDIO_X07_EXE."
+        ),
     ),
     Component(
         id="x07-wasm",
@@ -44,6 +49,7 @@ COMPONENTS = (
         command="x07-wasm",
         env_var="X07_STUDIO_X07_WASM_EXE",
         required=True,
+        bundle_candidates=("components/x07-wasm",),
         sibling_candidates=(
             "x07-wasm-backend/target/release/x07-wasm",
             "x07-wasm-backend/target/debug/x07-wasm",
@@ -51,8 +57,8 @@ COMPONENTS = (
         build_repo="x07-wasm-backend",
         build_command=("cargo", "build", "--release", "-p", "x07-wasm"),
         install_hint=(
-            "Install x07-wasm, build the sibling x07-wasm-backend repo, "
-            "or set X07_STUDIO_X07_WASM_EXE."
+            "Install x07-wasm, use a bundle with components/x07-wasm, "
+            "build the sibling x07-wasm-backend repo, or set X07_STUDIO_X07_WASM_EXE."
         ),
     ),
     Component(
@@ -61,10 +67,14 @@ COMPONENTS = (
         command="x07lp",
         env_var="X07_STUDIO_X07LP_EXE",
         required=True,
+        bundle_candidates=("components/x07lp", "components/x07lp-driver"),
         sibling_candidates=("x07-platform/scripts/x07lp-driver",),
         build_repo=None,
         build_command=(),
-        install_hint="Install x07lp, place x07-platform beside Studio, or set X07_STUDIO_X07LP_EXE.",
+        install_hint=(
+            "Install x07lp, use a bundle with components/x07lp, "
+            "place x07-platform beside Studio, or set X07_STUDIO_X07LP_EXE."
+        ),
     ),
     Component(
         id="codex",
@@ -72,6 +82,7 @@ COMPONENTS = (
         command="codex",
         env_var=None,
         required=False,
+        bundle_candidates=(),
         sibling_candidates=(),
         build_repo=None,
         build_command=(),
@@ -83,6 +94,7 @@ COMPONENTS = (
         command="claude",
         env_var=None,
         required=False,
+        bundle_candidates=(),
         sibling_candidates=(),
         build_repo=None,
         build_command=(),
@@ -137,7 +149,6 @@ def main() -> int:
 
 
 def build_missing(repo_root: Path) -> None:
-    workspace_root = repo_root.parent
     for component in COMPONENTS:
         if not component.required:
             continue
@@ -145,8 +156,8 @@ def build_missing(repo_root: Path) -> None:
             continue
         if not component.build_repo:
             continue
-        source_root = workspace_root / component.build_repo
-        if not source_root.exists():
+        source_root = source_repo_root(repo_root, component.build_repo)
+        if source_root is None:
             continue
         print(f"building {component.label} from {source_root}", file=sys.stderr)
         subprocess.run(component.build_command, cwd=source_root, check=True)
@@ -154,6 +165,8 @@ def build_missing(repo_root: Path) -> None:
 
 def component_status(repo_root: Path, component: Component) -> dict[str, object]:
     source = env_source(component.env_var)
+    if source is None:
+        source = bundled_source(repo_root, component)
     if source is None:
         source = sibling_source(repo_root, component)
     if source is None:
@@ -179,14 +192,40 @@ def env_source(env_var: str | None) -> Path | None:
     return path if executable_exists(path) else None
 
 
-def sibling_source(repo_root: Path, component: Component) -> Path | None:
-    search_bases = [repo_root, repo_root.parent]
-    for base in search_bases:
-        for candidate in component.sibling_candidates:
-            path = executable_variant(base / candidate)
-            if path:
-                return path
+def bundled_source(repo_root: Path, component: Component) -> Path | None:
+    for candidate in component.bundle_candidates:
+        path = executable_variant(repo_root / candidate)
+        if path:
+            return path
     return None
+
+
+def sibling_source(repo_root: Path, component: Component) -> Path | None:
+    for base in component_search_bases(repo_root):
+        for ancestor in ancestry(base):
+            for candidate in component.sibling_candidates:
+                path = executable_variant(ancestor / candidate)
+                if path:
+                    return path
+    return None
+
+
+def source_repo_root(repo_root: Path, repo_name: str) -> Path | None:
+    for base in component_search_bases(repo_root):
+        for ancestor in ancestry(base):
+            source_root = ancestor / repo_name
+            if source_root.exists():
+                return source_root
+    return None
+
+
+def component_search_bases(repo_root: Path) -> list[Path]:
+    return [repo_root, repo_root.parent, Path.cwd()]
+
+
+def ancestry(base: Path) -> list[Path]:
+    resolved = base.resolve()
+    return [resolved, *list(resolved.parents)[:8]]
 
 
 def path_source(command: str) -> Path | None:

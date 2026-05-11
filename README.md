@@ -91,6 +91,13 @@ cargo build --release -p loom-daemon -p x07-studio -p x07-studio-forge
 python3 scripts/package_standalone.py --target-dir target/release --web-dir web/build --out-dir dist/standalone
 ```
 
+Inside a standalone bundle, `python3 scripts/launch_studio_web.py --bundle-root .`
+is the preferred entry point. It detects bundled components, builds missing
+sibling source checkouts when they are present, refreshes `defaults.env`, starts
+the daemon, and opens the Svelte Studio surface with the same onboarding panel.
+The native shell under `bin/x07-studio` also reads the bundle `defaults.env`
+before it starts its embedded daemon.
+
 ## Suggested local setup
 
 1. Put this repo beside `x07`, `x07-mcp`, `x07-wasm-backend`, and `x07-platform`.
@@ -116,9 +123,9 @@ cd web && npm run check && npm test && npm run build
 ```
 
 GitHub Actions builds the Rust workspace, the Svelte web app, Playwright E2E,
-and standalone desktop bundles for Linux, macOS, and Windows. The desktop bundle
-job also builds `x07-wasm` from `x07lang/x07-wasm-backend` and wires it into the
-packaged defaults so Atlas app workflows have a ready WASM component.
+and standalone desktop bundles for Linux, macOS, and Windows 2022. The desktop
+bundle job also builds `x07-wasm` from `x07lang/x07-wasm-backend` and wires it
+into the packaged defaults so Atlas app workflows have a ready WASM component.
 
 ## Notes
 

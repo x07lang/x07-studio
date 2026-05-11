@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::net::{SocketAddr, TcpListener};
+use std::path::{Path as StdPath, PathBuf};
 
 use clap::Parser;
 use eframe::egui;
@@ -31,10 +33,16 @@ struct Cli {
 
     #[arg(long, help = "Use the daemon URL without starting an embedded daemon")]
     external_daemon: bool,
+
+    #[arg(long, help = "Load x07 Studio component defaults from this env file")]
+    defaults_env: Option<PathBuf>,
 }
 
 fn main() -> eframe::Result<()> {
     let cli = Cli::parse();
+    if let Err(error) = load_first_defaults_env(cli.defaults_env.as_deref()) {
+        eprintln!("could not load x07 Studio defaults: {error}");
+    }
     let options = eframe::NativeOptions::default();
     let launch = StudioLaunch {
         daemon_url: cli.daemon_url.clone(),
@@ -546,6 +554,62 @@ fn component_summary(ui: &mut egui::Ui, health: &HealthResponse) {
     });
 }
 
+fn load_first_defaults_env(explicit: Option<&StdPath>) -> anyhow::Result<Option<PathBuf>> {
+    let mut candidates = Vec::new();
+    if let Some(path) = explicit {
+        candidates.push(path.to_path_buf());
+    } else {
+        if let Ok(current_exe) = std::env::current_exe() {
+            if let Some(bundle_root) = current_exe.parent().and_then(StdPath::parent) {
+                candidates.push(bundle_root.join("defaults.env"));
+            }
+        }
+        candidates.push(PathBuf::from("defaults.env"));
+    }
+
+    for candidate in candidates {
+        if candidate.exists() {
+            load_defaults_env(&candidate)?;
+            return Ok(Some(candidate));
+        }
+    }
+
+    if let Some(path) = explicit {
+        anyhow::bail!("defaults env file not found: {}", path.display());
+    }
+    Ok(None)
+}
+
+fn load_defaults_env(path: &StdPath) -> anyhow::Result<()> {
+    let base = path.parent().unwrap_or_else(|| StdPath::new("."));
+    for line in fs::read_to_string(path)?.lines() {
+        if let Some((key, value)) = parse_defaults_line(line, base) {
+            std::env::set_var(key, value);
+        }
+    }
+    Ok(())
+}
+
+fn parse_defaults_line(line: &str, base: &StdPath) -> Option<(String, String)> {
+    let stripped = line.trim();
+    if stripped.is_empty() || stripped.starts_with('#') {
+        return None;
+    }
+    let (key, value) = stripped.split_once('=')?;
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    let mut value = value.trim().trim_matches('"').to_string();
+    if key.starts_with("X07_STUDIO_") && !value.is_empty() {
+        let path = StdPath::new(&value);
+        if path.is_relative() {
+            value = base.join(path).to_string_lossy().into_owned();
+        }
+    }
+    Some((key.to_string(), value))
+}
+
 fn parse_vars_map(input: &str) -> anyhow::Result<BTreeMap<String, String>> {
     if input.trim().is_empty() {
         return Ok(BTreeMap::new());
@@ -565,4 +629,27 @@ fn parse_vars_map(input: &str) -> anyhow::Result<BTreeMap<String, String>> {
         );
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_defaults_line;
+    use std::path::Path;
+
+    #[test]
+    fn defaults_env_resolves_relative_component_paths() {
+        let parsed = parse_defaults_line(
+            "X07_STUDIO_X07_WASM_EXE=\"components/x07-wasm\"",
+            Path::new("/tmp/x07-studio-bundle"),
+        )
+        .expect("parsed env line");
+
+        assert_eq!(parsed.0, "X07_STUDIO_X07_WASM_EXE");
+        assert_eq!(parsed.1, "/tmp/x07-studio-bundle/components/x07-wasm");
+    }
+
+    #[test]
+    fn defaults_env_ignores_comments() {
+        assert!(parse_defaults_line("# X07_STUDIO_X07_EXE=\"/tmp/x07\"", Path::new(".")).is_none());
+    }
 }

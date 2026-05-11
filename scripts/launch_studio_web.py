@@ -25,6 +25,16 @@ def main() -> int:
     parser.add_argument("--daemon-addr", default="127.0.0.1:7719")
     parser.add_argument("--web-addr", default="127.0.0.1:7720")
     parser.add_argument("--no-open", action="store_true")
+    parser.add_argument(
+        "--no-install-missing",
+        action="store_true",
+        help="Detect components without building missing sibling source checkouts.",
+    )
+    parser.add_argument(
+        "--skip-bootstrap",
+        action="store_true",
+        help="Skip startup component discovery and defaults.env refresh.",
+    )
     args = parser.parse_args()
 
     bundle_root = args.bundle_root.resolve()
@@ -37,7 +47,16 @@ def main() -> int:
 
     args.root.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    load_env_file(bundle_root / "defaults.env", env)
+    defaults_path = bundle_root / "defaults.env"
+    load_env_file(defaults_path, env)
+    if not args.skip_bootstrap:
+        run_component_bootstrap(
+            bundle_root,
+            defaults_path,
+            env,
+            install_missing=not args.no_install_missing,
+        )
+        load_env_file(defaults_path, env)
 
     daemon = start_daemon(bundle_root, args.root, args.daemon_addr, env)
     wait_for_daemon(f"http://{args.daemon_addr}/v1/health")
@@ -67,6 +86,39 @@ def load_env_file(path: Path, env: dict[str, str]) -> None:
         if key.startswith("X07_STUDIO_") and normalized and not Path(normalized).is_absolute():
             normalized = str((path.parent / normalized).resolve())
         env[key] = normalized
+
+
+def run_component_bootstrap(
+    bundle_root: Path,
+    defaults_path: Path,
+    env: dict[str, str],
+    *,
+    install_missing: bool,
+) -> None:
+    script = bundle_root / "scripts" / "bootstrap_components.py"
+    if not script.exists():
+        return
+    command = [
+        sys.executable,
+        str(script),
+        "--repo-root",
+        str(bundle_root),
+        "--write-env",
+        str(defaults_path),
+        "--allow-missing",
+    ]
+    if install_missing:
+        command.append("--install-missing")
+    result = subprocess.run(command, env=env, text=True, capture_output=True, check=False)
+    if result.stdout.strip():
+        print(result.stdout.rstrip())
+    if result.stderr.strip():
+        print(result.stderr.rstrip(), file=sys.stderr)
+    if result.returncode != 0:
+        print(
+            "component bootstrap failed; launching Studio so setup guidance remains visible",
+            file=sys.stderr,
+        )
 
 
 def start_daemon(bundle_root: Path, workspace_root: Path, addr: str, env: dict[str, str]) -> subprocess.Popen:

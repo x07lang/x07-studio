@@ -110,8 +110,12 @@ fn runtime_components(root: &Utf8Path) -> Vec<RuntimeComponentStatus> {
             "x07",
             Some("X07_STUDIO_X07_EXE"),
             true,
-            &["x07/target/release/x07", "x07/target/debug/x07"],
-            "Install the x07 toolchain, build the sibling x07 repo, or set X07_STUDIO_X07_EXE.",
+            &[
+                "components/x07",
+                "x07/target/release/x07",
+                "x07/target/debug/x07",
+            ],
+            "Install the x07 toolchain, use a bundle with components/x07, build the sibling x07 repo, or set X07_STUDIO_X07_EXE.",
         ),
         component_status(
             root,
@@ -121,10 +125,11 @@ fn runtime_components(root: &Utf8Path) -> Vec<RuntimeComponentStatus> {
             Some("X07_STUDIO_X07_WASM_EXE"),
             true,
             &[
+                "components/x07-wasm",
                 "x07-wasm-backend/target/release/x07-wasm",
                 "x07-wasm-backend/target/debug/x07-wasm",
             ],
-            "Install x07-wasm, build the sibling x07-wasm-backend repo, or set X07_STUDIO_X07_WASM_EXE.",
+            "Install x07-wasm, use a bundle with components/x07-wasm, build the sibling x07-wasm-backend repo, or set X07_STUDIO_X07_WASM_EXE.",
         ),
         component_status(
             root,
@@ -133,8 +138,12 @@ fn runtime_components(root: &Utf8Path) -> Vec<RuntimeComponentStatus> {
             "x07lp",
             Some("X07_STUDIO_X07LP_EXE"),
             true,
-            &["x07-platform/scripts/x07lp-driver"],
-            "Install x07lp, place x07-platform beside Studio, or set X07_STUDIO_X07LP_EXE.",
+            &[
+                "components/x07lp",
+                "components/x07lp-driver",
+                "x07-platform/scripts/x07lp-driver",
+            ],
+            "Install x07lp, use a bundle with components/x07lp, place x07-platform beside Studio, or set X07_STUDIO_X07LP_EXE.",
         ),
         component_status(
             root,
@@ -207,7 +216,7 @@ fn sibling_component_source(root: &Utf8Path, candidates: &[&str]) -> Option<Stri
         for ancestor in base.ancestors().take(8) {
             for candidate in candidates {
                 let path = ancestor.join(candidate);
-                if executable_path_exists(path.as_std_path()) {
+                if let Some(path) = executable_path_variant(&path) {
                     return Some(path.to_string());
                 }
             }
@@ -249,6 +258,20 @@ fn executable_names(command: &str) -> Vec<OsString> {
 
 fn executable_path_exists(path: &StdPath) -> bool {
     path.is_file()
+}
+
+fn executable_path_variant(path: &Utf8Path) -> Option<Utf8PathBuf> {
+    if executable_path_exists(path.as_std_path()) {
+        return Some(path.to_owned());
+    }
+    if cfg!(windows) && path.extension() != Some("exe") {
+        let mut with_exe = path.to_owned();
+        with_exe.set_extension("exe");
+        if executable_path_exists(with_exe.as_std_path()) {
+            return Some(with_exe);
+        }
+    }
+    None
 }
 
 async fn health(State(state): State<ApiState>) -> Json<HealthResponse> {
@@ -618,6 +641,29 @@ mod tests {
                 .as_deref(),
             Some(driver.as_str())
         );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn runtime_components_discover_bundled_components() {
+        let root = temp_root();
+        let component = root.join("components/x07-wasm");
+        std::fs::create_dir_all(component.parent().expect("component parent"))
+            .expect("create component dir");
+        std::fs::write(&component, "").expect("write component");
+
+        let components = runtime_components(root.as_path());
+        let wasm = components
+            .iter()
+            .find(|component| component.id == "x07-wasm")
+            .expect("x07-wasm component");
+
+        assert_eq!(
+            wasm.status,
+            loom_types::api::RuntimeComponentState::Available
+        );
+        assert_eq!(wasm.source.as_deref(), Some(component.as_str()));
 
         std::fs::remove_dir_all(root).ok();
     }
