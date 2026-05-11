@@ -19,6 +19,8 @@ test('connected Studio drives a simple XTAL session through Loom', async ({ page
 	await expect(setupReadiness.locator('div', { hasText: 'x07 CLI' }).first()).toContainText('Ready');
 	await expect(setupReadiness.locator('div', { hasText: 'x07-wasm' }).first()).toContainText('Ready');
 	await expect(setupReadiness.locator('div', { hasText: 'x07 platform' }).first()).toContainText('Ready');
+	await expect(page.getByLabel('Onboarding setup plan')).toContainText('First-run defaults');
+	await expect(page.getByLabel('Onboarding setup plan')).toContainText('connected-e2e-bin');
 
 	await page.getByLabel('Project title').fill('Connected XTAL sorter');
 	await page.getByRole('button', { name: 'New Session', exact: true }).click();

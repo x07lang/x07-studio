@@ -394,3 +394,13 @@ This document records friction found while implementing the Studio web surface.
    local `x07`, `x07-wasm`, and `x07lp` shims, and verifies a simple XTAL
    session can be created, polished, approved, run, and extended through the
    canonical binding selector without entering demo mode.
+
+38. First-run readiness needs an action plan, not only badges.
+
+   The health endpoint already reports defaults and component readiness, but
+   the browser only displayed compact status cards. That was enough for expert
+   users, but not for an end user starting from a standalone bundle or a fresh
+   sibling checkout. Studio now derives an onboarding setup plan from the same
+   health payload: first-run defaults, the bootstrap command, resolved runtime
+   component paths, missing required components, and optional Codex/Claude
+   agent setup are visible before the user creates a project.

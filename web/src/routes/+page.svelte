@@ -13,6 +13,7 @@
 		agentReadiness,
 		buildApprovalLedger,
 		buildAutomationPlan,
+		buildOnboardingPlan,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
@@ -239,6 +240,7 @@
 	$: setupSummary = missingRequiredComponents.length
 		? `${missingRequiredComponents.length} missing`
 		: 'ready';
+	$: onboardingPlan = buildOnboardingPlan(health, setupComponents);
 	$: radarAxes = [
 		{ label: 'Intent', value: selected?.intent ? 96 : 38 },
 		{
@@ -1030,14 +1032,31 @@
 					Incident Improve
 				</button>
 			</div>
-			<div class="setup-readiness" aria-label="Setup readiness">
-				{#each setupComponents as component}
-					<div class:missing={component.status !== 'available'}>
-						<span>{component.label}</span>
-						<strong>{component.status === 'available' ? 'Ready' : component.required ? 'Required' : 'Optional'}</strong>
-						<small>{componentDetail(component)}</small>
+			<div class="setup-stack">
+				<div class="setup-readiness" aria-label="Setup readiness">
+					{#each setupComponents as component}
+						<div class:missing={component.status !== 'available'}>
+							<span>{component.label}</span>
+							<strong>{component.status === 'available' ? 'Ready' : component.required ? 'Required' : 'Optional'}</strong>
+							<small>{componentDetail(component)}</small>
+						</div>
+					{/each}
+				</div>
+				<div class="setup-plan" aria-label="Onboarding setup plan">
+					<div class="setup-plan-head">
+						<span>Setup Plan</span>
+						<strong>{setupSummary}</strong>
+						<small>{health.defaults.daemon_addr} / {health.defaults.platform_state_dir}</small>
 					</div>
-				{/each}
+					{#each onboardingPlan.slice(0, 6) as step}
+						<div class={`setup-step ${step.state}`}>
+							<strong>{step.label}</strong>
+							<em>{step.state}</em>
+							<code>{step.command}</code>
+							<small>{step.detail}</small>
+						</div>
+					{/each}
+				</div>
 			</div>
 		</section>
 

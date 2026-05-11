@@ -185,6 +185,16 @@ export interface RuntimeComponentStatus {
 	install_hint: string;
 }
 
+export type OnboardingStepState = 'ready' | 'required' | 'optional';
+
+export interface OnboardingStep {
+	id: string;
+	label: string;
+	state: OnboardingStepState;
+	command: string;
+	detail: string;
+}
+
 export interface WorkspaceRadarResponse {
 	schema_version: 'x07.studio.workspace_radar@0.1.0';
 	workspace_root: string;
@@ -821,6 +831,60 @@ export function agentReadiness(
 function componentIdForAgent(agentId: string): string {
 	if (agentId === 'openai-codex') return 'codex';
 	return agentId;
+}
+
+const ONBOARDING_BOOTSTRAP_COMMAND =
+	'python3 scripts/bootstrap_components.py --install-missing --write-env .x07/studio/defaults.env';
+
+export function buildOnboardingPlan(
+	health: HealthResponse,
+	components: RuntimeComponentStatus[] = health.components
+): OnboardingStep[] {
+	const missingRequired = components.some(
+		(component) => component.required && component.status !== 'available'
+	);
+	const defaultsStep: OnboardingStep = {
+		id: 'defaults',
+		label: 'First-run defaults',
+		state: missingRequired ? 'required' : 'ready',
+		command: ONBOARDING_BOOTSTRAP_COMMAND,
+		detail: [
+			`workspace ${health.workspace_root}`,
+			`daemon ${health.defaults.daemon_addr}`,
+			`platform ${health.defaults.platform_state_dir}`
+		].join(' / ')
+	};
+	const componentSteps = components.map((component): OnboardingStep => {
+		const ready = component.status === 'available';
+		const envVar = componentEnvVar(component.id);
+		const state: OnboardingStepState = ready ? 'ready' : component.required ? 'required' : 'optional';
+		return {
+			id: `component.${component.id}`,
+			label: component.required ? `${component.label} runtime` : `${component.label} agent`,
+			state,
+			command: ready
+				? (component.source ?? component.command)
+				: envVar
+					? ONBOARDING_BOOTSTRAP_COMMAND
+					: component.command,
+			detail: ready
+				? `${component.label} resolved for local runs.`
+				: envVar
+					? `${component.install_hint} Override with ${envVar}.`
+					: component.install_hint
+		};
+	});
+	const rank: Record<OnboardingStepState, number> = { required: 0, ready: 1, optional: 2 };
+	return [defaultsStep, ...componentSteps].sort(
+		(left, right) => rank[left.state] - rank[right.state]
+	);
+}
+
+function componentEnvVar(componentId: string): string | null {
+	if (componentId === 'x07') return 'X07_STUDIO_X07_EXE';
+	if (componentId === 'x07-wasm') return 'X07_STUDIO_X07_WASM_EXE';
+	if (componentId === 'x07lp') return 'X07_STUDIO_X07LP_EXE';
+	return null;
 }
 
 export function buildAutomationPlan(

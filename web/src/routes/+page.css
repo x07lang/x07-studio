@@ -445,11 +445,18 @@ dd {
 	min-height: 32px;
 }
 
-.setup-readiness {
+.setup-stack {
 	grid-column: 1 / -1;
 	display: grid;
-	grid-template-columns: repeat(5, minmax(0, 1fr));
+	grid-template-columns: minmax(360px, 0.38fr) minmax(0, 0.62fr);
 	gap: 8px;
+	min-width: 0;
+}
+
+.setup-readiness {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 6px;
 	min-width: 0;
 }
 
@@ -482,6 +489,70 @@ dd {
 .setup-readiness small {
 	font-family: var(--font-mono);
 	font-size: 10px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.setup-plan {
+	display: grid;
+	grid-template-columns: minmax(110px, 0.75fr) repeat(6, minmax(0, 1fr));
+	gap: 6px;
+	min-width: 0;
+}
+
+.setup-plan-head,
+.setup-step {
+	display: grid;
+	align-content: start;
+	gap: 4px;
+	min-width: 0;
+	border: 1px solid rgba(132, 162, 255, 0.2);
+	border-radius: var(--radius);
+	padding: 6px 7px;
+	background: rgba(132, 162, 255, 0.07);
+}
+
+.setup-plan-head span,
+.setup-step em {
+	color: var(--muted);
+	font-size: 10px;
+	font-style: normal;
+	font-weight: 800;
+	text-transform: uppercase;
+}
+
+.setup-plan-head strong,
+.setup-step strong {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+	line-height: 1.1;
+}
+
+.setup-step.required {
+	border-color: rgba(245, 198, 93, 0.34);
+	background: rgba(245, 198, 93, 0.085);
+}
+
+.setup-step.optional {
+	border-color: rgba(255, 255, 255, 0.11);
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.setup-step code {
+	color: var(--accent);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.setup-plan-head small,
+.setup-step small {
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 1.25;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -2128,8 +2199,16 @@ textarea {
 		align-items: center;
 	}
 
+	.setup-stack {
+		grid-template-columns: 1fr;
+	}
+
 	.setup-readiness {
 		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+
+	.setup-plan {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
 	.radar-chart {
@@ -2252,7 +2331,15 @@ textarea {
 		grid-template-columns: 1fr;
 	}
 
+	.setup-stack {
+		grid-template-columns: 1fr;
+	}
+
 	.setup-readiness {
+		grid-template-columns: 1fr;
+	}
+
+	.setup-plan {
 		grid-template-columns: 1fr;
 	}
 

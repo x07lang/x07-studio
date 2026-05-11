@@ -7,6 +7,7 @@ import {
 	agentReadiness,
 	buildApprovalLedger,
 	buildAutomationPlan,
+	buildOnboardingPlan,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
 	canonicalMcpTools,
@@ -43,6 +44,31 @@ describe('x07 Studio XTAL web model', () => {
 		expect(health.defaults.platform_state_dir).toBe('.x07/platform');
 		expect(required).toEqual(['x07', 'x07-wasm', 'x07lp']);
 		expect(health.components.every((component) => component.install_hint.length > 0)).toBe(true);
+	});
+
+	it('builds an actionable onboarding plan from health readiness', () => {
+		const health = demoHealth();
+		const components = health.components.map((component) => {
+			if (component.id === 'x07-wasm') {
+				return { ...component, status: 'missing' as const, source: null };
+			}
+			if (component.id === 'codex') {
+				return { ...component, source: '/usr/local/bin/codex' };
+			}
+			return component;
+		});
+		const plan = buildOnboardingPlan(health, components);
+		const defaults = plan.find((step) => step.id === 'defaults');
+		const wasm = plan.find((step) => step.id === 'component.x07-wasm');
+		const codex = plan.find((step) => step.id === 'component.codex');
+
+		expect(defaults?.state).toBe('required');
+		expect(defaults?.command).toContain('bootstrap_components.py');
+		expect(defaults?.detail).toContain('daemon 127.0.0.1:7719');
+		expect(wasm?.state).toBe('required');
+		expect(wasm?.detail).toContain('X07_STUDIO_X07_WASM_EXE');
+		expect(codex?.state).toBe('ready');
+		expect(codex?.command).toBe('/usr/local/bin/codex');
 	});
 
 	it('derives coding-agent readiness from runtime components and profile policy', () => {

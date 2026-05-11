@@ -23,6 +23,7 @@
 - daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, existing specs, incident notes, revision notes, and visible intent operation records
 - opt-in provider-backed intent polish that records model suggestions as review evidence while keeping deterministic intent generation as the fallback
 - daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs
+- browser onboarding plan renders first-run defaults, bootstrap command, resolved component sources, and required/optional setup work from the daemon health report
 - daemon-side coding-agent readiness checks reject disabled profiles and missing execute commands even when clients bypass the browser controls
 - standalone packaging scripts assemble the daemon, native desktop shell, Forge shell, and static Svelte web app into a portable bundle
 - standalone CI validates bundle manifest, static web app, launcher scripts, first-run defaults, and bundled `x07-wasm` wiring

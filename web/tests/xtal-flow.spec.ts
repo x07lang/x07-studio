@@ -109,6 +109,9 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByRole('region', { name: 'Workspace radar' })).toContainText('Provider');
 	await expect(page.getByLabel('Setup readiness')).toContainText('x07-wasm');
 	await expect(page.getByLabel('Setup readiness')).toContainText('x07 platform');
+	await expect(page.getByLabel('Onboarding setup plan')).toContainText('First-run defaults');
+	await expect(page.getByLabel('Onboarding setup plan')).toContainText('bootstrap_components.py');
+	await expect(page.getByLabel('Onboarding setup plan')).toContainText('OpenAI Codex agent');
 	await expect(page.getByLabel('Counterexample theater')).toContainText('No counterexample captured');
 	await expect(page.getByLabel('Provider intent polish')).toContainText('Deterministic polish only');
 	await page.getByLabel('Provider intent polish').getByRole('checkbox').check();
