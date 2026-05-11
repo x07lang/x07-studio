@@ -208,6 +208,22 @@ pub fn binding_by_id(id: &str) -> Option<&'static BindingTemplate> {
 
 pub const XTAL_BINDINGS: &[BindingTemplate] = &[
     BindingTemplate {
+        id: "project.init.xtal-pure",
+        category: "x07/project",
+        program: ProgramKey::X07,
+        args: &["init", "--template", "xtal-pure"],
+        artifacts: &[
+            "x07.json",
+            "x07.lock.json",
+            "AGENT.md",
+            "spec/",
+            "src/",
+            "gen/xtal/",
+        ],
+        notes: "Initialize a solve-pure XTAL project when the workspace has no x07.json.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
         id: "spec.scaffold",
         category: "xtal/spec",
         program: ProgramKey::X07,
@@ -760,6 +776,17 @@ mod tests {
     }
 
     #[test]
+    fn project_init_binding_uses_xtal_pure_template() {
+        let binding = binding_by_id("project.init.xtal-pure").expect("binding exists");
+        let rendered = binding.render(&BTreeMap::new());
+
+        assert_eq!(rendered.program, "x07");
+        assert_eq!(rendered.args, vec!["init", "--template", "xtal-pure"]);
+        assert!(rendered.artifacts.contains(&"x07.json".to_string()));
+        assert_eq!(binding.machine_json, MachineJsonMode::ReportFile);
+    }
+
+    #[test]
     fn binding_catalog_exposes_core_xtal_wasm_and_platform_planes() {
         let ids = CliAdapter::list_bindings()
             .into_iter()
@@ -767,6 +794,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         for required in [
+            "project.init.xtal-pure",
             "spec.scaffold",
             "spec.check",
             "tests.gen.check",

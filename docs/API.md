@@ -28,6 +28,7 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `GET /sessions/{session_id}`
 - `POST /sessions/{session_id}/events`
 - `POST /sessions/{session_id}/bindings/run`
+- `POST /sessions/{session_id}/xtal/run`
 
 Create session request:
 
@@ -66,10 +67,21 @@ Run binding request:
 
 ```json
 {
-  "binding_id": "xtal.verify",
-  "vars": {}
+  "binding_id": "spec.check",
+  "vars": {"input": "spec/app.sorter.x07spec.json"}
 }
 ```
+
+Run XTAL workflow request:
+
+```http
+POST /v1/sessions/{session_id}/xtal/run
+```
+
+The daemon derives safe binding variables from the approved intent packet. If
+the workspace has no `x07.json`, it initializes an `xtal-pure` project, then
+runs visible operation records for `spec.scaffold`, `spec.check`,
+`tests.gen.write`, `impl.sync.write`, `impl.check`, and `xtal.verify`.
 
 ## Providers
 

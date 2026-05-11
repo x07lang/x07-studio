@@ -32,6 +32,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/sessions/{session_id}", get(get_session))
         .route("/v1/sessions/{session_id}/events", post(dispatch_event))
         .route("/v1/sessions/{session_id}/bindings/run", post(run_binding))
+        .route(
+            "/v1/sessions/{session_id}/xtal/run",
+            post(run_xtal_workflow),
+        )
         .route("/v1/providers", get(list_providers).post(save_provider))
         .route("/v1/providers/probe", post(probe_provider))
         .route("/v1/mcp/connect", post(connect_mcp))
@@ -113,6 +117,18 @@ async fn run_binding(
     let mut kernel = state.kernel.lock().await;
     let snapshot = kernel
         .run_binding(session_id, &request.binding_id, &request.vars)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(snapshot))
+}
+
+async fn run_xtal_workflow(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<SessionSnapshot>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let snapshot = kernel
+        .run_xtal_workflow(session_id)
         .await
         .map_err(internal_error)?;
     Ok(Json(snapshot))

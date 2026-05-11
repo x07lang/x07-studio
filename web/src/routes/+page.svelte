@@ -57,7 +57,7 @@
 			module: target.module_id,
 			status: selected.phase === 'intent_drafting' ? 'pending' : 'ready'
 		})) ?? [];
-	$: worklog = selected?.op_log.slice(-6).reverse() ?? [];
+	$: worklog = selected?.op_log.slice(-8).reverse() ?? [];
 	$: checklist = selected ? workflowChecklist(selected) : [];
 	$: canApproveSpec = selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft';
 	$: canRunProject =
@@ -175,19 +175,12 @@
 			if (current.phase === 'intent_drafting' || current.phase === 'intent_ready' || current.phase === 'spec_draft') {
 				current = await approveSpecSnapshot(current);
 			}
-			if (current.phase === 'spec_approved') {
-				current = await api.dispatch(current, 'propose_realization');
-			}
-			if (current.phase === 'realization_proposed') {
-				current = await api.dispatch(current, 'accept_realization');
-			}
-			for (const bindingId of ['tests.gen.check', 'impl.check', 'xtal.verify']) {
-				current = await api.runBinding(current, bindingId);
-			}
+			current = await api.runXtalWorkflow(current);
 			const failed = current.op_log.at(-1)?.status === 'failed';
-			current = await api.dispatch(current, failed ? 'verification_failed' : 'verification_passed');
 			await replaceSession(current);
-			statusLine = failed ? 'Verify produced a repair session' : 'Verify passed and trust review opened';
+			statusLine = failed
+				? `${current.op_log.at(-1)?.op ?? 'XTAL workflow'} failed; repair review required`
+				: 'Verify passed and trust review opened';
 		} finally {
 			busy = false;
 		}

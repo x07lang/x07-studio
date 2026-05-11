@@ -49,3 +49,20 @@ This document records friction found while implementing the Studio web surface.
    `{ "event": { "event": "...", "payload": ... } }`. The older docs showed a
    flattened event/payload shape, which would slow down any browser or agent
    client integration. The example is now aligned with the Rust serde shape.
+
+7. `spec.scaffold` can generate a reserved parameter name.
+
+   A direct scaffold using `--param input:bytes` passes spec checks, but
+   `xtal impl sync --write` then emits an implementation module that fails
+   x07AST parsing because `input` is reserved. Studio now derives
+   `payload:bytes` for intent-created operations. The x07 CLI should either
+   reject reserved parameter names during scaffold or normalize them before
+   implementation sync.
+
+8. End-to-end XTAL creation needs a daemon orchestration endpoint.
+
+   Running bindings one at a time from the browser made project initialization,
+   spec scaffolding, generated tests, implementation sync, and verification too
+   easy to desynchronize. The new `/v1/sessions/{session_id}/xtal/run` route
+   keeps the lifecycle in the kernel and records each canonical command as
+   visible evidence.

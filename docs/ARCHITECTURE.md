@@ -73,3 +73,9 @@ The web intake starts with simple, intermediate, and complex x07 project briefs.
 They are intentionally editable form seeds, not hidden generators: a user or
 agent chooses difficulty, task type, title, input mode, and prompt text before a
 session is created.
+
+After spec approval, the daemon can run the visible XTAL workflow through
+`POST /v1/sessions/{session_id}/xtal/run`. That path derives binding variables
+from the intent packet, initializes an `xtal-pure` project only when `x07.json`
+is absent, scaffolds the spec, generates tests, synchronizes implementation, and
+runs `xtal.verify` while appending each command as an `OpRecord`.

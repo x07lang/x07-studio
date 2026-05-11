@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	appendDemoOp,
 	createIntentPacket,
+	demoBindings,
 	demoSession,
 	nextPrimaryAction,
 	phaseIndex,
@@ -62,6 +63,14 @@ describe('x07 Studio XTAL web model', () => {
 		expect(session.op_log).toHaveLength(1);
 		expect(session.op_log[0].command.join(' ')).toContain('x07 xtal verify');
 		expect(session.op_log[0].artifacts[0]).toContain('target/xtal');
+	});
+
+	it('includes project initialization and write bindings for end-to-end XTAL creation', () => {
+		const ids = demoBindings().map((binding) => binding.id);
+
+		expect(ids).toContain('project.init.xtal-pure');
+		expect(ids).toContain('tests.gen.write');
+		expect(ids).toContain('impl.sync.write');
 	});
 
 	it('exposes phase progress and primary action labels', () => {

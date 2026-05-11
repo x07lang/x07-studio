@@ -73,6 +73,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
 	await expect(page.getByText('Agent Visible Worklog')).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'project.init.xtal-pure' })).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'impl.sync.write' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'xtal.verify' })).toBeVisible();
 
 	await page.getByRole('button', { name: 'spec.check' }).click();

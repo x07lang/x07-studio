@@ -9,11 +9,12 @@ use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
 use loom_types::artifacts::{
-    OpRecord, OperationStatus, ProviderProbeReport, ProviderProfile, TaskType,
+    IntentPacket, IntentSource, OpRecord, OperationStatus, ProviderProbeReport, ProviderProfile,
+    TaskType,
 };
 use loom_types::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use loom_types::ops::SessionEvent;
-use loom_types::session::SessionSnapshot;
+use loom_types::session::{SessionPhase, SessionSnapshot};
 
 use crate::workspace::WorkspaceModel;
 
@@ -122,6 +123,76 @@ impl WorkspaceKernel {
         Ok(snapshot)
     }
 
+    pub async fn run_xtal_workflow(&mut self, session_id: Uuid) -> anyhow::Result<SessionSnapshot> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if !matches!(
+            session.phase,
+            SessionPhase::SpecApproved | SessionPhase::RealizationProposed
+        ) {
+            return Err(anyhow!(
+                "session `{session_id}` must have an approved spec before running XTAL workflow"
+            ));
+        }
+        let intent = session
+            .intent
+            .as_ref()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
+        let vars = xtal_workflow_vars_from_intent(intent);
+
+        if !self.root.join("x07.json").exists() {
+            let snapshot = self
+                .run_binding(session_id, "project.init.xtal-pure", &BTreeMap::new())
+                .await?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        }
+
+        for binding_id in ["spec.scaffold", "spec.check", "tests.gen.write"] {
+            let snapshot = self.run_binding(session_id, binding_id, &vars).await?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        }
+
+        let current = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if current.phase == SessionPhase::SpecApproved {
+            self.dispatch_event(session_id, SessionEvent::ProposeRealization)?;
+        }
+
+        for binding_id in ["impl.sync.write", "impl.check"] {
+            let snapshot = self.run_binding(session_id, binding_id, &vars).await?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        }
+
+        let current = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if current.phase == SessionPhase::RealizationProposed {
+            self.dispatch_event(session_id, SessionEvent::AcceptRealization)?;
+        }
+
+        let verified = self.run_binding(session_id, "xtal.verify", &vars).await?;
+        let event = if last_op_failed(&verified) {
+            SessionEvent::VerificationFailed
+        } else {
+            SessionEvent::VerificationPassed
+        };
+        self.dispatch_event(session_id, event)
+    }
+
     pub fn list_provider_profiles(&self) -> anyhow::Result<Vec<ProviderProfile>> {
         self.store.load_provider_profiles()
     }
@@ -182,6 +253,134 @@ impl WorkspaceKernel {
             client.close().await?;
         }
         Ok(())
+    }
+}
+
+pub fn xtal_workflow_vars_from_intent(intent: &IntentPacket) -> BTreeMap<String, String> {
+    let target = intent.targets.first();
+    let module_id = target
+        .map(|item| item.module_id.as_str())
+        .filter(|module_id| !module_id.trim().is_empty())
+        .unwrap_or("app.main");
+    let op = target
+        .and_then(|item| item.entry.as_deref())
+        .map(sanitize_op_name)
+        .filter(|entry| !entry.is_empty())
+        .unwrap_or_else(|| "run_v1".to_string());
+    let result = if matches!(&intent.source, IntentSource::Incident { .. }) {
+        "bytes"
+    } else if op.contains("makespan") || op.contains("count") || op.contains("len") {
+        "i32"
+    } else {
+        "bytes"
+    };
+    let input = format!("spec/{module_id}.x07spec.json");
+
+    BTreeMap::from([
+        ("module_id".to_string(), module_id.to_string()),
+        ("op".to_string(), op),
+        ("param".to_string(), "payload:bytes".to_string()),
+        ("result".to_string(), result.to_string()),
+        ("input".to_string(), input),
+        (
+            "patchset_out".to_string(),
+            "target/xtal/impl-sync.patchset.json".to_string(),
+        ),
+    ])
+}
+
+fn sanitize_op_name(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_was_underscore = false;
+    for ch in value.chars() {
+        let next = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else {
+            '_'
+        };
+        if next == '_' {
+            if !last_was_underscore && !output.is_empty() {
+                output.push(next);
+            }
+            last_was_underscore = true;
+        } else {
+            output.push(next);
+            last_was_underscore = false;
+        }
+    }
+    output.trim_matches('_').to_string()
+}
+
+fn last_op_failed(snapshot: &SessionSnapshot) -> bool {
+    snapshot
+        .op_log
+        .last()
+        .is_some_and(|op| op.status == OperationStatus::Failed)
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use loom_types::artifacts::{
+        IntentPacket, IntentSource, IntentTarget, TaskType, Witness, WitnessKind,
+    };
+
+    use super::xtal_workflow_vars_from_intent;
+
+    #[test]
+    fn xtal_workflow_vars_use_safe_payload_param() {
+        let intent = IntentPacket::demo(Uuid::nil(), "/workspace");
+        let vars = xtal_workflow_vars_from_intent(&intent);
+
+        assert_eq!(
+            vars.get("module_id").map(String::as_str),
+            Some("app.sorter")
+        );
+        assert_eq!(vars.get("op").map(String::as_str), Some("sort_ascending"));
+        assert_eq!(vars.get("param").map(String::as_str), Some("payload:bytes"));
+        assert_eq!(
+            vars.get("input").map(String::as_str),
+            Some("spec/app.sorter.x07spec.json")
+        );
+    }
+
+    #[test]
+    fn xtal_workflow_vars_map_incidents_to_bytes_result() {
+        let intent = IntentPacket {
+            schema_version: "x07.studio.intent_packet@0.1.0".to_string(),
+            session_id: Uuid::nil(),
+            workspace_root: "/workspace".to_string(),
+            task_type: TaskType::IncidentRepair,
+            targets: vec![IntentTarget {
+                module_id: "ops.incident_repair".to_string(),
+                entry: Some("Classify And Repair!".to_string()),
+            }],
+            examples: vec![],
+            constraints: vec![],
+            policy_implications: vec![],
+            ambiguities: vec![],
+            assumptions: vec![],
+            witnesses: vec![Witness {
+                kind: WitnessKind::IncidentReport,
+                text: "failed verify".to_string(),
+            }],
+            source: IntentSource::Incident {
+                path: ".x07/studio/incidents/manual-note.jsonl".to_string(),
+            },
+        };
+
+        let vars = xtal_workflow_vars_from_intent(&intent);
+
+        assert_eq!(
+            vars.get("module_id").map(String::as_str),
+            Some("ops.incident_repair")
+        );
+        assert_eq!(
+            vars.get("op").map(String::as_str),
+            Some("classify_and_repair")
+        );
+        assert_eq!(vars.get("result").map(String::as_str), Some("bytes"));
     }
 }
 
