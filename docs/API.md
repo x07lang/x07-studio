@@ -116,6 +116,7 @@ Provider probe request:
 - `GET /agents`
 - `POST /agents`
 - `POST /sessions/{session_id}/agents/{agent_id}/handoff`
+- `POST /sessions/{session_id}/agents/{agent_id}/run`
 
 Agent profile response:
 
@@ -149,6 +150,20 @@ Agent handoff response:
   "session": {}
 }
 ```
+
+Agent run request:
+
+```json
+{
+  "mode": "plan",
+  "timeout_seconds": 30
+}
+```
+
+`mode: "plan"` records a visible supervised launch plan without executing the
+agent command. `mode: "execute"` runs the configured agent command from the
+workspace root with the handoff prompt path as its final argument, captures
+stdout/stderr, and records a succeeded or failed `agent.run.*` operation.
 
 ## MCP
 

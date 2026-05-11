@@ -60,7 +60,7 @@
 			module: target.module_id,
 			status: selected.phase === 'intent_drafting' ? 'pending' : 'ready'
 		})) ?? [];
-	$: worklog = selected?.op_log.slice(-8).reverse() ?? [];
+	$: worklog = selected?.op_log.slice(-12).reverse() ?? [];
 	$: checklist = selected ? workflowChecklist(selected) : [];
 	$: canApproveSpec = selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft';
 	$: canRunProject =
@@ -178,6 +178,23 @@
 			const response = await api.createAgentHandoff(selected, agentId);
 			await replaceSession(response.session);
 			handoffStatus = `${response.handoff.agent_label} handoff saved to ${response.handoff.prompt_path}`;
+			statusLine = handoffStatus;
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function runAgentHandoff(agentId: string, mode: 'plan' | 'execute') {
+		if (!selected) return;
+		busy = true;
+		try {
+			const response = await api.runAgentHandoff(selected, agentId, mode);
+			await replaceSession(response.session);
+			const label = response.handoff.agent_label;
+			handoffStatus =
+				mode === 'execute'
+					? `${label} supervised command ${response.op.status}`
+					: `${label} supervised launch plan recorded`;
 			statusLine = handoffStatus;
 		} finally {
 			busy = false;
@@ -476,6 +493,22 @@
 								disabled={busy || !selected}
 							>
 								Generate {agent.label} Handoff
+							</button>
+							<button
+								class="segmented-button"
+								type="button"
+								on:click={() => runAgentHandoff(agent.id, 'plan')}
+								disabled={busy || !selected}
+							>
+								Plan {agent.label} Run
+							</button>
+							<button
+								class="segmented-button"
+								type="button"
+								on:click={() => runAgentHandoff(agent.id, 'execute')}
+								disabled={busy || !selected}
+							>
+								Run {agent.label} Command
 							</button>
 						</div>
 					{/each}

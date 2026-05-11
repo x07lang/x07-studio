@@ -4,11 +4,12 @@ use anyhow::{anyhow, Context};
 use camino::{Utf8Path, Utf8PathBuf};
 use uuid::Uuid;
 
-use loom_adapters::command_runner::now_string;
+use loom_adapters::command_runner::{now_string, CommandExecution, CommandRunner};
 use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::ProviderProber;
 use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
+use loom_types::api::AgentRunMode;
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, OpRecord, OperationStatus,
     ProviderProbeReport, ProviderProfile, TaskType,
@@ -260,6 +261,54 @@ impl WorkspaceKernel {
         Ok((handoff, snapshot))
     }
 
+    pub async fn run_agent_handoff(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        mode: AgentRunMode,
+        timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<(AgentHandoff, OpRecord, SessionSnapshot)> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let agent = self
+            .list_agent_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        let handoff = agent_handoff_from_session(&session, &agent);
+        let prompt_path = self.store.save_agent_handoff(&handoff)?;
+
+        let op = match mode {
+            AgentRunMode::Plan => agent_plan_op(session_id, &agent, &handoff, &prompt_path),
+            AgentRunMode::Execute => {
+                let args = handoff.command.iter().skip(1).cloned().collect::<Vec<_>>();
+                let timeout = timeout_seconds.unwrap_or(30).clamp(1, 300);
+                match CommandRunner
+                    .run_with_timeout(
+                        self.root.as_path(),
+                        &agent.command,
+                        &args,
+                        &BTreeMap::new(),
+                        Some(timeout),
+                    )
+                    .await
+                {
+                    Ok(execution) => {
+                        agent_execution_op(session_id, &agent, &handoff, &prompt_path, execution)
+                    }
+                    Err(error) => {
+                        agent_spawn_error_op(session_id, &agent, &handoff, &prompt_path, error)
+                    }
+                }
+            }
+        };
+        let snapshot = self.append_op(session_id, op.clone())?;
+        Ok((handoff, op, snapshot))
+    }
+
     pub fn save_provider_profile(&self, profile: &ProviderProfile) -> anyhow::Result<()> {
         self.store.save_provider_profile(profile)
     }
@@ -316,6 +365,15 @@ impl WorkspaceKernel {
             client.close().await?;
         }
         Ok(())
+    }
+
+    fn append_op(&mut self, session_id: Uuid, op: OpRecord) -> anyhow::Result<SessionSnapshot> {
+        let snapshot = self
+            .model
+            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op)))
+            .map_err(|error| anyhow!(error.to_string()))?;
+        self.store.save_session(&snapshot)?;
+        Ok(snapshot)
     }
 }
 
@@ -517,6 +575,116 @@ fn render_agent_handoff_prompt(
     out
 }
 
+fn agent_plan_op(
+    session_id: Uuid,
+    agent: &AgentProfile,
+    handoff: &AgentHandoff,
+    prompt_path: &Utf8Path,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("agent.supervise.{}", agent.id),
+        backend: "studio".to_string(),
+        command: handoff.command.clone(),
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![prompt_path.to_string()],
+        notes: Some(format!(
+            "Recorded supervised launch plan for {}.",
+            agent.label
+        )),
+        stdout: Some(format!(
+            "Supervised launch prepared.\nCommand: {}\nPrompt: {}\n",
+            handoff.command.join(" "),
+            handoff.prompt_path
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "mode": "plan",
+            "handoff": handoff,
+        })),
+        report_path: None,
+    }
+}
+
+fn agent_execution_op(
+    session_id: Uuid,
+    agent: &AgentProfile,
+    handoff: &AgentHandoff,
+    prompt_path: &Utf8Path,
+    execution: CommandExecution,
+) -> OpRecord {
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("agent.run.{}", agent.id),
+        backend: "agent-supervisor".to_string(),
+        command: std::iter::once(execution.program.clone())
+            .chain(execution.args.clone())
+            .collect(),
+        started_at: execution.started_at,
+        finished_at: Some(execution.finished_at),
+        status: if execution.exit_code == Some(0) {
+            OperationStatus::Succeeded
+        } else {
+            OperationStatus::Failed
+        },
+        exit_code: execution.exit_code,
+        artifacts: vec![prompt_path.to_string()],
+        notes: Some(format!("Ran {} under Studio supervision.", agent.label)),
+        stdout: Some(execution.stdout),
+        stderr: Some(execution.stderr),
+        stdout_json: execution.stdout_json,
+        stderr_json: execution.stderr_json,
+        report_json: Some(serde_json::json!({
+            "mode": "execute",
+            "handoff": handoff,
+        })),
+        report_path: None,
+    }
+}
+
+fn agent_spawn_error_op(
+    session_id: Uuid,
+    agent: &AgentProfile,
+    handoff: &AgentHandoff,
+    prompt_path: &Utf8Path,
+    error: anyhow::Error,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("agent.run.{}", agent.id),
+        backend: "agent-supervisor".to_string(),
+        command: handoff.command.clone(),
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Failed,
+        exit_code: None,
+        artifacts: vec![prompt_path.to_string()],
+        notes: Some(format!("Failed to launch {}.", agent.label)),
+        stdout: None,
+        stderr: Some(error.to_string()),
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "mode": "execute",
+            "handoff": handoff,
+        })),
+        report_path: None,
+    }
+}
+
 fn op_record_from_binding(
     session_id: Uuid,
     binding_id: &str,
@@ -554,11 +722,13 @@ fn op_record_from_binding(
 mod tests {
     use uuid::Uuid;
 
+    use loom_types::api::AgentRunMode;
     use loom_types::artifacts::{
-        IntentPacket, IntentSource, IntentTarget, TaskType, Witness, WitnessKind,
+        AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OperationStatus,
+        TaskType, Witness, WitnessKind,
     };
 
-    use super::xtal_workflow_vars_from_intent;
+    use super::{xtal_workflow_vars_from_intent, WorkspaceKernel};
 
     #[test]
     fn xtal_workflow_vars_use_safe_payload_param() {
@@ -613,5 +783,74 @@ mod tests {
             Some("classify_and_repair")
         );
         assert_eq!(vars.get("result").map(String::as_str), Some("bytes"));
+    }
+
+    #[tokio::test]
+    async fn supervised_agent_plan_and_execute_append_visible_ops() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("supervised agent", TaskType::NewBehavior)
+            .expect("create session");
+        let agent = AgentProfile {
+            schema_version: "x07.studio.agent_profile@0.1.0".to_string(),
+            id: "echo-agent".to_string(),
+            label: "Echo Agent".to_string(),
+            command: "/bin/sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "printf 'supervised:%s' \"$1\"".to_string(),
+                "x07-studio-agent".to_string(),
+            ],
+            allowed_verbs: vec!["intent.formalize".to_string()],
+            mcp_tools: vec!["x07.exec_v1".to_string()],
+            write_roots: vec!["src/".to_string()],
+            approval_required: true,
+            status: AgentStatus::Available,
+            notes: "test agent".to_string(),
+        };
+        kernel.save_agent_profile(&agent).expect("save agent");
+
+        let (handoff, plan_op, plan_session) = kernel
+            .run_agent_handoff(session.session_id, "echo-agent", AgentRunMode::Plan, None)
+            .await
+            .expect("plan agent");
+
+        assert_eq!(plan_op.op, "agent.supervise.echo-agent");
+        assert_eq!(plan_op.status, OperationStatus::Succeeded);
+        assert!(root.join(&handoff.prompt_path).exists());
+        assert!(plan_session
+            .op_log
+            .iter()
+            .any(|op| op.op == "agent.supervise.echo-agent"));
+
+        let (_, run_op, run_session) = kernel
+            .run_agent_handoff(
+                session.session_id,
+                "echo-agent",
+                AgentRunMode::Execute,
+                Some(5),
+            )
+            .await
+            .expect("execute agent");
+
+        assert_eq!(run_op.op, "agent.run.echo-agent");
+        assert_eq!(run_op.status, OperationStatus::Succeeded);
+        assert!(run_op
+            .stdout
+            .as_deref()
+            .unwrap_or_default()
+            .contains(&handoff.prompt_path));
+        assert!(run_session
+            .op_log
+            .iter()
+            .any(|op| op.op == "agent.run.echo-agent"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    fn temp_root() -> camino::Utf8PathBuf {
+        let path = std::env::temp_dir().join(format!("x07-studio-core-test-{}", Uuid::new_v4()));
+        camino::Utf8PathBuf::from_path_buf(path).expect("utf8 temp path")
     }
 }

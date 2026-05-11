@@ -34,6 +34,19 @@ pub struct RunBindingRequest {
     pub vars: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunMode {
+    Plan,
+    Execute,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunRequest {
+    pub mode: AgentRunMode,
+    pub timeout_seconds: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveProviderProfileRequest {
     pub profile: ProviderProfile,
@@ -95,5 +108,12 @@ pub struct McpCallResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentHandoffResponse {
     pub handoff: AgentHandoff,
+    pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunResponse {
+    pub handoff: AgentHandoff,
+    pub op: crate::artifacts::OpRecord,
     pub session: SessionSnapshot,
 }

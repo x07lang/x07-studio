@@ -76,6 +76,9 @@ workspace overrides under `.x07/studio/agents/`.
 Per-session handoffs are generated under `.x07/studio/handoffs/` so Codex or
 Claude Code receives the approved intent, session contract, allowed verbs, MCP
 tools, write roots, and required XTAL loop as a concrete prompt artifact.
+Studio can also record a supervised launch plan, or execute the configured agent
+command with a bounded timeout, and append the resulting stdout/stderr and
+artifacts as `agent.supervise.*` or `agent.run.*` operation records.
 
 The web intake starts with simple, intermediate, and complex x07 project briefs.
 They are intentionally editable form seeds, not hidden generators: a user or

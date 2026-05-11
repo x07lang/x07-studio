@@ -11,10 +11,10 @@ use uuid::Uuid;
 
 use loom_core::WorkspaceKernel;
 use loom_types::api::{
-    AgentHandoffResponse, BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest,
-    ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest, HealthResponse,
-    McpCallResponse, ProbeProviderRequest, ProviderProbeResponse, RunBindingRequest,
-    SaveAgentProfileRequest, SaveProviderProfileRequest,
+    AgentHandoffResponse, AgentRunRequest, AgentRunResponse, BindingDescriptor, CallMcpToolRequest,
+    ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest,
+    HealthResponse, McpCallResponse, ProbeProviderRequest, ProviderProbeResponse,
+    RunBindingRequest, SaveAgentProfileRequest, SaveProviderProfileRequest,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -43,6 +43,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/v1/sessions/{session_id}/agents/{agent_id}/handoff",
             post(create_agent_handoff),
+        )
+        .route(
+            "/v1/sessions/{session_id}/agents/{agent_id}/run",
+            post(run_agent_handoff),
         )
         .route("/v1/mcp/connect", post(connect_mcp))
         .route("/v1/mcp/{connection_id}/tools", get(list_mcp_tools))
@@ -187,6 +191,23 @@ async fn create_agent_handoff(
         .create_agent_handoff(session_id, &agent_id)
         .map_err(internal_error)?;
     Ok(Json(AgentHandoffResponse { handoff, session }))
+}
+
+async fn run_agent_handoff(
+    Path((session_id, agent_id)): Path<(Uuid, String)>,
+    State(state): State<ApiState>,
+    Json(request): Json<AgentRunRequest>,
+) -> Result<Json<AgentRunResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let (handoff, op, session) = kernel
+        .run_agent_handoff(session_id, &agent_id, request.mode, request.timeout_seconds)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(AgentRunResponse {
+        handoff,
+        op,
+        session,
+    }))
 }
 
 async fn probe_provider(

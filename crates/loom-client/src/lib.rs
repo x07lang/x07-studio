@@ -3,9 +3,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use loom_types::api::{
-    BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse,
-    CreateSessionRequest, DispatchEventRequest, HealthResponse, McpCallResponse,
-    ProbeProviderRequest, ProviderProbeResponse, RunBindingRequest, SaveProviderProfileRequest,
+    AgentRunRequest, AgentRunResponse, BindingDescriptor, CallMcpToolRequest, ConnectMcpRequest,
+    ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest, HealthResponse,
+    McpCallResponse, ProbeProviderRequest, ProviderProbeResponse, RunBindingRequest,
+    SaveProviderProfileRequest,
 };
 use loom_types::artifacts::ProviderProfile;
 use loom_types::mcp::McpToolDescriptor;
@@ -67,6 +68,19 @@ impl DaemonClient {
     ) -> anyhow::Result<SessionSnapshot> {
         self.post(&format!("/v1/sessions/{session_id}/bindings/run"), request)
             .await
+    }
+
+    pub async fn run_agent_handoff(
+        &self,
+        session_id: Uuid,
+        agent_id: &str,
+        request: &AgentRunRequest,
+    ) -> anyhow::Result<AgentRunResponse> {
+        self.post(
+            &format!("/v1/sessions/{session_id}/agents/{agent_id}/run"),
+            request,
+        )
+        .await
     }
 
     pub async fn list_providers(&self) -> anyhow::Result<Vec<ProviderProfile>> {

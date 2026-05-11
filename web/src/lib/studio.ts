@@ -162,6 +162,19 @@ export interface AgentHandoffResponse {
 	session: SessionSnapshot;
 }
 
+export type AgentRunMode = 'plan' | 'execute';
+
+export interface AgentRunRequest {
+	mode: AgentRunMode;
+	timeout_seconds?: number | null;
+}
+
+export interface AgentRunResponse {
+	handoff: AgentHandoff;
+	op: OpRecord;
+	session: SessionSnapshot;
+}
+
 export interface ProjectTemplate {
 	id: ProjectDifficulty;
 	label: string;
@@ -467,7 +480,13 @@ export function reduceDemoEvent(session: SessionSnapshot, event: string, payload
 	}
 }
 
-export function appendDemoOp(session: SessionSnapshot, bindingId: string, status: OperationStatus): SessionSnapshot {
+export function appendDemoOp(
+	session: SessionSnapshot,
+	bindingId: string,
+	status: OperationStatus,
+	command?: string[],
+	artifacts?: string[]
+): SessionSnapshot {
 	const next = structuredClone(session) as SessionSnapshot;
 	next.op_log = [
 		...next.op_log,
@@ -475,12 +494,12 @@ export function appendDemoOp(session: SessionSnapshot, bindingId: string, status
 			id: `op-${next.op_log.length + 1}`,
 			op: bindingId,
 			backend: 'demo',
-			command: ['x07', ...bindingId.split('.')],
+			command: command ?? ['x07', ...bindingId.split('.')],
 			started_at: String(Date.now()),
 			finished_at: String(Date.now()),
 			status,
 			exit_code: status === 'succeeded' ? 0 : 1,
-			artifacts: [`target/xtal/${bindingId.replaceAll('.', '/')}/summary.json`],
+			artifacts: artifacts ?? [`target/xtal/${bindingId.replaceAll('.', '/')}/summary.json`],
 			notes: 'visible agent operation record'
 		}
 	];

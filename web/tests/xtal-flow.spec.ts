@@ -81,11 +81,14 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByRole('tab', { name: 'Agents' }).click();
 	await page.getByRole('button', { name: 'Generate Claude Code Handoff' }).click();
 	await expect(page.locator('footer').getByText('Claude Code handoff saved to')).toBeVisible();
+	await page.getByRole('button', { name: 'Plan Claude Code Run' }).click();
+	await expect(page.locator('footer').getByText('Claude Code supervised launch plan recorded')).toBeVisible();
 	await page.getByRole('tab', { name: 'Intent' }).click();
 
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
 	await expect(page.getByText('Agent Visible Worklog')).toBeVisible();
+	await expect(page.locator('code').filter({ hasText: 'agent.supervise.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'agent.handoff.claude-code' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'project.init.xtal-pure' })).toBeVisible();
 	await expect(page.locator('code').filter({ hasText: 'impl.sync.write' })).toBeVisible();

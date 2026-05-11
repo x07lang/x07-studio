@@ -66,6 +66,20 @@ describe('x07 Studio XTAL web model', () => {
 		expect(session.op_log[0].artifacts[0]).toContain('target/xtal');
 	});
 
+	it('models supervised agent launch records', () => {
+		const session = appendDemoOp(
+			demoSession(),
+			'agent.supervise.openai-codex',
+			'succeeded',
+			['codex', '.x07/studio/handoffs/demo-openai-codex.md'],
+			['.x07/studio/handoffs/demo-openai-codex.md']
+		);
+
+		expect(session.op_log[0].op).toBe('agent.supervise.openai-codex');
+		expect(session.op_log[0].command[0]).toBe('codex');
+		expect(session.op_log[0].artifacts[0]).toContain('handoffs');
+	});
+
 	it('includes project initialization and write bindings for end-to-end XTAL creation', () => {
 		const ids = demoBindings().map((binding) => binding.id);
 

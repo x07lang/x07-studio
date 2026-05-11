@@ -7,6 +7,8 @@ import {
 	reduceDemoEvent,
 	type AgentHandoffResponse,
 	type AgentProfile,
+	type AgentRunMode,
+	type AgentRunResponse,
 	type BindingDescriptor,
 	type HealthResponse,
 	type IntentInputMode,
@@ -180,7 +182,7 @@ export class StudioApi {
 			session_id: session.session_id,
 			agent_id: agent.id,
 			agent_label: agent.label,
-			command: [agent.command, promptPath],
+			command: [agent.command, ...agent.args, promptPath],
 			prompt_path: promptPath,
 			prompt: `# x07 Studio Agent Handoff\n\nAgent: ${agent.label}\nSession: ${session.title}\n`,
 			allowed_verbs: agent.allowed_verbs,
@@ -193,6 +195,51 @@ export class StudioApi {
 		const next = appendDemoOp(session, `agent.handoff.${agent.id}`, 'succeeded');
 		this.replaceDemo(next);
 		return { handoff, session: next };
+	}
+
+	async runAgentHandoff(
+		session: SessionSnapshot,
+		agentId: string,
+		mode: AgentRunMode
+	): Promise<AgentRunResponse> {
+		if (!this.demoMode) {
+			try {
+				const response = await request<AgentRunResponse>(
+					`/v1/sessions/${session.session_id}/agents/${agentId}/run`,
+					{
+						method: 'POST',
+						body: JSON.stringify({ mode, timeout_seconds: 30 })
+					}
+				);
+				this.replaceDemo(response.session);
+				return response;
+			} catch {
+				this.demoMode = true;
+			}
+		}
+
+		const agent =
+			defaultAgentProfiles.find((profile) => profile.id === agentId) ?? defaultAgentProfiles[0];
+		const promptPath = `.x07/studio/handoffs/${session.session_id}-${agent.id}.md`;
+		const handoff = {
+			schema_version: 'x07.studio.agent_handoff@0.1.0' as const,
+			session_id: session.session_id,
+			agent_id: agent.id,
+			agent_label: agent.label,
+			command: [agent.command, ...agent.args, promptPath],
+			prompt_path: promptPath,
+			prompt: `# x07 Studio Agent Handoff\n\nAgent: ${agent.label}\nSession: ${session.title}\n`,
+			allowed_verbs: agent.allowed_verbs,
+			mcp_tools: agent.mcp_tools,
+			write_roots: agent.write_roots,
+			approval_required: agent.approval_required,
+			artifacts: [promptPath],
+			created_at: String(Date.now())
+		};
+		const opId = mode === 'execute' ? `agent.run.${agent.id}` : `agent.supervise.${agent.id}`;
+		const next = appendDemoOp(session, opId, 'succeeded', handoff.command, [promptPath]);
+		this.replaceDemo(next);
+		return { handoff, op: next.op_log.at(-1)!, session: next };
 	}
 
 	formalizeLocal(

@@ -80,5 +80,7 @@ This document records friction found while implementing the Studio web surface.
    A profile alone does not keep an external agent inside the approved XTAL
    contract. Studio now writes `.x07/studio/handoffs/*.md` prompts with the
    approved intent, allowed verbs, MCP tools, write roots, and required loop.
-   The remaining gap is a supervised execution bridge that streams Codex/Claude
-   progress back into `OpRecord`s instead of only preparing the handoff.
+   Studio can now record supervised launch plans and run configured agent
+   commands with a bounded timeout into visible `OpRecord`s. The remaining gap
+   is streaming live Codex/Claude progress and approvals while the command is
+   still running, rather than appending one completed operation.
