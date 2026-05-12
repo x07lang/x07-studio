@@ -13,6 +13,7 @@ import {
 	buildAgentHandoffReview,
 	buildApprovalLedger,
 	buildAutomationPlan,
+	buildCertifyCommandPreview,
 	buildEvidenceCoverage,
 	buildOnboardingPlan,
 	buildPlatformBridge,
@@ -35,6 +36,7 @@ import {
 	previewIntentWitnesses,
 	projectTemplates,
 	reduceDemoEvent,
+	certifyRunVars,
 	repairRunVars,
 	verifyRunVars,
 	workflowChecklist
@@ -452,6 +454,32 @@ describe('x07 Studio XTAL web model', () => {
 			repair_max_candidates: '4',
 			repair_semantic_max_depth: '3'
 		});
+	});
+
+	it('builds bounded xtal certify command options', () => {
+		const options = {
+			specDir: 'spec',
+			entry: 'toy.sorter.sort_u8_asc',
+			allEntries: false,
+			noPrechecks: true
+		};
+
+		expect(buildCertifyCommandPreview(options)).toBe(
+			'x07 xtal certify --no-prechecks --spec-dir spec --entry toy.sorter.sort_u8_asc'
+		);
+		expect(certifyRunVars(options)).toEqual({
+			cert_spec_dir: 'spec',
+			cert_entry: 'toy.sorter.sort_u8_asc',
+			cert_all: 'false',
+			cert_no_prechecks: 'true'
+		});
+
+		expect(
+			buildCertifyCommandPreview({
+				...options,
+				allEntries: true
+			})
+		).toBe('x07 xtal certify --no-prechecks --spec-dir spec --all');
 	});
 
 	it('builds verify evidence from xtal verify summary reports', () => {

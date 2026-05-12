@@ -656,3 +656,13 @@ This document records friction found while implementing the Studio web surface.
    renders those choices in the Repair room, carries them through the web API,
    and validates them before appending real `x07 xtal repair` flags to the Loom
    operation record.
+
+61. Trust-room certification controls need real scope flags.
+
+   The Trust room surfaced review signals and certify evidence, but the browser
+   could not choose the `x07 xtal certify` scope. That left users without a
+   visible way to pick a spec directory, certify one entry, certify all entries,
+   or skip prechecks when the review gate already covered them. Studio now
+   renders those choices in the Trust room, carries them through the web API,
+   validates the scope, and ensures all-entry certification suppresses the
+   entry flag instead of sending conflicting CLI arguments.

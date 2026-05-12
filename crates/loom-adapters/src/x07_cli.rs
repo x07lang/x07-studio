@@ -126,6 +126,8 @@ impl CliAdapter {
             rendered.args.extend(xtal_verify_args_from_vars(vars)?);
         } else if binding_id == "xtal.repair" {
             rendered.args.extend(xtal_repair_args_from_vars(vars)?);
+        } else if binding_id == "xtal.certify" {
+            rendered.args.extend(xtal_certify_args_from_vars(vars)?);
         }
 
         let mut report_path = None;
@@ -274,6 +276,30 @@ pub fn xtal_repair_args_from_vars(vars: &BTreeMap<String, String>) -> anyhow::Re
     Ok(args)
 }
 
+pub fn xtal_certify_args_from_vars(vars: &BTreeMap<String, String>) -> anyhow::Result<Vec<String>> {
+    let mut args = Vec::new();
+    append_bool_flag_arg(
+        vars,
+        &mut args,
+        "cert_no_prechecks",
+        "--no-prechecks",
+        "xtal certify",
+    )?;
+    if let Some(spec_dir) = non_empty_var(vars, "cert_spec_dir") {
+        validate_relative_cli_path(spec_dir, "xtal certify cert_spec_dir")?;
+        args.push("--spec-dir".to_string());
+        args.push(spec_dir.to_string());
+    }
+    let all_entries = bool_var_from_vars(vars, "cert_all", "xtal certify")?;
+    if all_entries {
+        args.push("--all".to_string());
+    } else if let Some(entry) = non_empty_var(vars, "cert_entry") {
+        args.push("--entry".to_string());
+        args.push(entry.to_string());
+    }
+    Ok(args)
+}
+
 fn non_empty_var<'a>(vars: &'a BTreeMap<String, String>, key: &str) -> Option<&'a str> {
     vars.get(key)
         .map(|value| value.trim())
@@ -317,13 +343,34 @@ fn append_bool_flag_arg(
     flag: &str,
     context: &str,
 ) -> anyhow::Result<()> {
+    if bool_var_from_vars(vars, key, context)? {
+        args.push(flag.to_string());
+    }
+    Ok(())
+}
+
+fn bool_var_from_vars(
+    vars: &BTreeMap<String, String>,
+    key: &str,
+    context: &str,
+) -> anyhow::Result<bool> {
     let Some(value) = non_empty_var(vars, key) else {
-        return Ok(());
+        return Ok(false);
     };
-    match value {
-        "true" | "1" | "yes" => args.push(flag.to_string()),
-        "false" | "0" | "no" => {}
+    Ok(match value {
+        "true" | "1" | "yes" => true,
+        "false" | "0" | "no" => false,
         other => bail!("{context} {key} must be true or false, got `{other}`"),
+    })
+}
+
+fn validate_relative_cli_path(value: &str, context: &str) -> anyhow::Result<()> {
+    let path = Utf8Path::new(value);
+    if value.contains('\0')
+        || path.is_absolute()
+        || path.components().any(|part| part.as_str() == "..")
+    {
+        bail!("{context} must be a relative path inside the workspace");
     }
     Ok(())
 }
@@ -1596,8 +1643,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        binding_by_id, find_nearby_x07lp_driver, xtal_repair_args_from_vars,
-        xtal_verify_args_from_vars, CliAdapter, MachineJsonMode,
+        binding_by_id, find_nearby_x07lp_driver, xtal_certify_args_from_vars,
+        xtal_repair_args_from_vars, xtal_verify_args_from_vars, CliAdapter, MachineJsonMode,
     };
 
     #[test]
@@ -1844,6 +1891,60 @@ mod tests {
         assert!(xtal_repair_args_from_vars(&BTreeMap::from([(
             "repair_write".to_string(),
             "maybe".to_string()
+        )]))
+        .is_err());
+    }
+
+    #[test]
+    fn xtal_certify_vars_render_bounded_flags() {
+        let args = xtal_certify_args_from_vars(&BTreeMap::from([
+            ("cert_no_prechecks".to_string(), "true".to_string()),
+            ("cert_spec_dir".to_string(), "spec".to_string()),
+            (
+                "cert_entry".to_string(),
+                "toy.sorter.sort_u8_asc".to_string(),
+            ),
+            ("cert_all".to_string(), "false".to_string()),
+        ]))
+        .expect("render xtal certify args");
+
+        assert_eq!(
+            args,
+            vec![
+                "--no-prechecks",
+                "--spec-dir",
+                "spec",
+                "--entry",
+                "toy.sorter.sort_u8_asc"
+            ]
+        );
+    }
+
+    #[test]
+    fn xtal_certify_all_entries_suppresses_entry_flag() {
+        let args = xtal_certify_args_from_vars(&BTreeMap::from([
+            ("cert_spec_dir".to_string(), "spec".to_string()),
+            (
+                "cert_entry".to_string(),
+                "toy.sorter.sort_u8_asc".to_string(),
+            ),
+            ("cert_all".to_string(), "true".to_string()),
+        ]))
+        .expect("render xtal certify all args");
+
+        assert_eq!(args, vec!["--spec-dir", "spec", "--all"]);
+    }
+
+    #[test]
+    fn xtal_certify_vars_reject_invalid_values() {
+        assert!(xtal_certify_args_from_vars(&BTreeMap::from([(
+            "cert_all".to_string(),
+            "maybe".to_string()
+        )]))
+        .is_err());
+        assert!(xtal_certify_args_from_vars(&BTreeMap::from([(
+            "cert_spec_dir".to_string(),
+            "../spec".to_string()
         )]))
         .is_err());
     }

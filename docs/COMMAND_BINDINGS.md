@@ -43,6 +43,12 @@ only decorating the review surface.
 them as `x07 xtal repair` flags, so the browser repair-room controls change the
 canonical repair command rather than only decorating the Counterexample Theater.
 
+`xtal.certify` accepts the Studio certify variables `cert_spec_dir`,
+`cert_entry`, `cert_all`, and `cert_no_prechecks`. Loom validates those values
+before rendering them as `x07 xtal certify` flags, and `cert_all=true`
+suppresses the entry flag so Studio does not render conflicting certification
+scope.
+
 ### x07-wasm
 
 - `wasm.app.profile.validate.atlas_dev`

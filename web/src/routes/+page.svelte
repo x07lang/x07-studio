@@ -15,6 +15,7 @@
 		buildAgentHandoffReview,
 		buildApprovalLedger,
 		buildAutomationPlan,
+		buildCertifyCommandPreview,
 		buildEvidenceCoverage,
 		buildOnboardingPlan,
 		buildPlatformBridge,
@@ -27,11 +28,13 @@
 		canonicalDocRefs,
 		canonicalMcpTools,
 		defaultPrompt,
+		defaultCertifyRunOptions,
 		defaultRepairRunOptions,
 		defaultVerifyRunOptions,
 		demoHealth,
 		lifecycle,
 		nextPrimaryAction,
+		normalizeCertifyRunOptions,
 		normalizeRepairRunOptions,
 		normalizeVerifyRunOptions,
 		phaseIndex,
@@ -45,6 +48,7 @@
 		type AgentProfile,
 		type ArtifactPreviewResponse,
 		type BindingDescriptor,
+		type CertifyRunOptions,
 		type DocPreviewResponse,
 		type EvidenceCoverageItem,
 		type HealthResponse,
@@ -119,6 +123,10 @@
 	let repairMaxRounds = defaultRepairRunOptions().maxRounds;
 	let repairMaxCandidates = defaultRepairRunOptions().maxCandidates;
 	let repairSemanticMaxDepth = defaultRepairRunOptions().semanticMaxDepth;
+	let certifySpecDir = defaultCertifyRunOptions().specDir;
+	let certifyEntry = defaultCertifyRunOptions().entry;
+	let certifyAllEntries = defaultCertifyRunOptions().allEntries;
+	let certifyNoPrechecks = defaultCertifyRunOptions().noPrechecks;
 	let artifactPreviewKey = '';
 	let artifactPreviewStatus = 'No artifact preview loaded';
 	let selectedArtifactPreview: ArtifactPreviewResponse | null = null;
@@ -327,6 +335,18 @@
 			: repairRunOptions.allowEditNonStubs
 				? 'non-stub implementation edits require write-boundary review'
 				: 'spec-preserving repair lane';
+	$: certifyRunOptions = normalizeCertifyRunOptions({
+		specDir: certifySpecDir,
+		entry: certifyEntry,
+		allEntries: certifyAllEntries,
+		noPrechecks: certifyNoPrechecks
+	});
+	$: certifyCommandPreview = buildCertifyCommandPreview(certifyRunOptions);
+	$: certifyGateLabel = certifyRunOptions.allEntries
+		? 'all spec entries require complete trust evidence'
+		: certifyRunOptions.entry
+			? 'entry-scoped certification keeps the release gate narrow'
+			: 'manifest certification uses the current XTAL trust boundary';
 	$: verifyEvidenceBoard = buildVerifyEvidenceBoard(
 		latestVerifyOp,
 		selected,
@@ -1004,6 +1024,11 @@
 		await runBinding('xtal.repair', repairRunOptions);
 	}
 
+	async function runCertifyBinding() {
+		selectedRoom = 'trust';
+		await runBinding('xtal.certify', certifyRunOptions);
+	}
+
 	async function loadArtifactPreview(sessionId: string, opId: string, artifact: string) {
 		const key = `${sessionId}|${opId}|${artifact}`;
 		if (artifactPreviewKey === key) return;
@@ -1201,7 +1226,10 @@
 		statusLine = label;
 	}
 
-	async function runBinding(bindingId: string, options?: Partial<VerifyRunOptions> | Partial<RepairRunOptions>) {
+	async function runBinding(
+		bindingId: string,
+		options?: Partial<VerifyRunOptions> | Partial<RepairRunOptions> | Partial<CertifyRunOptions>
+	) {
 		if (!selected) return;
 		const activeRoom = selectedRoom;
 		const snapshot = await api.runBinding(
@@ -1212,7 +1240,9 @@
 					? verifyRunOptions
 					: bindingId === 'xtal.repair'
 						? repairRunOptions
-						: undefined)
+						: bindingId === 'xtal.certify'
+							? certifyRunOptions
+							: undefined)
 		);
 		await replaceSession(snapshot);
 		selectedRoom = roomForBinding(bindingId, activeRoom);
@@ -2606,9 +2636,44 @@
 				</div>
 			</div>
 			<p>{currentRoomStatus.summary}</p>
-			<button class="command-button primary wide" type="button" on:click={approveAndRun} disabled={busy || !canRunProject}>
-				Run Verification
-			</button>
+			<div class="repair-run-controls certify-run-controls" aria-label="XTAL certify controls">
+				<div class="repair-control-group">
+					<label>
+						<span>Spec dir</span>
+						<input aria-label="Certify spec dir" type="text" bind:value={certifySpecDir} />
+					</label>
+					<label>
+						<span>Entry</span>
+						<input
+							aria-label="Certify entry"
+							type="text"
+							placeholder={repairEntryPlaceholder}
+							bind:value={certifyEntry}
+							disabled={certifyAllEntries}
+						/>
+					</label>
+				</div>
+				<label class="repair-checkbox">
+					<input type="checkbox" bind:checked={certifyAllEntries} />
+					<span>Certify all entries</span>
+				</label>
+				<label class="repair-checkbox">
+					<input type="checkbox" bind:checked={certifyNoPrechecks} />
+					<span>Skip prechecks</span>
+				</label>
+				<div class="repair-command-preview">
+					<small>{certifyGateLabel}</small>
+					<code>{certifyCommandPreview}</code>
+				</div>
+			</div>
+			<div class="button-row">
+				<button class="command-button" type="button" on:click={approveAndRun} disabled={busy || !canRunProject}>
+					Run Verification
+				</button>
+				<button class="command-button primary" type="button" on:click={runCertifyBinding} disabled={busy || !selected}>
+					Run xtal.certify
+				</button>
+			</div>
 		</section>
 
 		<section class={`panel counterexample-panel ${counterexampleTheater.tone}`} class:focused={selectedRoom === 'repair'} aria-label="Counterexample theater">

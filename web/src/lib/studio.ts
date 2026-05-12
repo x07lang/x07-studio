@@ -367,6 +367,13 @@ export interface RepairRunOptions {
 	semanticMaxDepth: string;
 }
 
+export interface CertifyRunOptions {
+	specDir: string;
+	entry: string;
+	allEntries: boolean;
+	noPrechecks: boolean;
+}
+
 export interface AgentLane {
 	id: 'codex' | 'claude-code';
 	label: string;
@@ -1633,6 +1640,36 @@ export function repairRunVars(options?: Partial<RepairRunOptions>): Record<strin
 	};
 }
 
+export function defaultCertifyRunOptions(): CertifyRunOptions {
+	return {
+		specDir: 'spec',
+		entry: '',
+		allEntries: false,
+		noPrechecks: false
+	};
+}
+
+export function normalizeCertifyRunOptions(options?: Partial<CertifyRunOptions>): CertifyRunOptions {
+	const defaults = defaultCertifyRunOptions();
+	const allEntries = Boolean(options?.allEntries);
+	return {
+		specDir: (options?.specDir ?? defaults.specDir).trim() || defaults.specDir,
+		entry: allEntries ? '' : (options?.entry ?? defaults.entry).trim(),
+		allEntries,
+		noPrechecks: Boolean(options?.noPrechecks)
+	};
+}
+
+export function certifyRunVars(options?: Partial<CertifyRunOptions>): Record<string, string> {
+	const normalized = normalizeCertifyRunOptions(options);
+	return {
+		cert_spec_dir: normalized.specDir,
+		cert_entry: normalized.entry,
+		cert_all: String(normalized.allEntries),
+		cert_no_prechecks: String(normalized.noPrechecks)
+	};
+}
+
 export function buildVerifyCommandPreview(options?: Partial<VerifyRunOptions>): string {
 	const normalized = normalizeVerifyRunOptions(options);
 	const args = ['x07', 'xtal', 'verify', '--proof-policy', normalized.proofPolicy];
@@ -1640,6 +1677,16 @@ export function buildVerifyCommandPreview(options?: Partial<VerifyRunOptions>): 
 	if (normalized.unwind) args.push('--unwind', normalized.unwind);
 	if (normalized.maxBytesLen) args.push('--max-bytes-len', normalized.maxBytesLen);
 	if (normalized.inputLenBytes) args.push('--input-len-bytes', normalized.inputLenBytes);
+	return args.join(' ');
+}
+
+export function buildCertifyCommandPreview(options?: Partial<CertifyRunOptions>): string {
+	const normalized = normalizeCertifyRunOptions(options);
+	const args = ['x07', 'xtal', 'certify'];
+	if (normalized.noPrechecks) args.push('--no-prechecks');
+	if (normalized.specDir) args.push('--spec-dir', normalized.specDir);
+	if (normalized.allEntries) args.push('--all');
+	else if (normalized.entry) args.push('--entry', normalized.entry);
 	return args.join(' ');
 }
 

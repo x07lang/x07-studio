@@ -1,7 +1,9 @@
 import {
 	appendDemoOp,
+	buildCertifyCommandPreview,
 	buildRepairCommandPreview,
 	buildVerifyCommandPreview,
+	certifyRunVars,
 	createIntentPacket,
 	defaultAgentProfiles,
 	defaultProviderProfiles,
@@ -20,6 +22,7 @@ import {
 	type ApprovalDecision,
 	type ArtifactPreviewResponse,
 	type BindingDescriptor,
+	type CertifyRunOptions,
 	type DocPreviewResponse,
 	type FormalizeIntentResponse,
 	type HealthResponse,
@@ -34,7 +37,10 @@ import {
 	type WorkspaceRadarResponse
 } from './studio';
 
-type BindingRunOptions = Partial<VerifyRunOptions> | Partial<RepairRunOptions>;
+type BindingRunOptions =
+	| Partial<VerifyRunOptions>
+	| Partial<RepairRunOptions>
+	| Partial<CertifyRunOptions>;
 
 export class StudioApi {
 	private demoMode = false;
@@ -536,6 +542,7 @@ function bindingVars(
 	}
 	if (bindingId === 'xtal.verify') return { ...common, ...verifyRunVars(options as Partial<VerifyRunOptions>) };
 	if (bindingId === 'xtal.repair') return { ...common, ...repairRunVars(options as Partial<RepairRunOptions>) };
+	if (bindingId === 'xtal.certify') return { ...common, ...certifyRunVars(options as Partial<CertifyRunOptions>) };
 	return common;
 }
 
@@ -545,6 +552,9 @@ function bindingCommandPreview(bindingId: string, options?: BindingRunOptions): 
 	}
 	if (bindingId === 'xtal.repair') {
 		return buildRepairCommandPreview(options as Partial<RepairRunOptions>).split(' ');
+	}
+	if (bindingId === 'xtal.certify') {
+		return buildCertifyCommandPreview(options as Partial<CertifyRunOptions>).split(' ');
 	}
 	return undefined;
 }
