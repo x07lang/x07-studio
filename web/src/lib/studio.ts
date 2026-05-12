@@ -51,6 +51,18 @@ export type ProjectDifficulty =
 	| 'expert'
 	| 'atlas';
 
+export interface ClarificationTurn {
+	question_id: string;
+	question_text: string;
+	witness_kind: IntentWitnessKind;
+	round: number;
+	agent_id: string;
+	options: string[];
+	question_recorded_at: string;
+	answer_text?: string | null;
+	answer_recorded_at?: string | null;
+}
+
 export interface IntentPacket {
 	schema_version: 'x07.studio.intent_packet@0.1.0';
 	session_id: string;
@@ -68,6 +80,53 @@ export interface IntentPacket {
 		| { kind: 'voice'; transcript: string }
 		| { kind: 'spec'; raw: string }
 		| { kind: 'incident'; path: string };
+	clarification_history?: ClarificationTurn[];
+}
+
+export type SessionStreamEvent =
+	| { kind: 'op'; op: OpRecord }
+	| { kind: 'snapshot'; session: SessionSnapshot }
+	| { kind: 'heartbeat'; unix_ms: number };
+
+export interface IntentClarifyRequest {
+	agent_id: string;
+	round_max?: number;
+	timeout_seconds?: number;
+}
+
+export interface IntentClarifyResponse {
+	handoff: AgentHandoff;
+	op: OpRecord;
+	session: SessionSnapshot;
+}
+
+export interface IntentAnswer {
+	question_id: string;
+	text: string;
+	witness_kind?: IntentWitnessKind;
+}
+
+export interface IntentAnswerRequest {
+	answers: IntentAnswer[];
+}
+
+export interface IntentAnswerResponse {
+	intent: IntentPacket;
+	op: OpRecord;
+	session: SessionSnapshot;
+}
+
+export interface RunBuildRequest {
+	vars?: Record<string, string>;
+	max_repair_rounds?: number;
+}
+
+export interface PlainEnglishSummary {
+	schema_version: 'x07.studio.plain_english_summary@0.1.0';
+	headline: string;
+	behavior_promises: string[];
+	boundaries: string[];
+	evidence: string[];
 }
 
 export interface OpRecord {

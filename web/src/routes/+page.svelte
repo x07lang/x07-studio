@@ -74,11 +74,62 @@
 		type VerifyRunOptions,
 		type WorkspaceRadarResponse
 	} from '$lib/studio';
+	import SimpleMode from '$lib/components/SimpleMode.svelte';
 
 	type GraphMode = 'lineage' | 'world' | 'trust' | 'budget';
+	type StudioMode = 'simple' | 'expert';
 
 	const api = new StudioApi();
 	const initialProject = projectTemplates[0];
+
+	let studioMode: StudioMode = readPersistedMode();
+
+	function readPersistedMode(): StudioMode {
+		if (typeof window === 'undefined') return 'simple';
+		const params = new URLSearchParams(window.location.search);
+		const forced = params.get('mode');
+		if (forced === 'simple' || forced === 'expert') return forced;
+		try {
+			const saved = window.localStorage.getItem('x07-studio-mode');
+			if (saved === 'expert' || saved === 'simple') return saved as StudioMode;
+		} catch {
+			// localStorage may be unavailable in private mode; fall through
+		}
+		return 'simple';
+	}
+
+	function persistMode(next: StudioMode) {
+		if (typeof window === 'undefined') return;
+		try {
+			window.localStorage.setItem('x07-studio-mode', next);
+		} catch {
+			// ignore quota / private mode
+		}
+	}
+
+	function setMode(next: StudioMode) {
+		if (studioMode === next) return;
+		studioMode = next;
+		persistMode(next);
+	}
+
+	function openExpertFromSimple(detail: { sessionId: string | null }) {
+		setMode('expert');
+		if (detail.sessionId) {
+			selectedId = detail.sessionId;
+		}
+	}
+
+	function adoptSessionFromSimple(detail: { session: SessionSnapshot }) {
+		const next = detail.session;
+		const existing = sessions.findIndex((s) => s.session_id === next.session_id);
+		if (existing >= 0) {
+			sessions = [...sessions.slice(0, existing), next, ...sessions.slice(existing + 1)];
+		} else {
+			sessions = [next, ...sessions];
+		}
+		selectedId = next.session_id;
+	}
 
 	let health: HealthResponse = demoHealth();
 	let sessions: SessionSnapshot[] = [];
@@ -1525,6 +1576,31 @@
 	<title>x07 Studio</title>
 </svelte:head>
 
+<div class="mode-toggle" role="group" aria-label="Studio mode" data-testid="studio-mode-toggle" data-mode={studioMode}>
+	<button
+		type="button"
+		class={studioMode === 'simple' ? 'active' : ''}
+		data-active={studioMode === 'simple'}
+		on:click={() => setMode('simple')}
+		data-testid="studio-mode-simple"
+	>Simple</button>
+	<button
+		type="button"
+		class={studioMode === 'expert' ? 'active' : ''}
+		data-active={studioMode === 'expert'}
+		on:click={() => setMode('expert')}
+		data-testid="studio-mode-expert"
+	>Expert</button>
+</div>
+
+{#if studioMode === 'simple'}
+	<SimpleMode
+		{api}
+		session={selected ?? null}
+		on:open-expert={(event) => openExpertFromSimple(event.detail)}
+		on:session-updated={(event) => adoptSessionFromSimple(event.detail)}
+	/>
+{:else}
 <main class={`studio-shell${detailMode ? ' detail-mode' : ''}${roomUsesRightRail ? ' show-room-rail' : ''}`}>
 	<aside class="rail" aria-label="x07 Studio rooms">
 		<div class="brand">
@@ -3324,3 +3400,4 @@
 		</section>
 	</aside>
 </main>
+{/if}

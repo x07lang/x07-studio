@@ -27,12 +27,16 @@ import {
 	type DocPreviewResponse,
 	type FormalizeIntentResponse,
 	type HealthResponse,
+	type IntentAnswer,
+	type IntentAnswerResponse,
+	type IntentClarifyResponse,
 	type IntentInputMode,
 	type IntentPacket,
 	type ProviderProbeResponse,
 	type ProviderProfile,
 	type RequestIntentRevisionResponse,
 	type SessionSnapshot,
+	type SessionStreamEvent,
 	type TaskType,
 	type RepairRunOptions,
 	type VerifyRunOptions,
@@ -327,6 +331,115 @@ export class StudioApi {
 			);
 		}
 		return demoDocPreview(docRef);
+	}
+
+	async clarifyIntent(
+		session: SessionSnapshot,
+		agentId: string,
+		options: { timeoutSeconds?: number } = {}
+	): Promise<IntentClarifyResponse | null> {
+		if (this.demoMode) return null;
+		try {
+			const body: Record<string, unknown> = { agent_id: agentId };
+			if (options.timeoutSeconds !== undefined) {
+				body.timeout_seconds = options.timeoutSeconds;
+			}
+			const response = await request<IntentClarifyResponse>(
+				`/v1/sessions/${session.session_id}/intent/clarify`,
+				{ method: 'POST', body: JSON.stringify(body) }
+			);
+			this.replaceDemo(response.session);
+			return response;
+		} catch (error) {
+			if (error instanceof HttpRequestError) throw error;
+			this.demoMode = true;
+			return null;
+		}
+	}
+
+	async answerIntent(
+		session: SessionSnapshot,
+		answers: IntentAnswer[]
+	): Promise<IntentAnswerResponse | null> {
+		if (this.demoMode) return null;
+		try {
+			const response = await request<IntentAnswerResponse>(
+				`/v1/sessions/${session.session_id}/intent/answer`,
+				{ method: 'POST', body: JSON.stringify({ answers }) }
+			);
+			this.replaceDemo(response.session);
+			return response;
+		} catch (error) {
+			if (error instanceof HttpRequestError) throw error;
+			this.demoMode = true;
+			return null;
+		}
+	}
+
+	async runBuildPipeline(
+		session: SessionSnapshot,
+		options: { maxRepairRounds?: number; verifyOptions?: Partial<VerifyRunOptions> } = {}
+	): Promise<SessionSnapshot> {
+		if (!this.demoMode) {
+			try {
+				const body: Record<string, unknown> = {
+					vars: verifyRunVars(options.verifyOptions),
+				};
+				if (options.maxRepairRounds !== undefined) {
+					body.max_repair_rounds = options.maxRepairRounds;
+				}
+				const next = await request<SessionSnapshot>(
+					`/v1/sessions/${session.session_id}/build`,
+					{ method: 'POST', body: JSON.stringify(body) }
+				);
+				this.replaceDemo(next);
+				return next;
+			} catch (error) {
+				if (error instanceof HttpRequestError) throw error;
+				this.demoMode = true;
+			}
+		}
+		// Demo-mode fallback: mimic the build pipeline with an explicit "start"
+		// stage, the existing XTAL workflow, and a "done" stage. Plain-English
+		// summary is omitted because the demo session has no live evidence to
+		// summarize.
+		let current = appendDemoOp(session, 'build.stage.start', 'succeeded', [
+			'studio',
+			'build',
+			'stage',
+			'start'
+		]);
+		current = await this.runXtalWorkflow(current, options.verifyOptions);
+		current = appendDemoOp(current, 'build.stage.done', 'succeeded', [
+			'studio',
+			'build',
+			'stage',
+			'done'
+		]);
+		this.replaceDemo(current);
+		return current;
+	}
+
+	subscribeSession(
+		sessionId: string,
+		listener: (event: SessionStreamEvent) => void
+	): () => void {
+		if (this.demoMode || typeof EventSource === 'undefined') {
+			return () => undefined;
+		}
+		const source = new EventSource(`/v1/sessions/${sessionId}/stream`);
+		source.onmessage = (message) => {
+			try {
+				const event = JSON.parse(message.data) as SessionStreamEvent;
+				listener(event);
+			} catch {
+				// drop malformed frames; the next correct one will catch the client up
+			}
+		};
+		source.onerror = () => {
+			// EventSource auto-reconnects with the same URL; nothing to do here.
+		};
+		return () => source.close();
 	}
 
 	async runXtalWorkflow(
