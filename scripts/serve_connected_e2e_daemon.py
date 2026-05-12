@@ -130,6 +130,39 @@ def run_x07_wasm(args: list[str]) -> None:
 
 def run_agent(command: str, args: list[str]) -> None:
     prompt_path = args[-1] if args else ".x07/studio/handoffs/unknown.md"
+    if "-clarify" in prompt_path:
+        # Connected-E2E clarify mode: emit two structured clarify_question
+        # events that mirror what a real Claude Code / Codex run would emit
+        # for an unfamiliar intent. The Simple-Mode UI ingests these into
+        # the intent packet's clarification_history.
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07.studio.agent_event@0.1.0",
+                    "kind": "clarify_question",
+                    "id": "q-empty-input",
+                    "text": "What should happen for empty input?",
+                    "witness_kind": "forbidden_behavior",
+                    "options": [
+                        "Reject with an error",
+                        "Return an empty result",
+                    ],
+                }
+            )
+        )
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07.studio.agent_event@0.1.0",
+                    "kind": "clarify_question",
+                    "id": "q-stability",
+                    "text": "Should equal items keep their original order?",
+                    "witness_kind": "desired_behavior",
+                    "options": ["Yes, stable", "No, any permutation"],
+                }
+            )
+        )
+        return
     print(
         json.dumps(
             {

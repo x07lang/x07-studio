@@ -40,6 +40,11 @@
 	);
 
 	$: clarificationTurns = (session?.intent?.clarification_history ?? []) as ClarificationTurn[];
+	$: latestRound = clarificationTurns.reduce(
+		(max, turn) => (turn.round > max ? turn.round : max),
+		0
+	);
+	$: currentRoundTurns = clarificationTurns.filter((turn) => turn.round === latestRound);
 	$: pendingTurns = clarificationTurns.filter((turn) => !turn.answer_text);
 	$: lastSummary = extractPlainEnglishSummary(session);
 
@@ -270,9 +275,9 @@
 					when I have enough.
 				</p>
 			</header>
-			{#if pendingTurns.length}
+			{#if currentRoundTurns.length}
 				<div class="card-list">
-					{#each pendingTurns as turn (turn.question_id)}
+					{#each currentRoundTurns as turn (turn.question_id)}
 						<ClarifyQuestionCard
 							{turn}
 							disabled={busy}
@@ -280,11 +285,14 @@
 						/>
 					{/each}
 				</div>
+				{#if pendingTurns.length === 0}
+					<p class="hint" data-testid="clarify-all-answered">
+						All answered. Approve &amp; Build whenever you're ready.
+					</p>
+				{/if}
 			{:else}
 				<p class="hint" data-testid="clarify-empty">
-					{clarificationTurns.length
-						? 'All answered. Ready to build when you are.'
-						: 'No questions yet — I might just have enough to begin.'}
+					No questions yet — I might just have enough to begin.
 				</p>
 			{/if}
 			<div class="clarify-actions">

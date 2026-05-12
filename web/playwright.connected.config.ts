@@ -6,6 +6,11 @@ const webPort = 5179;
 export default defineConfig({
 	testDir: './tests-connected',
 	timeout: 45_000,
+	// The connected daemon is a single process holding shared workspace
+	// state. Run tests one at a time so sessions from one spec don't
+	// shadow the assertions of another.
+	workers: 1,
+	fullyParallel: false,
 	expect: {
 		timeout: 10_000
 	},
