@@ -1561,6 +1561,71 @@ textarea {
 	overflow-wrap: anywhere;
 }
 
+.intent-review-lane {
+	display: grid;
+	gap: 7px;
+	margin: 10px 0;
+	border: 1px solid rgba(85, 214, 231, 0.2);
+	border-radius: var(--radius);
+	padding: 9px;
+	background: rgba(85, 214, 231, 0.045);
+}
+
+.intent-review-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.intent-review-head strong,
+.intent-review-item strong {
+	color: var(--text);
+	font-size: 12px;
+}
+
+.intent-review-head span,
+.intent-review-item span,
+.intent-review-item em,
+.intent-review-lane p {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.intent-review-item {
+	display: grid;
+	grid-template-columns: 76px minmax(0, 1fr) auto;
+	gap: 8px;
+	align-items: start;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 8px;
+	background: rgba(255, 255, 255, 0.035);
+	min-width: 0;
+}
+
+.intent-review-item.ambiguity {
+	border-color: rgba(255, 195, 91, 0.34);
+}
+
+.intent-review-item.assumption {
+	border-color: rgba(114, 228, 180, 0.26);
+}
+
+.intent-review-item strong {
+	overflow-wrap: anywhere;
+	line-height: 1.35;
+}
+
+.intent-review-item em {
+	font-style: normal;
+	font-family: var(--font-mono);
+}
+
+.intent-review-lane p {
+	margin: 0;
+}
+
 .revision-review {
 	display: grid;
 	gap: 7px;

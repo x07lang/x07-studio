@@ -18,6 +18,7 @@ import {
 	buildCertifyCommandPreview,
 	buildCertEvidenceBoard,
 	buildEvidenceCoverage,
+	buildIntentReviewItems,
 	buildOnboardingPlan,
 	buildPlatformBridge,
 	buildProviderProbeGates,
@@ -56,6 +57,17 @@ describe('x07 Studio XTAL web model', () => {
 		expect(intent.targets[0].entry).toBe('sort_u8_asc');
 		expect(intent.witnesses.map((witness) => witness.kind)).toContain('policy_requirement');
 		expect(intent.constraints).toContain('Use spec-first XTAL flow.');
+		expect(buildIntentReviewItems(intent)).toEqual(
+			expect.arrayContaining([
+				{ kind: 'ambiguity', text: 'Acceptance examples need final human approval.', state: 'review' },
+				{ kind: 'assumption', text: 'Agent may edit implementation paths after spec approval.', state: 'review' },
+				{
+					kind: 'assumption',
+					text: 'Agent may not widen specs or architecture policy without approval.',
+					state: 'review'
+				}
+			])
+		);
 	});
 
 	it('reports onboarding readiness for standalone runtime components', () => {
@@ -325,6 +337,12 @@ describe('x07 Studio XTAL web model', () => {
 		expect(approved.contract?.project_doctrine.write_policy.agent_write_specs).toBe(false);
 		expect(approved.contract?.global_doctrine.doc_refs).toEqual(canonicalDocRefs);
 		expect(approved.contract?.global_doctrine.mcp_tools).toEqual(canonicalMcpTools);
+		expect(workflowChecklist(intentReady).find((item) => item.label === 'Intent review')?.state).toBe(
+			'active'
+		);
+		expect(workflowChecklist(approved).find((item) => item.label === 'Intent review')?.state).toBe(
+			'done'
+		);
 		expect(workflowChecklist(approved).find((item) => item.label === 'Human spec approval')?.state).toBe(
 			'done'
 		);

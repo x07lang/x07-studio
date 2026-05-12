@@ -171,6 +171,12 @@ test('voice transcript capture appends a spoken witness before spec approval', a
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await expect(page.getByLabel('Spec approval preview')).toContainText('workflow.graph');
+	await expect(page.getByLabel('Intent ambiguity and assumption review')).toContainText(
+		'Acceptance examples need final human approval'
+	);
+	await expect(page.getByLabel('Intent ambiguity and assumption review')).toContainText(
+		'Agent may not widen specs or architecture policy without approval'
+	);
 });
 
 test('agent handoff actions stay visible in focused mode', async ({ page }) => {
@@ -376,6 +382,11 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Spec source review')).toContainText('sort_u8_asc');
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByLabel('Spec approval preview')).toContainText('toy.sorter');
+	await expect(page.getByLabel('Intent ambiguity and assumption review')).toContainText('2 ambiguity / 2 assumption');
+	await expect(page.getByLabel('Intent ambiguity and assumption review')).toContainText(
+		'Acceptance examples need final human approval'
+	);
+	await expect(page.getByLabel('Approval checklist')).toContainText('Intent review');
 	await page.getByLabel('Active room').selectOption('verify');
 	await expect(page.getByRole('tab', { name: 'Verify' })).toHaveAttribute('aria-selected', 'true');
 	await page.getByLabel('Active room').selectOption('intent');

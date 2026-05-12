@@ -20,6 +20,7 @@
 		buildCertifyCommandPreview,
 		buildCertEvidenceBoard,
 		buildEvidenceCoverage,
+		buildIntentReviewItems,
 		buildOnboardingPlan,
 		buildPlatformBridge,
 		buildProviderProbeGates,
@@ -323,6 +324,12 @@
 	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
 	$: approvalLedger = buildApprovalLedger(selected, revisionHistory, approvalState);
+	$: intentReviewItems = buildIntentReviewItems(selected?.intent);
+	$: intentReviewSummary = intentReviewItems.length
+		? `${intentReviewItems.filter((item) => item.kind === 'ambiguity').length} ambiguity / ${intentReviewItems.filter((item) => item.kind === 'assumption').length} assumption`
+		: selected?.intent
+			? 'no ambiguities or assumptions'
+			: 'polish required';
 	$: revisionIntentConstraints = selected?.intent?.constraints ?? [];
 	$: revisionReviewItems = revisionHistory.map((revision, index): RevisionReviewItem => {
 		const included = revisionIncludedInConstraints(revision, revisionIntentConstraints);
@@ -1956,6 +1963,25 @@
 								<dd>Human-reviewed witnesses, tests, verify evidence.</dd>
 							</div>
 						</dl>
+						{#if selected?.intent}
+							<div class="intent-review-lane" aria-label="Intent ambiguity and assumption review">
+								<div class="intent-review-head">
+									<strong>Intent Review</strong>
+									<span>{intentReviewSummary}</span>
+								</div>
+								{#if intentReviewItems.length}
+									{#each intentReviewItems as item}
+										<div class={`intent-review-item ${item.kind}`}>
+											<span>{item.kind}</span>
+											<strong>{item.text}</strong>
+											<em>{item.state}</em>
+										</div>
+									{/each}
+								{:else}
+									<p>No ambiguity or assumption payload was recorded for this polished intent.</p>
+								{/if}
+							</div>
+						{/if}
 						{#if revisionHistory.length}
 							<div class="revision-review" aria-label="Revision review ledger">
 								<div class="revision-review-head">

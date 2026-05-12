@@ -33,6 +33,7 @@
 - daemon-owned revision request operation records (`intent.revision.request`) that keep requested changes visible before repolish
 - approval/run controls stay blocked until a polished intent packet is visible for human review
 - approval preview revision review that checks the polished intent packet before marking requested changes visible
+- approval preview intent review that surfaces polished ambiguities and assumptions before human approval
 - session doctrine surfacing for canonical x07 docs, MCP tools, allowed verbs, and handoff prompt context
 - reviewable Codex/Claude handoff contract panel showing command, prompt path, approval gate, execution boundaries, automation runbook, allowed verbs, MCP tools, write roots, prompt excerpt, and agent event protocol
 - handoff environment contract preview for the `X07_STUDIO_*` variables passed to supervised Codex/Claude commands

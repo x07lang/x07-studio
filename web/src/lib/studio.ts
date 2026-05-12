@@ -584,6 +584,12 @@ export interface ApprovalLedgerItem {
 	state: 'done' | 'active' | 'blocked';
 }
 
+export interface IntentReviewItem {
+	kind: 'ambiguity' | 'assumption';
+	text: string;
+	state: 'review';
+}
+
 export interface AgentReadiness {
 	state: AgentStatus;
 	source: string;
@@ -1196,6 +1202,22 @@ export function buildApprovalLedger(
 			state: session?.contract ? 'done' : 'blocked'
 		}
 	];
+}
+
+export function buildIntentReviewItems(intent: IntentPacket | null | undefined): IntentReviewItem[] {
+	if (!intent) return [];
+	return [
+		...intent.ambiguities.map((text) => ({
+			kind: 'ambiguity' as const,
+			text: text.trim(),
+			state: 'review' as const
+		})),
+		...intent.assumptions.map((text) => ({
+			kind: 'assumption' as const,
+			text: text.trim(),
+			state: 'review' as const
+		}))
+	].filter((item) => item.text.length > 0);
 }
 
 export function agentReadiness(
@@ -3673,6 +3695,14 @@ export function workflowChecklist(session: SessionSnapshot): Array<{
 		{
 			label: 'Intent packet',
 			state: session.intent ? 'done' : 'active'
+		},
+		{
+			label: 'Intent review',
+			state: session.intent
+				? phaseIndex(session.phase) >= phaseIndex('spec_approved')
+					? 'done'
+					: 'active'
+				: 'blocked'
 		},
 		{
 			label: 'Human spec approval',

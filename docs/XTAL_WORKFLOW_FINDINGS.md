@@ -804,3 +804,14 @@ This document records friction found while implementing the Studio web surface.
    parse state, module, entry, and validation detail before polish, so the user
    can catch malformed or wrong-target specs before they become an approval
    packet.
+
+75. Intent ambiguities and assumptions must be visible before approval.
+
+   The intent packet schema already carried `ambiguities` and `assumptions`,
+   but the approval preview showed only session, module, entry, scope,
+   witnesses, and revision state. That hid the main review payload a
+   non-technical user needs when deciding whether to approve or request
+   changes. Studio now renders an Intent Review lane inside the approval card,
+   lists every ambiguity and assumption as review items, and adds the review
+   step to the approval checklist so the human decision is grounded in the
+   polished packet rather than only the target module.
