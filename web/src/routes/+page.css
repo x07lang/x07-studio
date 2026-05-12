@@ -1448,6 +1448,54 @@ textarea {
 	overflow-wrap: anywhere;
 }
 
+.spec-source-preview {
+	display: grid;
+	gap: 7px;
+	margin-top: 10px;
+	border: 1px solid rgba(85, 214, 231, 0.2);
+	border-radius: var(--radius);
+	padding: 9px;
+	background: rgba(85, 214, 231, 0.045);
+}
+
+.spec-source-preview.ready {
+	border-color: rgba(114, 228, 180, 0.32);
+	background: rgba(114, 228, 180, 0.055);
+}
+
+.spec-source-preview.invalid {
+	border-color: rgba(255, 195, 91, 0.34);
+	background: rgba(255, 195, 91, 0.07);
+}
+
+.spec-source-preview.empty {
+	border-color: rgba(255, 255, 255, 0.12);
+	background: rgba(255, 255, 255, 0.025);
+}
+
+.spec-source-preview > div:not(.draft-witness-head) {
+	display: grid;
+	grid-template-columns: 76px minmax(0, 1fr);
+	gap: 8px;
+	align-items: start;
+}
+
+.spec-source-preview span,
+.spec-source-preview code,
+.spec-source-preview small {
+	font-size: 12px;
+}
+
+.spec-source-preview span,
+.spec-source-preview small {
+	color: var(--muted);
+}
+
+.spec-source-preview code {
+	color: var(--text);
+	overflow-wrap: anywhere;
+}
+
 .revision-lane {
 	display: grid;
 	gap: 6px;

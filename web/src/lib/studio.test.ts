@@ -37,6 +37,7 @@ import {
 	nextPrimaryAction,
 	phaseIndex,
 	previewIntentWitnesses,
+	previewSpecSource,
 	projectTemplates,
 	reduceDemoEvent,
 	certifyRunVars,
@@ -161,6 +162,35 @@ describe('x07 Studio XTAL web model', () => {
 		expect(voice.source.kind).toBe('voice');
 		expect(spec.source.kind).toBe('spec');
 		expect(spec.targets[0]).toEqual({ module_id: 'toy.sorter', entry: 'sort_u8_asc' });
+		expect(
+			previewSpecSource(
+				JSON.stringify({
+					schema_version: 'x07.x07spec@0.1.0',
+					module_id: 'toy.sorter',
+					operations: [{ id: 'op.sort_u8_asc.v1', name: 'toy.sorter.sort_u8_asc' }]
+				})
+			)
+		).toMatchObject({
+			state: 'ready',
+			moduleId: 'toy.sorter',
+			entry: 'sort_u8_asc'
+		});
+		expect(previewSpecSource('{')).toMatchObject({
+			state: 'invalid',
+			moduleId: 'invalid JSON'
+		});
+		expect(
+			previewSpecSource(
+				JSON.stringify({
+					schema_version: 'x07.x07spec@0.1.0',
+					module_id: 'toy.sorter',
+					operations: []
+				})
+			)
+		).toMatchObject({
+			state: 'invalid',
+			entry: 'missing operation'
+		});
 		expect(partialPrefixSpec.targets[0]).toEqual({
 			module_id: 'toy.sort',
 			entry: 'toy_sorter_sort_u8_asc'

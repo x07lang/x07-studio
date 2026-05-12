@@ -47,6 +47,7 @@
 - browser voice transcript capture that appends spoken witnesses into the same approval-gated intent path, with paste-transcript fallback when Web Speech is unavailable
 - browser transcript confidence review for Web Speech witnesses, including language selection, confidence gate, and low-confidence review badges
 - draft witness preview that classifies raw written/spoken/spec/incident input before polish as desired behavior, forbidden behavior, policy requirement, or incident evidence
+- existing-spec source review that previews JSON parse readiness, module, and entry before polish
 - opt-in provider-backed intent polish that records model suggestions as review evidence while keeping deterministic intent generation as the fallback
 - browser provider capability gates for OpenAI-compatible profiles, including model catalog, intent-polish API, tool calls, JSON schema, streaming, and trust-tier review
 - daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs

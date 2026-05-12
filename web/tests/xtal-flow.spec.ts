@@ -369,7 +369,11 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Written Plan')).toBeChecked();
 	await page.getByLabel('Existing Spec').click();
 	await expect(page.getByLabel('Existing Spec')).toBeChecked();
+	await expect(page.getByLabel('Spec source review')).toContainText('invalid');
 	await page.getByLabel('Initial plan').fill(sorterSpec);
+	await expect(page.getByLabel('Spec source review')).toContainText('ready');
+	await expect(page.getByLabel('Spec source review')).toContainText('toy.sorter');
+	await expect(page.getByLabel('Spec source review')).toContainText('sort_u8_asc');
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByLabel('Spec approval preview')).toContainText('toy.sorter');
 	await page.getByLabel('Active room').selectOption('verify');

@@ -615,6 +615,13 @@ export interface EvidenceCoverageItem {
 	opId?: string | null;
 }
 
+export interface SpecSourcePreview {
+	state: 'empty' | 'ready' | 'invalid';
+	moduleId: string;
+	entry: string;
+	detail: string;
+}
+
 export type PlatformBridgeState = EvidenceCoverageState | 'optional';
 
 export interface PlatformBridgeItem {
@@ -3177,6 +3184,42 @@ export function createIntentPacket(
 	};
 }
 
+export function previewSpecSource(raw: string): SpecSourcePreview {
+	const normalized = raw.trim();
+	if (!normalized) {
+		return {
+			state: 'empty',
+			moduleId: 'awaiting spec',
+			entry: 'operation',
+			detail: 'Paste an x07 spec JSON object with module_id and at least one operation.'
+		};
+	}
+	try {
+		const { moduleId, operationName } = readSpecSourceTarget(normalized);
+		if (!moduleId || !operationName) {
+			return {
+				state: 'invalid',
+				moduleId: moduleId || 'missing module_id',
+				entry: operationName ? entryFromSpecOperation(moduleId, operationName) : 'missing operation',
+				detail: 'Existing Spec mode needs module_id and one operation name or id.'
+			};
+		}
+		return {
+			state: 'ready',
+			moduleId,
+			entry: entryFromSpecOperation(moduleId, operationName),
+			detail: 'Spec source will be treated as already-authored behavior for human review.'
+		};
+	} catch {
+		return {
+			state: 'invalid',
+			moduleId: 'invalid JSON',
+			entry: 'operation',
+			detail: 'Spec source is not valid JSON yet.'
+		};
+	}
+}
+
 export function previewIntentWitnesses(raw: string, inputMode: IntentInputMode = 'text'): IntentWitness[] {
 	const normalized = raw.replace(/\s+/g, ' ').trim();
 	if (!normalized) return [];
@@ -3251,18 +3294,7 @@ function uniqueWitnesses(witnesses: IntentWitness[]) {
 
 function specTargetFromRaw(raw: string): { moduleId: string; entry: string } | null {
 	try {
-		const value = JSON.parse(raw) as {
-			module_id?: unknown;
-			operations?: Array<{ name?: unknown; id?: unknown }>;
-		};
-		const moduleId = typeof value.module_id === 'string' ? value.module_id.trim() : '';
-		const operation = value.operations?.[0];
-		const operationName =
-			typeof operation?.name === 'string'
-				? operation.name
-				: typeof operation?.id === 'string'
-					? operation.id
-					: '';
+		const { moduleId, operationName } = readSpecSourceTarget(raw);
 		if (!moduleId || !operationName) return null;
 		return {
 			moduleId,
@@ -3271,6 +3303,22 @@ function specTargetFromRaw(raw: string): { moduleId: string; entry: string } | n
 	} catch {
 		return null;
 	}
+}
+
+function readSpecSourceTarget(raw: string): { moduleId: string; operationName: string } {
+	const value = JSON.parse(raw) as {
+		module_id?: unknown;
+		operations?: Array<{ name?: unknown; id?: unknown }>;
+	};
+	const moduleId = typeof value.module_id === 'string' ? value.module_id.trim() : '';
+	const operation = value.operations?.[0];
+	const operationName =
+		typeof operation?.name === 'string'
+			? operation.name
+			: typeof operation?.id === 'string'
+				? operation.id
+				: '';
+	return { moduleId, operationName };
 }
 
 function entryFromSpecOperation(moduleId: string, operationName: string): string {

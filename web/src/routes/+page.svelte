@@ -41,6 +41,7 @@
 		normalizeRepairRunOptions,
 		normalizeVerifyRunOptions,
 		phaseIndex,
+		previewSpecSource,
 		previewIntentWitnesses,
 		projectTemplates,
 		providerCards,
@@ -469,6 +470,7 @@
 						];
 	$: agentHandoffReview = buildAgentHandoffReview(selected, selectedAgentId, latestAgentHandoff);
 	$: draftWitnessPreview = previewIntentWitnesses(promptText, inputMode);
+	$: specSourcePreview = inputMode === 'spec' ? previewSpecSource(promptText) : null;
 	$: canApproveSpec =
 		approvalState !== 'changes' && (selected?.phase === 'intent_ready' || selected?.phase === 'spec_draft');
 	$: canRequestChanges =
@@ -1890,6 +1892,23 @@
 								<p>Write or speak desired behavior, forbidden behavior, policy requirements, or incident evidence.</p>
 							{/if}
 						</div>
+						{#if specSourcePreview}
+							<div class={`spec-source-preview ${specSourcePreview.state}`} aria-label="Spec source review">
+								<div class="draft-witness-head">
+									<strong>Spec Source</strong>
+									<span>{specSourcePreview.state}</span>
+								</div>
+								<div>
+									<span>Module</span>
+									<code>{specSourcePreview.moduleId}</code>
+								</div>
+								<div>
+									<span>Entry</span>
+									<code>{specSourcePreview.entry}</code>
+								</div>
+								<small>{specSourcePreview.detail}</small>
+							</div>
+						{/if}
 						<textarea bind:value={promptText} aria-label="Initial plan"></textarea>
 						<div class="revision-lane">
 							<label for="revision">Revision</label>

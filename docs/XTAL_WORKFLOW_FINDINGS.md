@@ -793,3 +793,14 @@ This document records friction found while implementing the Studio web surface.
    before execution. Studio now renders the handoff environment contract
    directly in the Agents room, including session id, agent id, handoff path,
    allowed verbs, MCP tools, write roots, approval mode, and event schema.
+
+74. Existing specs need source review before plan polish.
+
+   Spec-kit's SDD workflow keeps product intent, clarification, technical
+   planning, tasks, and implementation as separate reviewable steps. Studio
+   already accepted a pasted `x07.x07spec` as an intent source, but the parsed
+   module and entry were only visible after polish. That made the first review
+   weaker than the written-plan path. Studio now previews the pasted spec's
+   parse state, module, entry, and validation detail before polish, so the user
+   can catch malformed or wrong-target specs before they become an approval
+   packet.
