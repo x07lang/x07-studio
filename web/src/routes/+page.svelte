@@ -20,6 +20,7 @@
 		buildPlatformBridge,
 		buildProviderProbeGates,
 		buildProofCacheLedger,
+		buildVerifyEvidenceBoard,
 		buildVerifyCommandPreview,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
@@ -295,6 +296,12 @@
 		inputLenBytes: verifyInputLenBytes
 	});
 	$: verifyCommandPreview = buildVerifyCommandPreview(verifyRunOptions);
+	$: verifyEvidenceBoard = buildVerifyEvidenceBoard(
+		latestVerifyOp,
+		selected,
+		selectedProjectTemplate,
+		verifyRunOptions
+	);
 	$: proofCacheLedger = buildProofCacheLedger(
 		selected,
 		selectedProjectTemplate,
@@ -1952,6 +1959,62 @@
 						</label>
 					</div>
 					<code>{verifyCommandPreview}</code>
+				</div>
+				<div class="verify-evidence-board" aria-label="Verify evidence board">
+					<div class="verify-evidence-head">
+						<div>
+							<span>Entry status grid</span>
+							<strong>{verifyEvidenceBoard.outcome}</strong>
+						</div>
+						<code>{verifyEvidenceBoard.world} / {verifyEvidenceBoard.proofPolicy} / {verifyEvidenceBoard.bounds}</code>
+					</div>
+					<div class="verify-evidence-summary">
+						<div>
+							<span>Prechecks</span>
+							<strong>{verifyEvidenceBoard.prechecks.map((item) => `${item.label}:${item.state}`).join(' / ')}</strong>
+						</div>
+						<div>
+							<span>Coverage</span>
+							<strong>{verifyEvidenceBoard.coverageOutcome}</strong>
+						</div>
+						<div>
+							<span>Proof</span>
+							<strong>{verifyEvidenceBoard.proveOutcome}</strong>
+						</div>
+						<div>
+							<span>Generated tests</span>
+							<strong>{verifyEvidenceBoard.tests.outcome} · {verifyEvidenceBoard.tests.passed} passed · {verifyEvidenceBoard.tests.failed} failed</strong>
+							<code>{verifyEvidenceBoard.generatedTestManifest}</code>
+						</div>
+						<div>
+							<span>Diagnostics</span>
+							<strong>{verifyEvidenceBoard.diagnostics.errors} errors · {verifyEvidenceBoard.diagnostics.warnings} warnings</strong>
+							<small>{verifyEvidenceBoard.diagnostics.topCodes.join(', ') || verifyEvidenceBoard.diagnostics.report}</small>
+						</div>
+					</div>
+					<div class="verify-entry-grid">
+						{#each verifyEvidenceBoard.entries as entry}
+							<div class="verify-entry-row" aria-label={`Verify entry ${entry.entry}`}>
+								<div>
+									<span>{entry.opId}</span>
+									<strong>{entry.entry}</strong>
+									<code>{entry.specPath}</code>
+								</div>
+								<div class={`verify-pill ${entry.coverage}`}>coverage {entry.coverage}</div>
+								<div class={`verify-pill ${entry.prove}`}>proof {entry.proveRaw}</div>
+								<small>{entry.diagnostic || entry.proveReport || entry.coverageReport}</small>
+							</div>
+						{/each}
+					</div>
+					<div class="verify-artifact-strip" aria-label="Verify artifacts">
+						{#each verifyEvidenceBoard.artifacts.slice(0, 5) as artifact}
+							<div>
+								<span>{artifact.label}</span>
+								<code>{artifact.path}</code>
+								<small>{artifact.schemaVersion || artifact.kind}</small>
+							</div>
+						{/each}
+					</div>
 				</div>
 				<div class="proof-cache-ledger" aria-label="Proof cache readiness">
 					<div class="proof-cache-head">

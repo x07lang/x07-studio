@@ -632,3 +632,16 @@ This document records friction found while implementing the Studio web surface.
    `x07 xtal verify` flags in the operation record. The browser workflow test
    proves the command preview, proof-cache key, and operation log all reflect a
    strict proof run with explicit bounds.
+
+59. Verify summaries need a first-class evidence projection.
+
+   The x07 XTAL docs say `target/xtal/verify/summary.json` records effective
+   settings, prechecks, per-entry coverage/prove reports, generated-test
+   results, diagnostics, and nested artifacts. Studio already recorded the
+   report JSON, but the Verify room still forced humans to inspect raw operation
+   records to answer whether an entry was covered, proven, warned, or only
+   tested. Studio now renders a Verify evidence board from
+   `x07.xtal.verify_summary@0.1.0`, with precheck, coverage, proof, generated
+   test, diagnostic, entry, and artifact rows. Demo mode now emits a
+   representative summary, so browser tests verify the evidence projection even
+   when the local daemon is intentionally unavailable.

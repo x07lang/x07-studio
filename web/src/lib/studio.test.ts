@@ -18,6 +18,7 @@ import {
 	buildPlatformBridge,
 	buildProviderProbeGates,
 	buildProofCacheLedger,
+	buildVerifyEvidenceBoard,
 	buildVerifyCommandPreview,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
@@ -424,6 +425,106 @@ describe('x07 Studio XTAL web model', () => {
 		const ledger = buildProofCacheLedger(demoSession(), projectTemplates[0], null, options);
 		expect(ledger.find((item) => item.label === 'Cache key preview')?.value).toContain('strict');
 		expect(ledger.find((item) => item.label === 'Proof policy')?.detail).toContain('OS-capable worlds');
+	});
+
+	it('builds verify evidence from xtal verify summary reports', () => {
+		let session = demoSession();
+		session = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, 'Create a sorter.'));
+		session = appendDemoOp(session, 'xtal.verify', 'succeeded', undefined, undefined, {
+			schema_version: 'x07.xtal.verify_summary@0.1.0',
+			settings: {
+				world: 'solve-pure',
+				proof_policy: 'balanced',
+				verify_bounds: { unwind: 2, max_bytes_len: 12 }
+			},
+			results: {
+				outcome: 'warn',
+				prechecks: { spec: 'pass', generation: 'pass', impl: 'pass' },
+				verification: {
+					coverage_outcome: 'pass',
+					prove_outcome: 'warn',
+					counts: {
+						entries_total: 1,
+						coverage_fail: 0,
+						prove_proven: 0,
+						prove_counterexample: 0,
+						prove_inconclusive: 0,
+						prove_unsupported: 1,
+						prove_timeout: 0,
+						prove_tool_missing: 0
+					}
+				},
+				tests: {
+					outcome: 'pass',
+					passed: 6,
+					failed: 0,
+					skipped: 0,
+					report: {
+						kind: 'x07_tests_report',
+						path: 'target/xtal/tests.report.json',
+						schema_version: 'x07.x07test@0.4.0'
+					}
+				},
+				diagnostics: {
+					outcome: 'warn',
+					error_count: 0,
+					warning_count: 1,
+					top_codes: [{ code: 'WXTAL_VERIFY_PROVE_UNSUPPORTED', count: 1 }],
+					report: {
+						kind: 'xtal_diag_report',
+						path: 'target/xtal/xtal.verify.diag.json',
+						schema_version: 'x07.x07diag@0.1.0'
+					}
+				}
+			},
+			artifacts: {
+				verify_dir: 'target/xtal/verify',
+				reports: [
+					{
+						kind: 'x07_verify_coverage_report',
+						path: 'target/xtal/verify/coverage/toy/sorter/sort_u8_asc.report.json',
+						schema_version: 'x07.verify.report@0.8.0'
+					}
+				]
+			},
+			entries: [
+				{
+					entry: 'toy.sorter.sort_u8_asc',
+					op_id: 'op.sort_u8_asc.v1',
+					spec_path: 'spec/toy.sorter.x07spec.json',
+					coverage: {
+						outcome: 'pass',
+						report: {
+							kind: 'x07_verify_coverage_report',
+							path: 'target/xtal/verify/coverage/toy/sorter/sort_u8_asc.report.json',
+							schema_version: 'x07.verify.report@0.8.0'
+						}
+					},
+					prove: {
+						raw: 'unsupported',
+						policy_outcome: 'warn',
+						report: {
+							kind: 'x07_verify_prove_report',
+							path: 'target/xtal/verify/prove/toy/sorter/sort_u8_asc.report.json',
+							schema_version: 'x07.verify.report@0.8.0'
+						},
+						first_diagnostic: {
+							code: 'WXTAL_VERIFY_PROVE_UNSUPPORTED',
+							message: 'proof unsupported'
+						}
+					}
+				}
+			]
+		});
+
+		const board = buildVerifyEvidenceBoard(session.op_log[0], session, projectTemplates[0]);
+		expect(board.source).toBe('report');
+		expect(board.outcome).toBe('warn');
+		expect(board.entries[0].entry).toBe('toy.sorter.sort_u8_asc');
+		expect(board.entries[0].proveRaw).toBe('unsupported');
+		expect(board.tests.passed).toBe('6');
+		expect(board.diagnostics.topCodes).toContain('WXTAL_VERIFY_PROVE_UNSUPPORTED x1');
+		expect(board.artifacts.some((artifact) => artifact.path.includes('coverage'))).toBe(true);
 	});
 
 	it('models visible canonical operation records', () => {

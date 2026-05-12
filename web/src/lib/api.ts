@@ -7,6 +7,7 @@ import {
 	demoBindings,
 	demoHealth,
 	demoSession,
+	normalizeVerifyRunOptions,
 	reduceDemoEvent,
 	verifyRunVars,
 	type AgentApprovalResponse,
@@ -232,7 +233,9 @@ export class StudioApi {
 			session,
 			binding_id,
 			failed ? 'failed' : 'succeeded',
-			binding_id === 'xtal.verify' ? buildVerifyCommandPreview(verifyOptions).split(' ') : undefined
+			binding_id === 'xtal.verify' ? buildVerifyCommandPreview(verifyOptions).split(' ') : undefined,
+			undefined,
+			binding_id === 'xtal.verify' ? demoVerifySummary(session, verifyOptions) : undefined
 		);
 		this.replaceDemo(next);
 		return next;
@@ -317,7 +320,9 @@ export class StudioApi {
 				current,
 				bindingId,
 				'succeeded',
-				bindingId === 'xtal.verify' ? buildVerifyCommandPreview(verifyOptions).split(' ') : undefined
+				bindingId === 'xtal.verify' ? buildVerifyCommandPreview(verifyOptions).split(' ') : undefined,
+				undefined,
+				bindingId === 'xtal.verify' ? demoVerifySummary(current, verifyOptions) : undefined
 			);
 		}
 		if (current.phase === 'realization_proposed') {
@@ -526,6 +531,127 @@ function bindingVars(
 	}
 	if (bindingId === 'xtal.verify') return { ...common, ...verifyRunVars(verifyOptions) };
 	return common;
+}
+
+function demoVerifySummary(session: SessionSnapshot, verifyOptions?: Partial<VerifyRunOptions>) {
+	const normalized = normalizeVerifyRunOptions(verifyOptions);
+	const target = session.intent?.targets[0];
+	const moduleId = target?.module_id || 'toy.sorter';
+	const entry = target?.entry || 'sort_u8_asc';
+	const fullEntry = `${moduleId}.${entry}`;
+	const localPath = fullEntry.replaceAll('.', '/');
+	const coveragePath = `target/xtal/verify/coverage/${localPath}.report.json`;
+	const provePath = `target/xtal/verify/prove/${localPath}.report.json`;
+	const testsPath = 'target/xtal/tests.report.json';
+	const diagnosticsPath = 'target/xtal/xtal.verify.diag.json';
+	const bounds: Record<string, number> = {};
+	if (normalized.unwind) bounds.unwind = Number(normalized.unwind);
+	if (normalized.maxBytesLen) bounds.max_bytes_len = Number(normalized.maxBytesLen);
+	if (normalized.inputLenBytes) bounds.input_len_bytes = Number(normalized.inputLenBytes);
+	return {
+		schema_version: 'x07.xtal.verify_summary@0.1.0',
+		tool: {
+			name: 'x07',
+			version: 'demo',
+			argv: buildVerifyCommandPreview(normalized).split(' ')
+		},
+		project: {
+			root: '.',
+			manifest_path: 'x07.json',
+			manifest_sha256: demoSha('manifest')
+		},
+		settings: {
+			world: normalized.allowOsWorld ? 'run-os-approved' : 'solve-pure',
+			proof_policy: normalized.proofPolicy,
+			verify_bounds: bounds
+		},
+		inputs: {
+			digests: {
+				spec_tree_sha256: demoSha('spec'),
+				impl_tree_sha256: demoSha('impl'),
+				arch_tree_sha256: demoSha('arch'),
+				gen_tree_sha256: demoSha('gen')
+			},
+			spec_modules: [{ path: `spec/${moduleId}.x07spec.json`, sha256: demoSha('spec-module') }],
+			generated_artifacts: [{ path: 'gen/xtal/tests.json', sha256: demoSha('generated-tests') }],
+			impl_modules: [{ path: `src/${moduleId.replaceAll('.', '/')}.x07.json`, sha256: demoSha('impl-module') }]
+		},
+		results: {
+			outcome: 'warn',
+			prechecks: { spec: 'pass', generation: 'pass', impl: 'pass' },
+			verification: {
+				coverage_outcome: 'pass',
+				prove_outcome: 'warn',
+				counts: {
+					entries_total: 1,
+					coverage_fail: 0,
+					prove_proven: 0,
+					prove_counterexample: 0,
+					prove_inconclusive: 0,
+					prove_unsupported: 1,
+					prove_timeout: 0,
+					prove_error: 0,
+					prove_tool_missing: 0
+				}
+			},
+			tests: {
+				outcome: 'pass',
+				report: demoReportRef('x07_tests_report', testsPath, 'x07.x07test@0.4.0'),
+				passed: 6,
+				failed: 0,
+				skipped: 0
+			},
+			diagnostics: {
+				outcome: 'warn',
+				report: demoReportRef('xtal_diag_report', diagnosticsPath, 'x07.x07diag@0.1.0'),
+				error_count: 0,
+				warning_count: 1,
+				top_codes: [{ code: 'WXTAL_VERIFY_PROVE_UNSUPPORTED', count: 1 }]
+			}
+		},
+		artifacts: {
+			verify_dir: 'target/xtal/verify',
+			reports: [
+				demoReportRef('x07_verify_coverage_report', coveragePath, 'x07.verify.report@0.8.0'),
+				demoReportRef('x07_verify_prove_report', provePath, 'x07.verify.report@0.8.0'),
+				demoReportRef('x07_tests_report', testsPath, 'x07.x07test@0.4.0')
+			]
+		},
+		entries: [
+			{
+				entry: fullEntry,
+				op_id: `op.${entry}.v1`,
+				spec_path: `spec/${moduleId}.x07spec.json`,
+				coverage: {
+					outcome: 'pass',
+					report: demoReportRef('x07_verify_coverage_report', coveragePath, 'x07.verify.report@0.8.0')
+				},
+				prove: {
+					raw: 'unsupported',
+					policy_outcome: 'warn',
+					report: demoReportRef('x07_verify_prove_report', provePath, 'x07.verify.report@0.8.0'),
+					first_diagnostic: {
+						code: 'WXTAL_VERIFY_PROVE_UNSUPPORTED',
+						message: 'Demo projection marks proof unsupported so warning evidence stays visible.'
+					}
+				}
+			}
+		]
+	};
+}
+
+function demoReportRef(kind: string, path: string, schemaVersion: string) {
+	return {
+		kind,
+		path,
+		schema_version: schemaVersion,
+		sha256: demoSha(path)
+	};
+}
+
+function demoSha(seed: string) {
+	const alphabet = '0123456789abcdef';
+	return Array.from({ length: 64 }, (_, index) => alphabet[(seed.length + index) % alphabet.length]).join('');
 }
 
 function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {

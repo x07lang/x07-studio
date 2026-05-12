@@ -921,6 +921,108 @@ button:focus-visible {
 	font-size: 11px;
 }
 
+.verify-evidence-board {
+	display: grid;
+	gap: 10px;
+	margin: 10px 0;
+	border: 1px solid rgba(114, 228, 180, 0.18);
+	border-radius: var(--radius);
+	background: rgba(114, 228, 180, 0.035);
+	padding: 10px;
+}
+
+.verify-evidence-head {
+	display: flex;
+	align-items: start;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.verify-evidence-head span,
+.verify-evidence-summary span,
+.verify-entry-row span,
+.verify-entry-row small,
+.verify-artifact-strip span,
+.verify-artifact-strip small {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.verify-evidence-head code,
+.verify-evidence-summary code,
+.verify-entry-row code,
+.verify-artifact-strip code {
+	overflow-wrap: anywhere;
+	color: var(--cyan);
+	font-size: 11px;
+}
+
+.verify-evidence-summary {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.verify-evidence-summary > div,
+.verify-entry-row,
+.verify-artifact-strip > div {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.16);
+	padding: 8px;
+}
+
+.verify-entry-grid {
+	display: grid;
+	gap: 8px;
+}
+
+.verify-entry-row {
+	grid-template-columns: minmax(0, 1.4fr) auto auto minmax(0, 0.9fr);
+	align-items: center;
+}
+
+.verify-pill {
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 5px 8px;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.verify-pill.pass {
+	border-color: rgba(114, 228, 180, 0.38);
+	color: #a4f2c9;
+	background: rgba(114, 228, 180, 0.08);
+}
+
+.verify-pill.warn {
+	border-color: rgba(255, 195, 91, 0.4);
+	color: #ffe0a0;
+	background: rgba(255, 195, 91, 0.08);
+}
+
+.verify-pill.fail {
+	border-color: rgba(243, 111, 141, 0.42);
+	color: #ffb8c8;
+	background: rgba(243, 111, 141, 0.08);
+}
+
+.verify-pill.skip,
+.verify-pill.pending {
+	color: var(--muted);
+}
+
+.verify-artifact-strip {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
 .proof-cache-ledger {
 	display: grid;
 	gap: 9px;
@@ -3394,6 +3496,16 @@ textarea {
 	}
 
 	.verify-bounds {
+		grid-template-columns: 1fr;
+	}
+
+	.verify-evidence-head {
+		flex-direction: column;
+	}
+
+	.verify-evidence-summary,
+	.verify-entry-row,
+	.verify-artifact-strip {
 		grid-template-columns: 1fr;
 	}
 

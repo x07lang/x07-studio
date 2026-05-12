@@ -11,6 +11,7 @@
 - prompt-to-artifact audit that maps user input, approval, scaffold, specs/tests, implementation, verification, visible agent work, and trust/platform evidence to concrete operations and artifacts
 - browser proof-cache readiness ledger that previews cache keys and names the spec, implementation, proof-policy, verify artifact, and certification dependencies
 - browser XTAL verify controls for proof policy, OS-world override, and proof bounds that render into validated `x07 xtal verify` flags
+- browser Verify evidence board that projects `x07.xtal.verify_summary@0.1.0` into precheck, coverage, proof, generated-test, diagnostic, entry, and artifact rows
 - browser focused/detail modes that keep the current XTAL room, visible agent worklog, and canonical command lane in the first workflow view while preserving the full audit surface behind an explicit Details toggle
 - browser graph overlay modes for Lineage, World Map, Trust Border, and Budget Heatmap on the XTAL graph panel
 - x07 Platform bridge that traces app packaging, provenance, deploy planning, local x07lp delivery, SLO/budget checks, and runtime feedback to canonical operation evidence

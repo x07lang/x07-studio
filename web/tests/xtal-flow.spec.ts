@@ -198,6 +198,10 @@ test('semantic patch review explains implementation sync changes', async ({ page
 	await expect(page.getByLabel('Proof cache readiness')).toContainText('xtal-proof');
 	await expect(page.getByLabel('Proof cache readiness')).toContainText('Verify artifact');
 	await expect(page.getByLabel('Proof cache readiness')).toContainText('compiler-backed proof cache is not persisted yet');
+	await expect(page.getByLabel('Verify evidence board')).toContainText('Entry status grid');
+	await expect(page.getByLabel('Verify evidence board')).toContainText('Generated tests');
+	await expect(page.getByLabel('Verify evidence board')).toContainText('toy.sorter.sort_u8_asc');
+	await expect(page.getByLabel('Verify evidence board')).toContainText('WXTAL_VERIFY_PROVE_UNSUPPORTED');
 	await expect(page.getByLabel('Operation log')).toContainText('--proof-policy strict');
 	await expect(page.getByLabel('Operation log')).toContainText('--unwind 2');
 	await expect(inspectOperation(page, 'impl.sync.write')).toBeVisible();

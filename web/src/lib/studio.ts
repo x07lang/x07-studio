@@ -293,6 +293,58 @@ export interface ProofCacheItem {
 	opId?: string | null;
 }
 
+export type VerifyEvidenceState = 'pass' | 'warn' | 'fail' | 'skip' | 'pending';
+
+export interface VerifyEvidenceEntry {
+	entry: string;
+	opId: string;
+	specPath: string;
+	coverage: VerifyEvidenceState;
+	prove: VerifyEvidenceState;
+	proveRaw: string;
+	coverageReport: string;
+	proveReport: string;
+	proofObject: string;
+	diagnostic: string;
+}
+
+export interface VerifyEvidenceArtifact {
+	label: string;
+	kind: string;
+	path: string;
+	schemaVersion: string;
+}
+
+export interface VerifyEvidenceBoard {
+	source: 'report' | 'operation' | 'pending';
+	outcome: VerifyEvidenceState;
+	world: string;
+	proofPolicy: VerifyProofPolicy | string;
+	bounds: string;
+	prechecks: Array<{ label: string; state: VerifyEvidenceState }>;
+	coverageOutcome: VerifyEvidenceState;
+	proveOutcome: VerifyEvidenceState;
+	tests: {
+		outcome: VerifyEvidenceState;
+		passed: string;
+		failed: string;
+		skipped: string;
+		report: string;
+	};
+	diagnostics: {
+		outcome: VerifyEvidenceState;
+		errors: string;
+		warnings: string;
+		topCodes: string[];
+		report: string;
+	};
+	counts: Array<{ label: string; value: string }>;
+	entries: VerifyEvidenceEntry[];
+	artifacts: VerifyEvidenceArtifact[];
+	generatedTestManifest: string;
+	verifyDir: string;
+}
+
 export type VerifyProofPolicy = 'balanced' | 'strict';
 
 export interface VerifyRunOptions {
@@ -1537,12 +1589,287 @@ export function buildVerifyCommandPreview(options?: Partial<VerifyRunOptions>): 
 	return args.join(' ');
 }
 
+export function buildVerifyEvidenceBoard(
+	op: OpRecord | null | undefined,
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate,
+	options?: Partial<VerifyRunOptions>
+): VerifyEvidenceBoard {
+	const report = verifySummaryFromValue(op?.report_json);
+	if (report) return verifyEvidenceBoardFromReport(report, template);
+	return verifyEvidenceBoardFromOperation(op ?? null, session, template, options);
+}
+
 function normalizePositiveIntegerText(value: string | number | undefined): string {
 	const trimmed = value === undefined ? '' : String(value).trim();
 	if (!trimmed) return '';
 	const parsed = Number.parseInt(trimmed, 10);
 	if (!Number.isFinite(parsed) || parsed <= 0) return '';
 	return String(parsed);
+}
+
+function verifySummaryFromValue(value: unknown): Record<string, unknown> | null {
+	const report = asPlainRecord(value);
+	if (!report) return null;
+	if (report.schema_version === 'x07.xtal.verify_summary@0.1.0') return report;
+	const result = asPlainRecord(report.result);
+	const stdoutJson = asPlainRecord(result?.stdout_json);
+	if (stdoutJson?.schema_version === 'x07.xtal.verify_summary@0.1.0') return stdoutJson;
+	const artifactPreview = asPlainRecord(report.artifact_preview);
+	const previewJson = asPlainRecord(artifactPreview?.json);
+	return previewJson?.schema_version === 'x07.xtal.verify_summary@0.1.0' ? previewJson : null;
+}
+
+function verifyEvidenceBoardFromReport(
+	report: Record<string, unknown>,
+	template: ProjectTemplate
+): VerifyEvidenceBoard {
+	const settings = asPlainRecord(report.settings);
+	const results = asPlainRecord(report.results);
+	const prechecks = asPlainRecord(results?.prechecks);
+	const verification = asPlainRecord(results?.verification);
+	const counts = asPlainRecord(verification?.counts);
+	const tests = asPlainRecord(results?.tests);
+	const diagnostics = asPlainRecord(results?.diagnostics);
+	const artifacts = asPlainRecord(report.artifacts);
+	const verifyDir = stringValue(artifacts?.verify_dir, 'target/xtal/verify');
+	const artifactReports = Array.isArray(artifacts?.reports) ? artifacts.reports : [];
+	const entries = Array.isArray(report.entries) ? report.entries : [];
+	const bounds = asPlainRecord(settings?.verify_bounds);
+	const proofBudget = asPlainRecord(settings?.proof_budget);
+	const topCodes = Array.isArray(diagnostics?.top_codes)
+		? diagnostics.top_codes
+				.map((item) => asPlainRecord(item))
+				.filter((item): item is Record<string, unknown> => Boolean(item))
+				.map((item) => `${stringValue(item.code, 'diagnostic')} x${stringValue(item.count, '1')}`)
+		: [];
+	const artifactsList = artifactReports
+		.map((item) => reportRef(item))
+		.filter((item): item is VerifyEvidenceArtifact => Boolean(item));
+	const testReport = reportRef(tests?.report);
+	if (testReport && !artifactsList.some((item) => item.path === testReport.path)) {
+		artifactsList.unshift(testReport);
+	}
+
+	return {
+		source: 'report',
+		outcome: outcomeState(results?.outcome),
+		world: stringValue(settings?.world, 'solve-pure'),
+		proofPolicy: stringValue(settings?.proof_policy, 'balanced'),
+		bounds: verifyBoundsLabel(bounds, proofBudget),
+		prechecks: [
+			{ label: 'Spec', state: outcomeState(prechecks?.spec) },
+			{ label: 'Generation', state: outcomeState(prechecks?.generation) },
+			{ label: 'Implementation', state: outcomeState(prechecks?.impl) }
+		],
+		coverageOutcome: outcomeState(verification?.coverage_outcome),
+		proveOutcome: outcomeState(verification?.prove_outcome),
+		tests: {
+			outcome: outcomeState(tests?.outcome),
+			passed: stringValue(tests?.passed, '0'),
+			failed: stringValue(tests?.failed, '0'),
+			skipped: stringValue(tests?.skipped, '0'),
+			report: testReport?.path ?? 'target/xtal/tests.report.json'
+		},
+		diagnostics: {
+			outcome: outcomeState(diagnostics?.outcome),
+			errors: stringValue(diagnostics?.error_count, '0'),
+			warnings: stringValue(diagnostics?.warning_count, '0'),
+			topCodes,
+			report: reportRef(diagnostics?.report)?.path ?? 'target/xtal/xtal.verify.diag.json'
+		},
+		counts: verifyCounts(counts),
+		entries: entries.length
+			? entries
+					.map((entry) => verifyEntryFromReport(entry))
+					.filter((entry): entry is VerifyEvidenceEntry => Boolean(entry))
+			: [pendingVerifyEntry(template, 'report has no entry rows')],
+		artifacts: artifactsList,
+		generatedTestManifest: 'gen/xtal/tests.json',
+		verifyDir
+	};
+}
+
+function verifyEvidenceBoardFromOperation(
+	op: OpRecord | null,
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate,
+	options?: Partial<VerifyRunOptions>
+): VerifyEvidenceBoard {
+	const normalized = normalizeVerifyRunOptions(options);
+	const target = session?.intent?.targets[0];
+	const entry = target?.entry ? `${target.module_id}.${target.entry}` : template.title;
+	const status = op ? opStatusToVerifyState(op.status) : 'pending';
+	const artifactPaths = op?.artifacts.length ? op.artifacts : ['target/xtal/verify/summary.json'];
+	return {
+		source: op ? 'operation' : 'pending',
+		outcome: status,
+		world: normalized.allowOsWorld ? 'OS-capable world allowed' : 'solve-* required',
+		proofPolicy: normalized.proofPolicy,
+		bounds: verifyBoundsLabel(
+			{
+				unwind: normalized.unwind,
+				max_bytes_len: normalized.maxBytesLen,
+				input_len_bytes: normalized.inputLenBytes
+			},
+			null
+		),
+		prechecks: [
+			{ label: 'Spec', state: status },
+			{ label: 'Generation', state: status },
+			{ label: 'Implementation', state: status }
+		],
+		coverageOutcome: status,
+		proveOutcome: status,
+		tests: {
+			outcome: status,
+			passed: status === 'pass' ? 'demo' : '0',
+			failed: status === 'fail' ? '1' : '0',
+			skipped: '0',
+			report: 'target/xtal/tests.report.json'
+		},
+		diagnostics: {
+			outcome: status,
+			errors: status === 'fail' ? '1' : '0',
+			warnings: '0',
+			topCodes: [],
+			report: 'target/xtal/xtal.verify.diag.json'
+		},
+		counts: [
+			{ label: 'entries', value: target ? '1' : '0' },
+			{ label: 'proof status', value: status }
+		],
+		entries: [
+			{
+				entry,
+				opId: target?.module_id ?? 'pending',
+				specPath: template.artifacts[0] ?? 'spec/*.x07spec.json',
+				coverage: status,
+				prove: status,
+				proveRaw: op ? 'report pending' : 'not run',
+				coverageReport: 'target/xtal/verify/coverage/',
+				proveReport: 'target/xtal/verify/prove/',
+				proofObject: '',
+				diagnostic: op ? 'operation has no parsed verify summary yet' : 'run xtal.verify to populate entry evidence'
+			}
+		],
+		artifacts: artifactPaths.map((path) => ({
+			label: path.endsWith('summary.json') ? 'Verify summary' : 'Verify artifact',
+			kind: 'operation_artifact',
+			path,
+			schemaVersion: ''
+		})),
+		generatedTestManifest: 'gen/xtal/tests.json',
+		verifyDir: 'target/xtal/verify'
+	};
+}
+
+function verifyEntryFromReport(value: unknown): VerifyEvidenceEntry | null {
+	const entry = asPlainRecord(value);
+	if (!entry) return null;
+	const coverage = asPlainRecord(entry.coverage);
+	const prove = asPlainRecord(entry.prove);
+	const coverageReport = reportRef(coverage?.report);
+	const proveReport = reportRef(prove?.report);
+	const proofObject = reportRef(prove?.proof_object);
+	const diagnostic = asPlainRecord(prove?.first_diagnostic);
+	return {
+		entry: stringValue(entry.entry, 'entry'),
+		opId: stringValue(entry.op_id, 'operation'),
+		specPath: stringValue(entry.spec_path, 'spec/*.x07spec.json'),
+		coverage: outcomeState(coverage?.outcome),
+		prove: outcomeState(prove?.policy_outcome),
+		proveRaw: stringValue(prove?.raw, 'not reported'),
+		coverageReport: coverageReport?.path ?? '',
+		proveReport: proveReport?.path ?? '',
+		proofObject: proofObject?.path ?? '',
+		diagnostic: diagnostic
+			? `${stringValue(diagnostic.code, 'diagnostic')}: ${stringValue(diagnostic.message, '')}`
+			: ''
+	};
+}
+
+function reportRef(value: unknown): VerifyEvidenceArtifact | null {
+	const record = asPlainRecord(value);
+	if (!record) return null;
+	return {
+		label: reportKindLabel(stringValue(record.kind, 'report')),
+		kind: stringValue(record.kind, 'report'),
+		path: stringValue(record.path, ''),
+		schemaVersion: stringValue(record.schema_version, '')
+	};
+}
+
+function reportKindLabel(kind: string): string {
+	return kind
+		.split('_')
+		.filter(Boolean)
+		.map((part) => part[0]?.toUpperCase() + part.slice(1))
+		.join(' ');
+}
+
+function verifyCounts(counts: Record<string, unknown> | null): Array<{ label: string; value: string }> {
+	if (!counts) return [];
+	return [
+		['entries', 'entries_total'],
+		['coverage fail', 'coverage_fail'],
+		['proven', 'prove_proven'],
+		['counterexample', 'prove_counterexample'],
+		['inconclusive', 'prove_inconclusive'],
+		['unsupported', 'prove_unsupported'],
+		['timeout', 'prove_timeout'],
+		['tool missing', 'prove_tool_missing']
+	].map(([label, key]) => ({ label, value: stringValue(counts[key], '0') }));
+}
+
+function verifyBoundsLabel(
+	bounds: Record<string, unknown> | null,
+	proofBudget: Record<string, unknown> | null
+): string {
+	const items = [
+		['unwind', bounds?.unwind],
+		['max bytes', bounds?.max_bytes_len],
+		['input bytes', bounds?.input_len_bytes],
+		['z3 timeout', proofBudget?.z3_timeout_seconds],
+		['z3 memory', proofBudget?.z3_memory_mb]
+	]
+		.filter(([, value]) => value !== undefined && value !== null && value !== '')
+		.map(([label, value]) => `${label}: ${String(value)}`);
+	return items.length ? items.join(' / ') : 'default bounded verification';
+}
+
+function pendingVerifyEntry(template: ProjectTemplate, diagnostic: string): VerifyEvidenceEntry {
+	return {
+		entry: template.title,
+		opId: template.id,
+		specPath: template.artifacts[0] ?? 'spec/*.x07spec.json',
+		coverage: 'pending',
+		prove: 'pending',
+		proveRaw: 'not run',
+		coverageReport: 'target/xtal/verify/coverage/',
+		proveReport: 'target/xtal/verify/prove/',
+		proofObject: '',
+		diagnostic
+	};
+}
+
+function outcomeState(value: unknown): VerifyEvidenceState {
+	if (value === 'pass') return 'pass';
+	if (value === 'warn') return 'warn';
+	if (value === 'fail') return 'fail';
+	if (value === 'skip') return 'skip';
+	return 'pending';
+}
+
+function opStatusToVerifyState(status: OperationStatus): VerifyEvidenceState {
+	if (status === 'succeeded') return 'pass';
+	if (status === 'failed') return 'fail';
+	return 'pending';
+}
+
+function stringValue(value: unknown, fallback: string): string {
+	if (value === undefined || value === null || value === '') return fallback;
+	return String(value);
 }
 
 export function buildProofCacheLedger(
@@ -2417,7 +2744,8 @@ export function appendDemoOp(
 	bindingId: string,
 	status: OperationStatus,
 	command?: string[],
-	artifacts?: string[]
+	artifacts?: string[],
+	reportJson?: unknown
 ): SessionSnapshot {
 	const next = structuredClone(session) as SessionSnapshot;
 	next.op_log = [
@@ -2432,6 +2760,7 @@ export function appendDemoOp(
 			status,
 			exit_code: status === 'succeeded' ? 0 : status === 'failed' ? 1 : null,
 			artifacts: artifacts ?? demoArtifactsFor(bindingId),
+			report_json: reportJson,
 			notes: 'visible agent operation record'
 		}
 	];
