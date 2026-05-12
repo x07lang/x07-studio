@@ -161,7 +161,22 @@
 		font: inherit;
 		padding: 0.5rem 0.7rem;
 		border-radius: 0.4rem;
-		border: 1px solid var(--border, #d0d4dc);
+		border: 1px solid rgba(148, 163, 184, 0.35);
+		background: rgba(15, 18, 24, 0.65);
+		color: var(--text, #eef1f6);
+	}
+	.answer input::placeholder {
+		color: rgba(148, 163, 184, 0.6);
+	}
+	@media (prefers-color-scheme: light) {
+		.answer input {
+			background: #ffffff;
+			color: #1b1f2a;
+			border-color: #d0d4dc;
+		}
+		.answer input::placeholder {
+			color: #6b7280;
+		}
 	}
 	.submit {
 		font: inherit;

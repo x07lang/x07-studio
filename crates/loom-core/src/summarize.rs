@@ -39,12 +39,36 @@ impl PlainEnglishSummary {
     }
 }
 
+/// Doctrine strings that `intent_packet_from_raw` seeds on every intent so
+/// agents can see canonical x07/XTAL boundaries. They are useful to the
+/// agent but feel like jargon to a non-engineer reading the summary, so the
+/// summarizer hides them.
+const DOCTRINE_FRAGMENTS: &[&str] = &[
+    "canonical x07/xtal",
+    "canonical x07 xtal",
+    "spec-first xtal",
+    "spec-changing repairs",
+    "solve worlds deterministic",
+    "do not turn the prompt directly into unchecked source code",
+    "use the provided x07 spec as the canonical behavioral source",
+    "os worlds, network, budget, and trust widening require explicit review",
+    "rr fixtures, sandbox policy",
+    "agent may edit implementation paths after spec approval",
+    "agent may not widen specs or architecture policy without approval",
+    "generated outputs, arch contracts, and budget profiles require drift evidence",
+];
+
+fn is_doctrine(text: &str) -> bool {
+    let lowered = text.trim().to_ascii_lowercase();
+    DOCTRINE_FRAGMENTS
+        .iter()
+        .any(|fragment| lowered.contains(fragment))
+}
+
 fn headline_for(session: &SessionSnapshot, intent: &IntentPacket) -> String {
-    let target = intent
-        .targets
-        .first()
-        .map(|t| t.module_id.clone())
-        .unwrap_or_else(|| "your project".to_string());
+    let user_intent = first_desired_witness(intent)
+        .map(short_summary)
+        .or_else(|| short_summary_option(intent_source_text(intent)));
     let verb = match intent.task_type {
         TaskType::NewBehavior => "Built",
         TaskType::BugFix => "Fixed",
@@ -55,36 +79,85 @@ fn headline_for(session: &SessionSnapshot, intent: &IntentPacket) -> String {
     };
     let outcome = match session.phase {
         SessionPhase::TrustReview | SessionPhase::CertifyRunning | SessionPhase::Certified => {
-            "and verified"
+            "and verified."
         }
         SessionPhase::RepairEligible | SessionPhase::HumanInterventionRequired => {
-            "but it still needs your help"
+            "— but it still needs your help."
         }
-        _ => "and reviewed",
+        _ => "and reviewed.",
     };
-    format!("{verb} `{target}` {outcome}.")
+    match user_intent {
+        Some(text) => format!("{verb}: {text} {outcome}"),
+        None => format!("{verb} your project {outcome}"),
+    }
+}
+
+fn first_desired_witness(intent: &IntentPacket) -> Option<&str> {
+    intent
+        .witnesses
+        .iter()
+        .find(|witness| {
+            matches!(witness.kind, WitnessKind::DesiredBehavior)
+                && !is_doctrine(&witness.text)
+                && !witness.text.trim().is_empty()
+        })
+        .map(|witness| witness.text.as_str())
+}
+
+fn intent_source_text(intent: &IntentPacket) -> Option<&str> {
+    use loom_types::artifacts::IntentSource;
+    match &intent.source {
+        IntentSource::Text { raw } | IntentSource::Spec { raw } => Some(raw.as_str()),
+        IntentSource::Voice { transcript } => Some(transcript.as_str()),
+        IntentSource::Incident { path } => Some(path.as_str()),
+    }
+}
+
+fn short_summary_option(value: Option<&str>) -> Option<String> {
+    value.map(short_summary)
+}
+
+fn short_summary(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let first_sentence = trimmed
+        .split_terminator(['.', '!', '?', '\n'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim();
+    let mut out = first_sentence.to_string();
+    const MAX: usize = 120;
+    if out.chars().count() > MAX {
+        out = out.chars().take(MAX).collect::<String>();
+        out.push('…');
+    }
+    out
 }
 
 fn behavior_promises_for(intent: &IntentPacket) -> Vec<String> {
     let mut out = Vec::new();
     for witness in &intent.witnesses {
-        if witness.text.trim().is_empty() {
+        if !matches!(witness.kind, WitnessKind::DesiredBehavior) {
             continue;
         }
-        let prefix = match witness.kind {
-            WitnessKind::DesiredBehavior => "Does",
-            WitnessKind::ForbiddenBehavior => "Does not",
-            WitnessKind::PolicyRequirement => "Promises",
-            WitnessKind::IncidentReport => "Resolves",
-        };
-        out.push(format!("{prefix}: {}", witness.text.trim()));
+        let text = witness.text.trim();
+        if text.is_empty() || is_doctrine(text) {
+            continue;
+        }
+        out.push(text.to_string());
         if out.len() >= 5 {
             break;
         }
     }
     if out.is_empty() {
         for example in intent.examples.iter().take(3) {
-            out.push(example.clone());
+            let text = example.trim();
+            if text.is_empty() || is_doctrine(text) {
+                continue;
+            }
+            out.push(text.to_string());
         }
     }
     out
@@ -92,11 +165,23 @@ fn behavior_promises_for(intent: &IntentPacket) -> Vec<String> {
 
 fn boundaries_for(intent: &IntentPacket) -> Vec<String> {
     let mut out = Vec::new();
-    for constraint in &intent.constraints {
-        if constraint.trim().is_empty() {
+    for witness in &intent.witnesses {
+        if !matches!(
+            witness.kind,
+            WitnessKind::ForbiddenBehavior | WitnessKind::PolicyRequirement
+        ) {
             continue;
         }
-        out.push(constraint.clone());
+        let text = witness.text.trim();
+        if text.is_empty() || is_doctrine(text) {
+            continue;
+        }
+        let line = match witness.kind {
+            WitnessKind::ForbiddenBehavior => format!("Will not: {text}"),
+            WitnessKind::PolicyRequirement => format!("Promises: {text}"),
+            _ => text.to_string(),
+        };
+        out.push(line);
         if out.len() >= 4 {
             break;
         }
@@ -105,7 +190,11 @@ fn boundaries_for(intent: &IntentPacket) -> Vec<String> {
         if out.len() >= 6 {
             break;
         }
-        out.push(format!("Policy: {policy}"));
+        let text = policy.trim();
+        if text.is_empty() || is_doctrine(text) {
+            continue;
+        }
+        out.push(format!("Policy: {text}"));
     }
     out
 }

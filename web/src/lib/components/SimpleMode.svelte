@@ -290,9 +290,14 @@
 						All answered. Approve &amp; Build whenever you're ready.
 					</p>
 				{/if}
+			{:else if busy}
+				<p class="hint" data-testid="clarify-thinking">
+					Asking the agent if it needs anything to get started…
+				</p>
 			{:else}
 				<p class="hint" data-testid="clarify-empty">
-					No questions yet — I might just have enough to begin.
+					No questions came back — I have enough to begin. You can also ask
+					another round below.
 				</p>
 			{/if}
 			<div class="clarify-actions">

@@ -143,7 +143,11 @@ export function plainOpLabel(op: OpRecord): string {
 	if (op.op.startsWith('agent.event.') && op.op.endsWith('.clarify_done')) {
 		return 'No more questions';
 	}
-	if (op.op.startsWith('agent.clarify.')) return 'Agent thinking about questions';
+	if (op.op.startsWith('agent.clarify.')) {
+		if (op.status === 'failed') return 'Agent had nothing to ask';
+		if (op.status === 'running') return 'Asking the agent for questions';
+		return 'Agent finished asking';
+	}
 	if (op.op.startsWith('agent.run.')) return 'Agent working';
 	if (op.op === 'intent.formalize') return 'Polished what you want';
 	if (op.op === 'intent.clarify.answers') return 'Recorded your answers';

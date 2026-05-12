@@ -110,14 +110,32 @@
 		font-size: 1rem;
 		padding: 0.85rem 1rem;
 		border-radius: 0.5rem;
-		border: 1px solid var(--border, #d0d4dc);
-		background: var(--input, #fafbfd);
+		border: 1px solid rgba(148, 163, 184, 0.35);
+		background: rgba(15, 18, 24, 0.65);
+		color: var(--text, #eef1f6);
 		resize: vertical;
 		min-height: 7.5rem;
+	}
+	.prompt textarea::placeholder {
+		color: rgba(148, 163, 184, 0.6);
 	}
 	.prompt textarea:focus {
 		outline: 2px solid var(--accent, #4a6cf7);
 		outline-offset: 1px;
+		background: rgba(15, 18, 24, 0.85);
+	}
+	@media (prefers-color-scheme: light) {
+		.prompt textarea {
+			background: #fafbfd;
+			color: #1b1f2a;
+			border-color: #d0d4dc;
+		}
+		.prompt textarea::placeholder {
+			color: #6b7280;
+		}
+		.prompt textarea:focus {
+			background: #ffffff;
+		}
 	}
 	.actions {
 		display: flex;
