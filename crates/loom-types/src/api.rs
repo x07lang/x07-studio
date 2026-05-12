@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::artifacts::{
     AgentHandoff, AgentProfile, IntentPacket, OpRecord, ProviderProbeReport, ProviderProfile,
-    TaskType,
+    TaskType, WitnessKind,
 };
 use crate::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use crate::ops::SessionEvent;
@@ -108,6 +108,50 @@ pub struct RequestIntentRevisionRequest {
 pub struct RequestIntentRevisionResponse {
     pub op: OpRecord,
     pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentClarifyRequest {
+    pub agent_id: String,
+    #[serde(default)]
+    pub round_max: Option<u32>,
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentClarifyResponse {
+    pub handoff: AgentHandoff,
+    pub op: OpRecord,
+    pub session: crate::session::SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentAnswer {
+    pub question_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub witness_kind: Option<WitnessKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentAnswerRequest {
+    pub answers: Vec<IntentAnswer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentAnswerResponse {
+    pub intent: IntentPacket,
+    pub op: OpRecord,
+    pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunBuildRequest {
+    #[serde(default)]
+    pub vars: BTreeMap<String, String>,
+    #[serde(default)]
+    pub max_repair_rounds: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,4 +331,23 @@ pub struct AgentRunResponse {
 pub struct AgentApprovalResponse {
     pub op: OpRecord,
     pub session: SessionSnapshot,
+}
+
+/// Server-sent event payload emitted by `GET /v1/sessions/{id}/stream`.
+/// Browser clients dedupe `Op` events by `op.id`; `Snapshot` events replace
+/// the local session state for phase/room/intent/contract changes that don't
+/// fit a single op delta.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionStreamEvent {
+    Op {
+        op: Box<OpRecord>,
+    },
+    Snapshot {
+        session: Box<SessionSnapshot>,
+    },
+    /// Periodic keep-alive so proxies don't drop idle connections.
+    Heartbeat {
+        unix_ms: u64,
+    },
 }

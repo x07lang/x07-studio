@@ -92,6 +92,19 @@ impl FsStore {
         Ok(markdown_path)
     }
 
+    pub fn save_agent_handoff_with_suffix(
+        &self,
+        handoff: &AgentHandoff,
+        suffix: &str,
+    ) -> anyhow::Result<Utf8PathBuf> {
+        let stem = format!("{}-{}-{}", handoff.session_id, handoff.agent_id, suffix);
+        let json_path = self.handoffs_dir().join(format!("{stem}.json"));
+        let markdown_path = self.handoffs_dir().join(format!("{stem}.md"));
+        write_json(&json_path, handoff)?;
+        write_text(&markdown_path, &handoff.prompt)?;
+        Ok(markdown_path)
+    }
+
     pub fn save_provider_profile(&self, profile: &ProviderProfile) -> anyhow::Result<()> {
         let path = self.providers_dir().join(format!("{}.json", profile.id));
         write_json(&path, profile)

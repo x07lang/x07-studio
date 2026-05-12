@@ -39,6 +39,7 @@ pub enum SessionPhase {
 #[serde(rename_all = "snake_case")]
 pub enum AllowedVerb {
     IntentFormalize,
+    IntentClarify,
     IntentReview,
     SpecEdit,
     SpecCheck,

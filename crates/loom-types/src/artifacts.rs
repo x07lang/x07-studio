@@ -46,6 +46,19 @@ pub enum IntentSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClarificationTurn {
+    pub question_id: String,
+    pub question_text: String,
+    pub witness_kind: WitnessKind,
+    pub round: u32,
+    pub agent_id: String,
+    pub options: Vec<String>,
+    pub question_recorded_at: String,
+    pub answer_text: Option<String>,
+    pub answer_recorded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IntentPacket {
     pub schema_version: String,
     pub session_id: Uuid,
@@ -59,6 +72,8 @@ pub struct IntentPacket {
     pub assumptions: Vec<String>,
     pub witnesses: Vec<Witness>,
     pub source: IntentSource,
+    #[serde(default)]
+    pub clarification_history: Vec<ClarificationTurn>,
 }
 
 impl IntentPacket {
@@ -93,6 +108,7 @@ impl IntentPacket {
             source: IntentSource::Text {
                 raw: "Create a stable sorter for byte arrays. Equal items must keep their original order. Reject empty input.".to_string(),
             },
+            clarification_history: Vec::new(),
         }
     }
 }
@@ -216,6 +232,7 @@ impl AgentProfile {
             args: Vec::new(),
             allowed_verbs: vec![
                 "intent.formalize".to_string(),
+                "intent.clarify".to_string(),
                 "spec.check".to_string(),
                 "impl.sync.write".to_string(),
                 "xtal.verify".to_string(),
@@ -245,6 +262,7 @@ impl AgentProfile {
             command: "claude".to_string(),
             args: Vec::new(),
             allowed_verbs: vec![
+                "intent.clarify".to_string(),
                 "impl.sync.patchset".to_string(),
                 "impl.check".to_string(),
                 "xtal.certify".to_string(),

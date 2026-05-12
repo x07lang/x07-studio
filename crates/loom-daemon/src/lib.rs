@@ -5,10 +5,16 @@ use std::path::Path as StdPath;
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{http::StatusCode, Json, Router};
 use camino::{Utf8Path, Utf8PathBuf};
+use futures::stream::{Stream, StreamExt};
+use std::convert::Infallible;
+use std::pin::Pin;
 use tokio::sync::Mutex;
+use tokio_stream::wrappers::BroadcastStream;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
@@ -19,11 +25,12 @@ use loom_types::api::{
     AgentRunResponse, ArtifactPreviewRequest, ArtifactPreviewResponse, BindingDescriptor,
     CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest,
     DispatchEventRequest, DocPreviewRequest, DocPreviewResponse, FormalizeIntentRequest,
-    FormalizeIntentResponse, HealthResponse, McpCallResponse, ProbeProviderRequest,
+    FormalizeIntentResponse, HealthResponse, IntentAnswerRequest, IntentAnswerResponse,
+    IntentClarifyRequest, IntentClarifyResponse, McpCallResponse, ProbeProviderRequest,
     ProviderProbeResponse, RequestIntentRevisionRequest, RequestIntentRevisionResponse,
-    ResolveApprovalRequest, RunBindingRequest, RunXtalWorkflowRequest, RuntimeComponentState,
-    RuntimeComponentStatus, SaveAgentProfileRequest, SaveProviderProfileRequest, StudioDefaults,
-    WorkspaceRadarResponse,
+    ResolveApprovalRequest, RunBindingRequest, RunBuildRequest, RunXtalWorkflowRequest,
+    RuntimeComponentState, RuntimeComponentStatus, SaveAgentProfileRequest,
+    SaveProviderProfileRequest, StudioDefaults, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -41,6 +48,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/bindings", get(bindings))
         .route("/v1/sessions", get(list_sessions).post(create_session))
         .route("/v1/sessions/{session_id}", get(get_session))
+        .route("/v1/sessions/{session_id}/stream", get(stream_session))
         .route("/v1/sessions/{session_id}/events", post(dispatch_event))
         .route(
             "/v1/sessions/{session_id}/intent/formalize",
@@ -49,6 +57,14 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/v1/sessions/{session_id}/intent/revision",
             post(request_intent_revision),
+        )
+        .route(
+            "/v1/sessions/{session_id}/intent/clarify",
+            post(run_intent_clarify),
+        )
+        .route(
+            "/v1/sessions/{session_id}/intent/answer",
+            post(apply_intent_answer),
         )
         .route("/v1/sessions/{session_id}/bindings/run", post(run_binding))
         .route(
@@ -60,6 +76,7 @@ pub fn router(state: ApiState) -> Router {
             "/v1/sessions/{session_id}/xtal/run",
             post(run_xtal_workflow),
         )
+        .route("/v1/sessions/{session_id}/build", post(run_build_pipeline))
         .route("/v1/providers", get(list_providers).post(save_provider))
         .route("/v1/providers/probe", post(probe_provider))
         .route("/v1/agents", get(list_agents).post(save_agent))
@@ -341,6 +358,34 @@ async fn get_session(
     Ok(Json(snapshot))
 }
 
+async fn stream_session(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    let (bus, initial) = {
+        let kernel = state.kernel.lock().await;
+        let initial = kernel.get_session(session_id);
+        (kernel.event_bus(), initial)
+    };
+    let initial = initial.ok_or_else(not_found)?;
+    let initial_event = Event::default()
+        .json_data(loom_types::api::SessionStreamEvent::Snapshot {
+            session: Box::new(initial),
+        })
+        .map_err(internal_error)?;
+    let receiver = bus.subscribe(session_id);
+    let live = BroadcastStream::new(receiver).filter_map(|event| async move {
+        let event = event.ok()?;
+        Event::default().json_data(event).ok().map(Ok)
+    });
+    let stream =
+        futures::stream::once(async move { Ok::<_, Infallible>(initial_event) }).chain(live);
+    let boxed: Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> = Box::pin(stream);
+    Ok(Sse::new(boxed)
+        .keep_alive(KeepAlive::default())
+        .into_response())
+}
+
 async fn dispatch_event(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -386,6 +431,81 @@ async fn request_intent_revision(
         .request_intent_revision(session_id, &request.note)
         .map_err(conflict_error)?;
     Ok(Json(RequestIntentRevisionResponse { op, session }))
+}
+
+async fn run_intent_clarify(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<IntentClarifyRequest>,
+) -> Result<Json<IntentClarifyResponse>, (StatusCode, String)> {
+    let prepared = {
+        let mut kernel = state.kernel.lock().await;
+        kernel
+            .start_intent_clarify(session_id, &request.agent_id, request.timeout_seconds)
+            .map_err(conflict_error)?
+    };
+    let handoff = prepared.handoff.clone();
+    let run_op_id = prepared.op.id;
+    let (op, _intermediate_session) = if let Some(command) = prepared.command {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let execution = loom_core::WorkspaceKernel::execute_agent_command_streaming(command, tx);
+        tokio::pin!(execution);
+        let session = loop {
+            tokio::select! {
+                update = rx.recv() => {
+                    if let Some(update) = update {
+                        let mut kernel = state.kernel.lock().await;
+                        kernel
+                            .complete_agent_run(update)
+                            .map_err(internal_error)?;
+                    }
+                }
+                final_op = &mut execution => {
+                    let mut kernel = state.kernel.lock().await;
+                    let session = kernel
+                        .complete_agent_run(final_op.clone())
+                        .map_err(internal_error)?;
+                    break session;
+                }
+            }
+        };
+        let op = session
+            .op_log
+            .iter()
+            .find(|op| op.id == run_op_id)
+            .cloned()
+            .unwrap_or_else(|| prepared.op.clone());
+        (op, session)
+    } else {
+        (prepared.op.clone(), prepared.session.clone())
+    };
+    let session = {
+        let mut kernel = state.kernel.lock().await;
+        kernel
+            .ingest_clarify_questions(session_id, &request.agent_id, run_op_id)
+            .map_err(internal_error)?
+    };
+    Ok(Json(IntentClarifyResponse {
+        handoff,
+        op,
+        session,
+    }))
+}
+
+async fn apply_intent_answer(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<IntentAnswerRequest>,
+) -> Result<Json<IntentAnswerResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let (intent, op, session) = kernel
+        .apply_intent_answers(session_id, &request.answers)
+        .map_err(conflict_error)?;
+    Ok(Json(IntentAnswerResponse {
+        intent,
+        op,
+        session,
+    }))
 }
 
 async fn run_binding(
@@ -434,6 +554,24 @@ async fn run_xtal_workflow(
     let mut kernel = state.kernel.lock().await;
     let snapshot = kernel
         .run_xtal_workflow_with_vars(session_id, &vars)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(snapshot))
+}
+
+async fn run_build_pipeline(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    request: Option<Json<RunBuildRequest>>,
+) -> Result<Json<SessionSnapshot>, (StatusCode, String)> {
+    let body = request.map(|Json(body)| body).unwrap_or(RunBuildRequest {
+        vars: Default::default(),
+        max_repair_rounds: None,
+    });
+    let max_repair_rounds = body.max_repair_rounds.unwrap_or(3);
+    let mut kernel = state.kernel.lock().await;
+    let snapshot = kernel
+        .run_build_pipeline(session_id, &body.vars, max_repair_rounds)
         .await
         .map_err(internal_error)?;
     Ok(Json(snapshot))

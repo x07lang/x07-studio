@@ -195,6 +195,7 @@ pub fn allowed_verbs_for_phase(phase: &SessionPhase) -> Vec<AllowedVerb> {
         SessionPhase::IntentReady => {
             vec![
                 AllowedVerb::IntentFormalize,
+                AllowedVerb::IntentClarify,
                 AllowedVerb::IntentReview,
                 AllowedVerb::SpecEdit,
             ]

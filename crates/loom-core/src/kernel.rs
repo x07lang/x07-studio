@@ -2,12 +2,16 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use anyhow::{anyhow, bail, Context};
 use camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+use crate::event_bus::SessionEventBus;
+use loom_types::api::SessionStreamEvent;
 
 use loom_adapters::command_runner::{
     now_string, CommandExecution, CommandRunner, CommandStreamUpdate,
@@ -39,6 +43,7 @@ pub struct WorkspaceKernel {
     cli: CliAdapter,
     providers: ProviderProber,
     mcp_connections: HashMap<String, Box<dyn McpClient>>,
+    event_bus: Arc<SessionEventBus>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +65,10 @@ pub struct AgentCommandPlan {
     pub program: String,
     pub args: Vec<String>,
     pub timeout_seconds: u64,
+    /// `run` for a regular supervised handoff, `clarify` for an intent
+    /// clarification round. Feeds the OpRecord op name so the browser can
+    /// distinguish lanes without parsing prompt content.
+    pub op_kind: String,
 }
 
 impl WorkspaceKernel {
@@ -86,7 +95,42 @@ impl WorkspaceKernel {
             cli,
             providers: ProviderProber::default(),
             mcp_connections: HashMap::new(),
+            event_bus: Arc::new(SessionEventBus::new()),
         })
+    }
+
+    /// Shared handle to the per-session broadcast hub. The daemon's SSE
+    /// handler clones this Arc and subscribes per request without locking the
+    /// kernel for the lifetime of the stream.
+    pub fn event_bus(&self) -> Arc<SessionEventBus> {
+        self.event_bus.clone()
+    }
+
+    /// Wraps `self.model.dispatch` so the event bus stays in sync with every
+    /// state transition. AppendOp / UpdateOp are published as granular `Op`
+    /// events (browser dedupes by op.id); everything else publishes a full
+    /// `Snapshot` so phase / room / intent / contract changes are visible.
+    fn dispatch_with_publish(
+        &mut self,
+        session_id: Uuid,
+        event: SessionEvent,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let op_to_publish = match &event {
+            SessionEvent::AppendOp(op) | SessionEvent::UpdateOp(op) => Some(op.as_ref().clone()),
+            _ => None,
+        };
+        let snapshot = self
+            .model
+            .dispatch(session_id, event)
+            .map_err(|error| anyhow!(error.to_string()))?;
+        let stream_event = match op_to_publish {
+            Some(op) => SessionStreamEvent::Op { op: Box::new(op) },
+            None => SessionStreamEvent::Snapshot {
+                session: Box::new(snapshot.clone()),
+            },
+        };
+        self.event_bus.publish(session_id, stream_event);
+        Ok(snapshot)
     }
 
     pub fn workspace_root(&self) -> &Utf8Path {
@@ -395,10 +439,7 @@ impl WorkspaceKernel {
         session_id: Uuid,
         event: SessionEvent,
     ) -> anyhow::Result<SessionSnapshot> {
-        let snapshot = self
-            .model
-            .dispatch(session_id, event)
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let snapshot = self.dispatch_with_publish(session_id, event)?;
         self.store.save_session(&snapshot)?;
         Ok(snapshot)
     }
@@ -419,20 +460,16 @@ impl WorkspaceKernel {
         if input_mode == IntentInputMode::Incident {
             persist_manual_incident_bundle(self.root.as_path(), &intent)?;
         }
-        self.model
-            .dispatch(
-                session_id,
-                SessionEvent::FormalizeIntent(Box::new(intent.clone())),
-            )
-            .map_err(|error| anyhow!(error.to_string()))?;
+        self.dispatch_with_publish(
+            session_id,
+            SessionEvent::FormalizeIntent(Box::new(intent.clone())),
+        )?;
         if let Some(session) = self.model.get_session_mut(session_id) {
             session.revision_notes = revision_notes.to_vec();
         }
         let op = intent_formalize_op(session_id, &intent, input_mode, revision_notes, None);
-        let snapshot = self
-            .model
-            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op.clone())))
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let snapshot =
+            self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op.clone())))?;
         self.store.save_session(&snapshot)?;
         Ok((intent, op, snapshot))
     }
@@ -496,12 +533,10 @@ impl WorkspaceKernel {
         if input_mode == IntentInputMode::Incident {
             persist_manual_incident_bundle(self.root.as_path(), &intent)?;
         }
-        self.model
-            .dispatch(
-                session_id,
-                SessionEvent::FormalizeIntent(Box::new(intent.clone())),
-            )
-            .map_err(|error| anyhow!(error.to_string()))?;
+        self.dispatch_with_publish(
+            session_id,
+            SessionEvent::FormalizeIntent(Box::new(intent.clone())),
+        )?;
         if let Some(session) = self.model.get_session_mut(session_id) {
             session.revision_notes = revision_notes.to_vec();
         }
@@ -512,10 +547,8 @@ impl WorkspaceKernel {
             revision_notes,
             provider_report,
         );
-        let snapshot = self
-            .model
-            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op.clone())))
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let snapshot =
+            self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op.clone())))?;
         self.store.save_session(&snapshot)?;
         Ok((intent, op, snapshot))
     }
@@ -541,10 +574,8 @@ impl WorkspaceKernel {
         let executed = self.cli.execute(binding_id, vars).await?;
         let op = op_record_from_binding(session_id, binding_id, executed);
 
-        let snapshot = self
-            .model
-            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op)))
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let snapshot =
+            self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op)))?;
         self.store.save_session(&snapshot)?;
         Ok(snapshot)
     }
@@ -552,6 +583,64 @@ impl WorkspaceKernel {
     pub async fn run_xtal_workflow(&mut self, session_id: Uuid) -> anyhow::Result<SessionSnapshot> {
         self.run_xtal_workflow_with_vars(session_id, &BTreeMap::new())
             .await
+    }
+
+    /// Simple-mode orchestrator: runs the full XTAL chain to "verified" with
+    /// plain-English stage markers and bounded auto-repair on verify failure.
+    /// Stops at TrustReview (verified) so certification stays an explicit
+    /// Expert-mode action.
+    pub async fn run_build_pipeline(
+        &mut self,
+        session_id: Uuid,
+        run_vars: &BTreeMap<String, String>,
+        max_repair_rounds: u32,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let max_repair_rounds = max_repair_rounds.clamp(0, 5);
+        self.append_op(session_id, build_stage_op(session_id, "start", 0))?;
+        let snapshot = self
+            .run_xtal_workflow_with_vars(session_id, run_vars)
+            .await?;
+        let mut current = snapshot;
+        let mut round: u32 = 0;
+        while current.phase == SessionPhase::RepairEligible && round < max_repair_rounds {
+            round += 1;
+            self.append_op(session_id, build_stage_op(session_id, "repair", round))?;
+            let mut repair_vars = run_vars.clone();
+            repair_vars.insert("repair_strategy".to_string(), "semantic_only".to_string());
+            repair_vars.insert("repair_write".to_string(), "true".to_string());
+            let after_repair = self
+                .run_binding(session_id, "xtal.repair", &repair_vars)
+                .await?;
+            if last_op_failed(&after_repair) {
+                current = after_repair;
+                break;
+            }
+            self.dispatch_event(session_id, SessionEvent::RepairSpecPreserving)?;
+            let after_verify = self
+                .run_binding(session_id, "xtal.verify", run_vars)
+                .await?;
+            let event = if last_op_failed(&after_verify) {
+                SessionEvent::VerificationFailed
+            } else {
+                SessionEvent::VerificationPassed
+            };
+            current = self.dispatch_event(session_id, event)?;
+        }
+        let final_stage = match current.phase {
+            SessionPhase::TrustReview | SessionPhase::CertifyRunning | SessionPhase::Certified => {
+                "done"
+            }
+            _ => "needs_help",
+        };
+        self.append_op(session_id, build_stage_op(session_id, final_stage, round))?;
+        if final_stage == "done" {
+            let summary_op = match build_plain_english_summary(&current) {
+                Some(op) => op,
+                None => return Ok(current),
+            };
+            current = self.append_op(session_id, summary_op)?;
+        }
+        Ok(current)
     }
 
     pub async fn run_xtal_workflow_with_vars(
@@ -914,10 +1003,8 @@ impl WorkspaceKernel {
             report_json: serde_json::to_value(&handoff).ok(),
             report_path: None,
         };
-        let snapshot = self
-            .model
-            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op)))
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let snapshot =
+            self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op)))?;
         self.store.save_session(&snapshot)?;
         Ok((handoff, snapshot))
     }
@@ -993,6 +1080,7 @@ impl WorkspaceKernel {
                     program: agent.command.clone(),
                     args: handoff.command.iter().skip(1).cloned().collect(),
                     timeout_seconds: timeout_seconds.unwrap_or(30).clamp(1, 300),
+                    op_kind: "run".to_string(),
                 };
                 (op, Some(command))
             }
@@ -1004,6 +1092,246 @@ impl WorkspaceKernel {
             session: snapshot,
             command,
         })
+    }
+
+    /// Prepares a supervised "intent clarify" round. The agent runs once,
+    /// emits 1-3 plain-English clarifying questions (as structured
+    /// `agent_event` JSONL with kind `clarify_question`), then exits. The
+    /// browser uses the resulting `agent.event.<agent>.clarify_question`
+    /// records to render question cards. No files are written.
+    pub fn start_intent_clarify(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let intent = session.intent.as_ref().ok_or_else(|| {
+            anyhow!("session `{session_id}` must have a draft intent before clarify")
+        })?;
+        let round = intent
+            .clarification_history
+            .iter()
+            .map(|turn| turn.round)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let agent = self
+            .list_agent_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        ensure_agent_enabled(&agent, "running an intent clarify round")?;
+        ensure_agent_command_available(&agent)?;
+        let handoff = agent_clarify_handoff_from_session(&session, &agent, round);
+        let prompt_path = self
+            .store
+            .save_agent_handoff_with_suffix(&handoff, "clarify")?;
+        let op = agent_clarify_running_op(session_id, &agent, &handoff, &prompt_path, round);
+        let mut clarify_agent = agent.clone();
+        clarify_agent.allowed_verbs = vec!["intent.clarify".to_string()];
+        clarify_agent.write_roots = Vec::new();
+        let command = AgentCommandPlan {
+            session_id,
+            op_id: op.id,
+            agent: clarify_agent,
+            handoff: handoff.clone(),
+            prompt_path: prompt_path.clone(),
+            cwd: self.root.clone(),
+            program: agent.command.clone(),
+            args: handoff.command.iter().skip(1).cloned().collect(),
+            timeout_seconds: timeout_seconds.unwrap_or(90).clamp(10, 300),
+            op_kind: "clarify".to_string(),
+        };
+        let snapshot = self.append_op(session_id, op.clone())?;
+        Ok(PreparedAgentRun {
+            handoff,
+            op,
+            session: snapshot,
+            command: Some(command),
+        })
+    }
+
+    /// After a clarify supervised run completes, walks the new
+    /// `agent.event.<agent>.clarify_question` records and merges them into
+    /// `intent.clarification_history` so the UI can render Q&A cards directly
+    /// off the session intent rather than parsing op_log JSON.
+    pub fn ingest_clarify_questions(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        run_op_id: Uuid,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let mut intent = session
+            .intent
+            .clone()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no intent to clarify"))?;
+        let run_op_started = session
+            .op_log
+            .iter()
+            .find(|op| op.id == run_op_id)
+            .map(|op| op.started_at.clone())
+            .unwrap_or_default();
+        let event_op_name = format!("agent.event.{agent_id}.clarify_question");
+        let round = intent
+            .clarification_history
+            .iter()
+            .map(|turn| turn.round)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        let mut appended = 0u32;
+        for op in session.op_log.iter() {
+            if op.op != event_op_name {
+                continue;
+            }
+            if !run_op_started.is_empty() && op.started_at < run_op_started {
+                continue;
+            }
+            let structured = op
+                .report_json
+                .as_ref()
+                .and_then(|value| value.get("structured"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let question_id = structured
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("q-{}", op.id));
+            if intent
+                .clarification_history
+                .iter()
+                .any(|turn| turn.question_id == question_id)
+            {
+                continue;
+            }
+            let question_text = structured
+                .get("text")
+                .or_else(|| structured.get("summary"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| op.stdout.clone().unwrap_or_default());
+            if question_text.trim().is_empty() {
+                continue;
+            }
+            let witness_kind = structured
+                .get("witness_kind")
+                .and_then(serde_json::Value::as_str)
+                .and_then(witness_kind_from_str)
+                .unwrap_or(WitnessKind::DesiredBehavior);
+            let options = structured
+                .get("options")
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            intent
+                .clarification_history
+                .push(loom_types::artifacts::ClarificationTurn {
+                    question_id,
+                    question_text,
+                    witness_kind,
+                    round,
+                    agent_id: agent_id.to_string(),
+                    options,
+                    question_recorded_at: op.started_at.clone(),
+                    answer_text: None,
+                    answer_recorded_at: None,
+                });
+            appended += 1;
+        }
+        if appended == 0 {
+            return Ok(session);
+        }
+        let snapshot = self.dispatch_with_publish(
+            session_id,
+            SessionEvent::FormalizeIntent(Box::new(intent.clone())),
+        )?;
+        self.store.save_session(&snapshot)?;
+        Ok(snapshot)
+    }
+
+    /// Applies user-supplied answers from the browser back into the intent
+    /// packet: pairs each answer with its question, appends a matching
+    /// witness, and re-emits the intent through the reducer. The session
+    /// stays in `IntentReady` so a follow-up clarify round (or human
+    /// approval) is legal.
+    pub fn apply_intent_answers(
+        &mut self,
+        session_id: Uuid,
+        answers: &[loom_types::api::IntentAnswer],
+    ) -> anyhow::Result<(IntentPacket, OpRecord, SessionSnapshot)> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let mut intent = session
+            .intent
+            .clone()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no intent to update"))?;
+        let mut applied: Vec<(String, String, WitnessKind)> = Vec::new();
+        for answer in answers {
+            let text = answer.text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            let mut matched = false;
+            for turn in intent.clarification_history.iter_mut() {
+                if turn.question_id == answer.question_id {
+                    turn.answer_text = Some(text.to_string());
+                    turn.answer_recorded_at = Some(now_string());
+                    let kind = answer
+                        .witness_kind
+                        .clone()
+                        .unwrap_or_else(|| turn.witness_kind.clone());
+                    applied.push((turn.question_id.clone(), text.to_string(), kind.clone()));
+                    intent.witnesses.push(Witness {
+                        kind,
+                        text: format!("{}: {}", turn.question_text, text),
+                    });
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                let kind = answer
+                    .witness_kind
+                    .clone()
+                    .unwrap_or(WitnessKind::DesiredBehavior);
+                applied.push((answer.question_id.clone(), text.to_string(), kind.clone()));
+                intent.witnesses.push(Witness {
+                    kind,
+                    text: text.to_string(),
+                });
+            }
+        }
+        if applied.is_empty() {
+            bail!("no non-empty answers provided");
+        }
+        self.dispatch_with_publish(
+            session_id,
+            SessionEvent::FormalizeIntent(Box::new(intent.clone())),
+        )?;
+        let op = intent_clarify_answers_op(session_id, &applied);
+        let snapshot =
+            self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op.clone())))?;
+        self.store.save_session(&snapshot)?;
+        Ok((intent, op, snapshot))
     }
 
     pub fn create_agent_approval(
@@ -1128,10 +1456,8 @@ impl WorkspaceKernel {
 
     pub fn complete_agent_run(&mut self, op: OpRecord) -> anyhow::Result<SessionSnapshot> {
         let session_id = op.session_id;
-        let snapshot = self
-            .model
-            .dispatch(session_id, SessionEvent::UpdateOp(Box::new(op)))
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let snapshot =
+            self.dispatch_with_publish(session_id, SessionEvent::UpdateOp(Box::new(op)))?;
         self.store.save_session(&snapshot)?;
         Ok(snapshot)
     }
@@ -1195,10 +1521,8 @@ impl WorkspaceKernel {
     }
 
     fn append_op(&mut self, session_id: Uuid, op: OpRecord) -> anyhow::Result<SessionSnapshot> {
-        let snapshot = self
-            .model
-            .dispatch(session_id, SessionEvent::AppendOp(Box::new(op)))
-            .map_err(|error| anyhow!(error.to_string()))?;
+        let snapshot =
+            self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op)))?;
         self.store.save_session(&snapshot)?;
         Ok(snapshot)
     }
@@ -1733,6 +2057,11 @@ fn intent_packet_from_raw(
                 ),
             },
         },
+        clarification_history: session
+            .intent
+            .as_ref()
+            .map(|intent| intent.clarification_history.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -2234,6 +2563,151 @@ fn intent_revision_request_op(session_id: Uuid, note: &str, revision_index: usiz
             "revision_index": revision_index,
             "note": note,
             "approval_state": "changes",
+        })),
+        report_path: None,
+    }
+}
+
+fn build_stage_op(session_id: Uuid, stage: &str, round: u32) -> OpRecord {
+    let now = now_string();
+    let (notes, stdout) = match stage {
+        "start" => (
+            "Build pipeline started.".to_string(),
+            "Understanding what you want.".to_string(),
+        ),
+        "repair" => (
+            format!("Repair round {round}."),
+            format!("Fixing an issue I found (round {round})."),
+        ),
+        "done" => (
+            "Build pipeline finished successfully.".to_string(),
+            "Built and verified.".to_string(),
+        ),
+        "needs_help" => (
+            "Build pipeline paused.".to_string(),
+            "I need a human to help me get unblocked.".to_string(),
+        ),
+        other => (format!("Build stage `{other}`."), other.to_string()),
+    };
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("build.stage.{stage}"),
+        backend: "studio-kernel".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "build".to_string(),
+            "stage".to_string(),
+            stage.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: if stage == "needs_help" {
+            OperationStatus::Failed
+        } else {
+            OperationStatus::Succeeded
+        },
+        exit_code: Some(if stage == "needs_help" { 1 } else { 0 }),
+        artifacts: vec![format!(".x07/studio/sessions/{session_id}.json")],
+        notes: Some(notes),
+        stdout: Some(stdout),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.build_stage@0.1.0",
+            "stage": stage,
+            "round": round,
+        })),
+        report_path: None,
+    }
+}
+
+fn build_plain_english_summary(session: &SessionSnapshot) -> Option<OpRecord> {
+    let summary = crate::summarize::PlainEnglishSummary::from_session(session)?;
+    let now = now_string();
+    let session_id = session.session_id;
+    let stdout = std::iter::once(summary.headline.clone())
+        .chain(
+            summary
+                .behavior_promises
+                .iter()
+                .map(|item| format!("- {item}")),
+        )
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "summary.plain_english".to_string(),
+        backend: "studio-kernel".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "summary".to_string(),
+            "plain-english".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![format!(".x07/studio/sessions/{session_id}.json")],
+        notes: Some("Plain-English summary of what was built.".to_string()),
+        stdout: Some(stdout),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::to_value(&summary).unwrap_or_default()),
+        report_path: None,
+    })
+}
+
+fn intent_clarify_answers_op(
+    session_id: Uuid,
+    applied: &[(String, String, WitnessKind)],
+) -> OpRecord {
+    let now = now_string();
+    let summary = applied
+        .iter()
+        .map(|(qid, text, _)| format!("{qid}: {text}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "intent.clarify.answers".to_string(),
+        backend: "studio-kernel".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "intent".to_string(),
+            "clarify-answers".to_string(),
+            applied.len().to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![format!(".x07/studio/sessions/{session_id}.json")],
+        notes: Some(format!(
+            "Applied {} user-supplied answer(s) to the intent.",
+            applied.len()
+        )),
+        stdout: Some(summary),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.intent_clarify_answers@0.1.0",
+            "applied": applied
+                .iter()
+                .map(|(qid, text, kind)| serde_json::json!({
+                    "question_id": qid,
+                    "answer_text": text,
+                    "witness_kind": kind,
+                }))
+                .collect::<Vec<_>>(),
         })),
         report_path: None,
     }
@@ -3145,6 +3619,147 @@ fn render_agent_handoff_prompt(
     out
 }
 
+/// Builds a clarify-specific handoff that asks the agent to either generate
+/// 1–3 plain-English clarifying questions or signal `clarify_done`. The agent
+/// is restricted to the `intent.clarify` verb and given no write roots so the
+/// post-run audit will pass cleanly.
+fn agent_clarify_handoff_from_session(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    round: u32,
+) -> AgentHandoff {
+    let mut clarify_agent = agent.clone();
+    clarify_agent.allowed_verbs = vec!["intent.clarify".to_string()];
+    clarify_agent.write_roots = Vec::new();
+    let prompt_path = format!(
+        ".x07/studio/handoffs/{}-{}-clarify.md",
+        session.session_id, agent.id
+    );
+    let command = std::iter::once(agent.command.clone())
+        .chain(agent.args.clone())
+        .chain(std::iter::once(prompt_path.clone()))
+        .collect::<Vec<_>>();
+    let artifacts = vec![
+        prompt_path.clone(),
+        format!(".x07/studio/sessions/{}.json", session.session_id),
+    ];
+    let prompt = render_agent_clarify_prompt(session, &clarify_agent, &command, round);
+    AgentHandoff {
+        schema_version: "x07.studio.agent_handoff@0.1.0".to_string(),
+        session_id: session.session_id,
+        agent_id: agent.id.clone(),
+        agent_label: agent.label.clone(),
+        command,
+        prompt_path,
+        prompt,
+        allowed_verbs: clarify_agent.allowed_verbs.clone(),
+        mcp_tools: clarify_agent.mcp_tools.clone(),
+        write_roots: clarify_agent.write_roots.clone(),
+        approval_required: false,
+        artifacts,
+        created_at: now_string(),
+    }
+}
+
+fn render_agent_clarify_prompt(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    command: &[String],
+    round: u32,
+) -> String {
+    let mut out = String::new();
+    out.push_str("# x07 Studio — Intent Clarify Round\n\n");
+    out.push_str(&format!("- Agent: {} (`{}`)\n", agent.label, agent.id));
+    out.push_str(&format!(
+        "- Session: {} (`{}`)\n",
+        session.title, session.session_id
+    ));
+    out.push_str(&format!("- Workspace: `{}`\n", session.root));
+    out.push_str(&format!("- Round: {round}\n"));
+    out.push_str(&format!("- Command: `{}`\n", command.join(" ")));
+    out.push_str(
+        "\nYou are running a **clarify** round. You do not write any source code or files. \
+Read the draft intent below and the prior clarification history. Then **either** emit \
+1-3 short clarifying questions (one JSON object per line) **or** emit a single \
+`clarify_done` event if the intent is already specific enough to scaffold a spec.\n\n",
+    );
+    out.push_str("## Output Protocol\n\n");
+    out.push_str("Emit lines like this, one JSON object per line:\n\n");
+    out.push_str("```json\n");
+    out.push_str(
+        r#"{"schema_version":"x07.studio.agent_event@0.1.0","kind":"clarify_question","id":"q1","text":"Should empty input reject with an error or return an empty result?","witness_kind":"desired_behavior","options":["Reject with error","Return empty result"]}"#,
+    );
+    out.push('\n');
+    out.push_str(
+        r#"{"schema_version":"x07.studio.agent_event@0.1.0","kind":"clarify_done","summary":"Intent is specific enough to proceed."}"#,
+    );
+    out.push_str("\n```\n\n");
+    out.push_str(
+        "Rules:\n- Each question must have `id`, `text`, and `witness_kind` (one of \
+`desired_behavior`, `forbidden_behavior`, `policy_requirement`, `incident_report`).\n\
+- `options` is optional but encouraged for binary or small enum choices.\n\
+- Keep `text` plain English, no x07/XTAL jargon. Address the user directly.\n\
+- Prefer 1 high-leverage question over 3 low-leverage ones.\n\
+- Do NOT propose code, paths, schemas, or commands. This is intent only.\n\
+- If you need nothing more, emit a single `clarify_done` line and stop.\n",
+    );
+    if let Some(intent) = &session.intent {
+        out.push_str("\n## Draft Intent\n\n");
+        for target in &intent.targets {
+            out.push_str(&format!(
+                "- Target: `{}` / `{}`\n",
+                target.module_id,
+                target.entry.as_deref().unwrap_or("run_v1")
+            ));
+        }
+        match &intent.source {
+            IntentSource::Text { raw } | IntentSource::Spec { raw } => {
+                out.push_str(&format!("\nUser input:\n\n```\n{raw}\n```\n"));
+            }
+            IntentSource::Voice { transcript } => {
+                out.push_str(&format!("\nVoice transcript:\n\n```\n{transcript}\n```\n"));
+            }
+            IntentSource::Incident { path } => {
+                out.push_str(&format!("\nIncident path: `{path}`\n"));
+            }
+        }
+        if !intent.witnesses.is_empty() {
+            out.push_str("\nAccumulated witnesses:\n");
+            for witness in &intent.witnesses {
+                out.push_str(&format!("- `{:?}`: {}\n", witness.kind, witness.text));
+            }
+        }
+        if !intent.constraints.is_empty() {
+            out.push_str("\nConstraints:\n");
+            for constraint in &intent.constraints {
+                out.push_str(&format!("- {constraint}\n"));
+            }
+        }
+        if !intent.ambiguities.is_empty() {
+            out.push_str("\nOpen ambiguities:\n");
+            for ambiguity in &intent.ambiguities {
+                out.push_str(&format!("- {ambiguity}\n"));
+            }
+        }
+        if !intent.clarification_history.is_empty() {
+            out.push_str("\nPrevious Q&A:\n");
+            for turn in &intent.clarification_history {
+                out.push_str(&format!(
+                    "- Q (round {}, `{}`): {}\n",
+                    turn.round, turn.question_id, turn.question_text
+                ));
+                if let Some(answer) = &turn.answer_text {
+                    out.push_str(&format!("  A: {}\n", answer));
+                }
+            }
+        }
+    }
+    out.push_str(
+        "\nWhen you are done emitting events, exit. The supervisor will read your output.\n",
+    );
+    out
+}
+
 fn handoff_execution_boundaries(session: &SessionSnapshot) -> Vec<String> {
     let haystack = handoff_haystack(session);
     let has = |needle: &str| haystack.contains(needle);
@@ -3412,6 +4027,47 @@ fn agent_running_op(
     }
 }
 
+fn agent_clarify_running_op(
+    session_id: Uuid,
+    agent: &AgentProfile,
+    handoff: &AgentHandoff,
+    prompt_path: &Utf8Path,
+    round: u32,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("agent.clarify.{}", agent.id),
+        backend: "agent-supervisor".to_string(),
+        command: handoff.command.clone(),
+        started_at: now,
+        finished_at: None,
+        status: OperationStatus::Running,
+        exit_code: None,
+        artifacts: vec![prompt_path.to_string()],
+        notes: Some(format!(
+            "{} is generating clarifying questions (round {round}).",
+            agent.label
+        )),
+        stdout: Some(format!(
+            "Supervised clarify round started.\nCommand: {}\nPrompt: {}\n",
+            handoff.command.join(" "),
+            handoff.prompt_path
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "mode": "clarify",
+            "round": round,
+            "handoff": handoff,
+        })),
+        report_path: None,
+    }
+}
+
 fn agent_command_env(command: &AgentCommandPlan) -> BTreeMap<String, String> {
     BTreeMap::from([
         (
@@ -3461,7 +4117,7 @@ fn agent_streaming_op(command: &AgentCommandPlan, update: CommandStreamUpdate) -
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
         id: command.op_id,
         session_id: command.session_id,
-        op: format!("agent.run.{}", command.agent.id),
+        op: format!("agent.{}.{}", command.op_kind, command.agent.id),
         backend: "agent-supervisor".to_string(),
         command: command.handoff.command.clone(),
         started_at: command.handoff.created_at.clone(),
@@ -3583,13 +4239,17 @@ fn parse_structured_agent_event(line: &str) -> Option<AgentSemanticEvent> {
         return None;
     }
     let kind = value.get("kind")?.as_str()?;
-    if !matches!(kind, "artifact" | "diagnostic" | "write" | "approval") {
+    if !matches!(
+        kind,
+        "artifact" | "diagnostic" | "write" | "approval" | "clarify_question" | "clarify_done"
+    ) {
         return None;
     }
     let summary = value
         .get("summary")
         .and_then(serde_json::Value::as_str)
         .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
+        .or_else(|| value.get("text").and_then(serde_json::Value::as_str))
         .unwrap_or(kind);
     let artifact = value
         .get("artifact")
@@ -3887,7 +4547,7 @@ fn agent_execution_op(
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
         id: command.op_id,
         session_id: command.session_id,
-        op: format!("agent.run.{}", command.agent.id),
+        op: format!("agent.{}.{}", command.op_kind, command.agent.id),
         backend: "agent-supervisor".to_string(),
         command: std::iter::once(execution.program.clone())
             .chain(execution.args.clone())
@@ -3936,7 +4596,7 @@ fn agent_spawn_error_op(command: AgentCommandPlan, error: anyhow::Error) -> OpRe
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
         id: command.op_id,
         session_id: command.session_id,
-        op: format!("agent.run.{}", command.agent.id),
+        op: format!("agent.{}.{}", command.op_kind, command.agent.id),
         backend: "agent-supervisor".to_string(),
         command: command.handoff.command.clone(),
         started_at: now.clone(),
@@ -4115,6 +4775,7 @@ mod tests {
                 path: ".x07/studio/incidents/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     .to_string(),
             },
+            clarification_history: Vec::new(),
         };
 
         let vars = xtal_workflow_vars_from_intent(&intent);
@@ -5192,6 +5853,7 @@ mod tests {
             source: IntentSource::Text {
                 raw: "Use docs/examples/agent-gate/xtal/workflow-graph".to_string(),
             },
+            clarification_history: Vec::new(),
         };
         let gateway = IntentPacket {
             targets: vec![IntentTarget {
