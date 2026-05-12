@@ -763,3 +763,13 @@ This document records friction found while implementing the Studio web surface.
    keeps the row pending with an explicit missing-evidence label. The browser
    computes those rows as reactive state so the approval card updates after
    repolish instead of reusing stale helper output.
+
+71. Agent approvals need a resolved checkpoint ledger.
+
+   The Agents room showed pending human checkpoints, but after approving or
+   rejecting a Codex/Claude run the checkpoint left the queue and users had to
+   jump into the timeline or operation log to confirm what happened. For XTAL,
+   that weakens the rule that every coding-agent process remains visible to the
+   end user. Studio now keeps a selected-agent approval ledger in the Agents
+   room that shows the latest checkpoint operation, status, notes, and command
+   after it is resolved.

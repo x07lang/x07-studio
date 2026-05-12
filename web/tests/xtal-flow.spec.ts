@@ -477,8 +477,12 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.locator('footer').getByText('Claude Code supervised launch plan recorded')).toBeVisible();
 	await page.getByRole('button', { name: 'Run Claude Code Command' }).click();
 	await expect(page.locator('footer').getByText('Claude Code approval required before supervised command')).toBeVisible();
+	await expect(page.getByLabel('Agent approval ledger')).toContainText('agent.approval.claude-code');
+	await expect(page.getByLabel('Agent approval ledger')).toContainText('pending');
 	await page.getByRole('button', { name: 'Approve agent.approval.claude-code' }).click();
 	await expect(page.locator('footer').getByText('Agent checkpoint approved')).toBeVisible();
+	await expect(page.getByLabel('Agent approval ledger')).toContainText('succeeded');
+	await expect(page.getByLabel('Agent approval ledger')).toContainText('Approved: Studio human checkpoint');
 	await page.getByRole('button', { name: 'Run Claude Code Command' }).click();
 	await expect(page.locator('footer').getByText('Claude Code supervised command succeeded')).toBeVisible();
 	await expect(inspectOperation(page, 'agent.event.claude-code.artifact')).toBeVisible();

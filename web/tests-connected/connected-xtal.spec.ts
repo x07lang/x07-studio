@@ -119,8 +119,12 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await expect(page.locator('footer').getByText('OpenAI Codex supervised launch plan recorded')).toBeVisible();
 	await page.getByRole('button', { name: 'Run OpenAI Codex Command' }).click();
 	await expect(page.locator('footer').getByText('OpenAI Codex approval required before supervised command')).toBeVisible();
+	await expect(page.getByLabel('Agent approval ledger')).toContainText('agent.approval.openai-codex');
+	await expect(page.getByLabel('Agent approval ledger')).toContainText('pending');
 	await page.getByRole('button', { name: 'Approve agent.approval.openai-codex' }).click();
 	await expect(page.locator('footer').getByText('Agent checkpoint approved')).toBeVisible();
+	await expect(page.getByLabel('Agent approval ledger')).toContainText('succeeded');
+	await expect(page.getByLabel('Agent approval ledger')).toContainText('Approved: Studio human checkpoint');
 	await page.getByRole('button', { name: 'Run OpenAI Codex Command' }).click();
 	await expect(page.locator('footer').getByText('OpenAI Codex supervised command succeeded')).toBeVisible();
 	await expect(inspectOperation(page, 'agent.event.openai-codex.artifact')).toBeVisible();

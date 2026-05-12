@@ -304,6 +304,9 @@
 	$: pendingApprovals = worklog.filter(
 		(op) => op.op.startsWith('agent.approval.') && op.status === 'pending'
 	);
+	$: agentApprovalLedger = worklog
+		.filter((op) => op.op === `agent.approval.${selectedAgentId}`)
+		.slice(0, 4);
 	$: selectedOp =
 		(selectedOpId ? allOps.find((op) => op.id === selectedOpId) : undefined) ??
 		allOps.at(-1) ??
@@ -2452,6 +2455,33 @@
 					</div>
 					<pre aria-label="Handoff prompt excerpt">{agentHandoffReview.promptExcerpt}</pre>
 					<p>{agentHandoffReview.eventProtocol}</p>
+				</div>
+				<div class="approval-history" aria-label="Agent approval ledger">
+					<div class="approval-history-head">
+						<div>
+							<span>Human checkpoint ledger</span>
+							<strong>{visibleAgent}</strong>
+						</div>
+						<em>{agentApprovalLedger.length ? `${agentApprovalLedger.length} recorded` : 'none recorded'}</em>
+					</div>
+					{#if agentApprovalLedger.length}
+						{#each agentApprovalLedger as approval}
+							<button
+								type="button"
+								class={`approval-history-row ${approval.status}`}
+								on:click={() => selectOperation(approval)}
+							>
+								<span>{approval.op}</span>
+								<strong>{approval.status}</strong>
+								<small>{approval.notes ?? 'Human approval required'}</small>
+								<code>{approval.command.join(' ')}</code>
+							</button>
+						{/each}
+					{:else}
+						<div class="approval-history-empty">
+							Run a supervised command to record the human checkpoint before execution.
+						</div>
+					{/if}
 				</div>
 				{#if pendingApprovals.length}
 					<div class="approval-queue" aria-label="Agent approval checkpoints">
