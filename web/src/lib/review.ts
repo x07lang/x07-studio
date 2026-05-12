@@ -35,6 +35,15 @@ export interface PatchReview {
 	artifacts: string[];
 }
 
+export interface WriteAuditReview {
+	allowedRoots: string[];
+	created: string[];
+	modified: string[];
+	deleted: string[];
+	violations: string[];
+	truncated: boolean;
+}
+
 export type CounterexampleTone = 'empty' | 'failed' | 'repair' | 'incident';
 
 export interface CounterexampleDiagnostic {
@@ -130,6 +139,16 @@ export function buildPatchReview(op: OpRecord | null): PatchReview | null {
 function reviewSignalFromOp(op: OpRecord): ReviewSignal | null {
 	const artifact = primaryArtifact(op);
 	const detail = shortReviewText(op, artifact);
+	const writeAudit = writeAuditFromOp(op);
+	if (writeAudit?.violations.length) {
+		return reviewSignal(
+			op,
+			'Write-root audit',
+			`${writeAudit.violations.length} out-of-contract path${writeAudit.violations.length === 1 ? '' : 's'}: ${writeAudit.violations[0]}`,
+			'warn',
+			writeAudit.violations[0]
+		);
+	}
 	if (op.op.startsWith('agent.event.')) {
 		if (op.op.endsWith('.approval')) {
 			return reviewSignal(op, 'Approval request', detail, 'warn', artifact);
@@ -208,6 +227,19 @@ function reviewSignalFromOp(op: OpRecord): ReviewSignal | null {
 		);
 	}
 	return null;
+}
+
+export function writeAuditFromOp(op: OpRecord | null): WriteAuditReview | null {
+	const audit = asRecord(asRecord(op?.report_json)?.write_audit);
+	if (!audit) return null;
+	return {
+		allowedRoots: stringArray(audit.allowed_roots),
+		created: stringArray(audit.created),
+		modified: stringArray(audit.modified),
+		deleted: stringArray(audit.deleted),
+		violations: stringArray(audit.violations),
+		truncated: Boolean(audit.truncated)
+	};
 }
 
 function isCounterexampleCandidate(op: OpRecord): boolean {
@@ -605,6 +637,10 @@ function textValue(value: unknown): string {
 
 function numericValue(value: unknown): number {
 	return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function stringArray(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
 function jsonSnippet(value: unknown): string | undefined {

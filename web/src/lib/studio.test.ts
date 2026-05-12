@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { StudioApi } from './api';
-import { buildCounterexampleTheater, buildPatchReview, buildReviewSignals } from './review';
+import {
+	buildCounterexampleTheater,
+	buildPatchReview,
+	buildReviewSignals,
+	writeAuditFromOp
+} from './review';
 import {
 	appendDemoOp,
 	agentReadiness,
@@ -378,6 +383,32 @@ describe('x07 Studio XTAL web model', () => {
 			'Deploy plan',
 			'Release evidence'
 		]);
+	});
+
+	it('surfaces failed agent write-root audits in review signals', () => {
+		const session = appendDemoOp(demoSession(), 'agent.run.openai-codex', 'failed');
+		const op = {
+			...session.op_log[0],
+			report_json: {
+				write_audit: {
+					schema_version: 'x07.studio.agent_write_audit@0.1.0',
+					allowed_roots: ['src/', '.x07/studio/'],
+					created: ['src/ok.txt', 'private/bad.txt'],
+					modified: [],
+					deleted: [],
+					violations: ['private/bad.txt'],
+					truncated: false
+				}
+			}
+		};
+
+		const audit = writeAuditFromOp(op);
+		const signal = buildReviewSignals([op])[0];
+
+		expect(audit?.violations).toEqual(['private/bad.txt']);
+		expect(signal.label).toBe('Write-root audit');
+		expect(signal.detail).toContain('private/bad.txt');
+		expect(signal.tone).toBe('warn');
 	});
 
 	it('derives counterexample theater state from failed verify diagnostics', () => {

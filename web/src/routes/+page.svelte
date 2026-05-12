@@ -6,6 +6,7 @@
 		buildCounterexampleTheater,
 		buildPatchReview,
 		buildReviewSignals,
+		writeAuditFromOp,
 		type ReviewSignal
 	} from '$lib/review';
 	import {
@@ -245,6 +246,7 @@
 	$: reviewSignals = buildReviewSignals(allOps);
 	$: counterexampleTheater = buildCounterexampleTheater(allOps);
 	$: selectedPatchReview = buildPatchReview(selectedOpWithPreview);
+	$: selectedWriteAudit = writeAuditFromOp(selectedOp);
 	$: selectedOpDiagnostics = collectDiagnostics(selectedOp);
 	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
@@ -2006,6 +2008,36 @@
 							<div class="patch-command">
 								<span>Artifact preview</span>
 								<code>{artifactPreviewStatus}</code>
+							</div>
+						</div>
+					{/if}
+					{#if selectedWriteAudit}
+						<div class={`write-audit ${selectedWriteAudit.violations.length ? 'failed' : 'passed'}`} aria-label="Agent write-root audit">
+							<div class="patch-review-head">
+								<div>
+									<span>Write-root audit</span>
+									<strong>{selectedWriteAudit.violations.length ? 'Out-of-contract writes' : 'Within approved roots'}</strong>
+								</div>
+								<em>{selectedWriteAudit.truncated ? 'truncated' : 'complete'}</em>
+							</div>
+							<div class="write-audit-grid">
+								<div>
+									<span>Allowed roots</span>
+									{#each selectedWriteAudit.allowedRoots.length ? selectedWriteAudit.allowedRoots : ['No roots declared'] as path}
+										<code>{path}</code>
+									{/each}
+								</div>
+								<div>
+									<span>Violations</span>
+									{#each selectedWriteAudit.violations.length ? selectedWriteAudit.violations : ['No violations'] as path}
+										<code>{path}</code>
+									{/each}
+								</div>
+							</div>
+							<div class="write-audit-summary">
+								<span>{selectedWriteAudit.created.length} created</span>
+								<span>{selectedWriteAudit.modified.length} modified</span>
+								<span>{selectedWriteAudit.deleted.length} deleted</span>
 							</div>
 						</div>
 					{/if}

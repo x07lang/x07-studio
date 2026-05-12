@@ -539,5 +539,7 @@ This document records friction found while implementing the Studio web surface.
    If the command creates, modifies, or deletes files outside the approved
    roots, Studio marks the `agent.run.*` operation failed and records a
    `x07.studio.agent_write_audit@0.1.0` payload with created, modified,
-   deleted, and violating paths. This does not replace a future OS-level
-   sandbox, but it prevents unauthorized writes from becoming silent success.
+   deleted, and violating paths. The browser review queue and operation
+   inspector now surface that audit as first-class evidence. This does not
+   replace a future OS-level sandbox, but it prevents unauthorized writes from
+   becoming silent success.

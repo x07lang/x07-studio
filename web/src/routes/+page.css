@@ -2193,6 +2193,64 @@ textarea {
 	font-size: 11px;
 }
 
+.write-audit {
+	border: 1px solid rgba(114, 228, 180, 0.22);
+	border-radius: var(--radius);
+	background: rgba(114, 228, 180, 0.045);
+	padding: 10px;
+	display: grid;
+	gap: 9px;
+}
+
+.write-audit.failed {
+	border-color: rgba(243, 111, 141, 0.36);
+	background: rgba(243, 111, 141, 0.055);
+}
+
+.write-audit-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.write-audit-grid div,
+.write-audit-summary {
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.16);
+	padding: 8px;
+}
+
+.write-audit-grid div {
+	display: grid;
+	gap: 5px;
+	min-width: 0;
+}
+
+.write-audit-grid span,
+.write-audit-summary span {
+	color: var(--muted);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0;
+}
+
+.write-audit-grid code {
+	color: var(--cyan);
+	font-size: 11px;
+	overflow-wrap: anywhere;
+}
+
+.write-audit.failed .write-audit-grid div:nth-child(2) code {
+	color: var(--rose);
+}
+
+.write-audit-summary {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
 .diagnostic-list div {
 	border: 1px solid rgba(255, 195, 91, 0.24);
 	border-radius: var(--radius);
