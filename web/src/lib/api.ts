@@ -1,5 +1,6 @@
 import {
 	appendDemoOp,
+	buildVerifyCommandPreview,
 	createIntentPacket,
 	defaultAgentProfiles,
 	defaultProviderProfiles,
@@ -7,6 +8,7 @@ import {
 	demoHealth,
 	demoSession,
 	reduceDemoEvent,
+	verifyRunVars,
 	type AgentApprovalResponse,
 	type AgentHandoffResponse,
 	type AgentProfile,
@@ -24,6 +26,7 @@ import {
 	type ProviderProfile,
 	type SessionSnapshot,
 	type TaskType,
+	type VerifyRunOptions,
 	type WorkspaceRadarResponse
 } from './studio';
 
@@ -209,19 +212,28 @@ export class StudioApi {
 		return { intent: next.intent!, op: next.op_log.at(-1)!, session: next };
 	}
 
-	async runBinding(session: SessionSnapshot, binding_id: string): Promise<SessionSnapshot> {
+	async runBinding(
+		session: SessionSnapshot,
+		binding_id: string,
+		verifyOptions?: Partial<VerifyRunOptions>
+	): Promise<SessionSnapshot> {
 		if (!this.demoMode) {
 			try {
 				return await request<SessionSnapshot>(`/v1/sessions/${session.session_id}/bindings/run`, {
 					method: 'POST',
-					body: JSON.stringify({ binding_id, vars: bindingVars(session, binding_id) })
+					body: JSON.stringify({ binding_id, vars: bindingVars(session, binding_id, verifyOptions) })
 				});
 			} catch {
 				this.demoMode = true;
 			}
 		}
 		const failed = binding_id === 'xtal.verify' && session.phase === 'verify_running';
-		const next = appendDemoOp(session, binding_id, failed ? 'failed' : 'succeeded');
+		const next = appendDemoOp(
+			session,
+			binding_id,
+			failed ? 'failed' : 'succeeded',
+			binding_id === 'xtal.verify' ? buildVerifyCommandPreview(verifyOptions).split(' ') : undefined
+		);
 		this.replaceDemo(next);
 		return next;
 	}
@@ -255,11 +267,15 @@ export class StudioApi {
 		return demoDocPreview(docRef);
 	}
 
-	async runXtalWorkflow(session: SessionSnapshot): Promise<SessionSnapshot> {
+	async runXtalWorkflow(
+		session: SessionSnapshot,
+		verifyOptions?: Partial<VerifyRunOptions>
+	): Promise<SessionSnapshot> {
 		if (!this.demoMode) {
 			try {
 				return await request<SessionSnapshot>(`/v1/sessions/${session.session_id}/xtal/run`, {
-					method: 'POST'
+					method: 'POST',
+					body: JSON.stringify({ vars: verifyRunVars(verifyOptions) })
 				});
 			} catch {
 				this.demoMode = true;
@@ -297,7 +313,12 @@ export class StudioApi {
 			? atlasDemoWorkflowBindings
 			: ['impl.sync.write', 'impl.check', 'xtal.verify'];
 		for (const bindingId of realizationBindings) {
-			current = appendDemoOp(current, bindingId, 'succeeded');
+			current = appendDemoOp(
+				current,
+				bindingId,
+				'succeeded',
+				bindingId === 'xtal.verify' ? buildVerifyCommandPreview(verifyOptions).split(' ') : undefined
+			);
 		}
 		if (current.phase === 'realization_proposed') {
 			current = reduceDemoEvent(current, 'accept_realization');
@@ -478,7 +499,11 @@ export class StudioApi {
 	}
 }
 
-function bindingVars(session: SessionSnapshot, bindingId: string): Record<string, string> {
+function bindingVars(
+	session: SessionSnapshot,
+	bindingId: string,
+	verifyOptions?: Partial<VerifyRunOptions>
+): Record<string, string> {
 	const target = session.intent?.targets[0];
 	const moduleId = target?.module_id || 'app.main';
 	const op = sanitizeOpName(target?.entry || 'run_v1');
@@ -499,6 +524,7 @@ function bindingVars(session: SessionSnapshot, bindingId: string): Record<string
 				: '.x07/studio/incidents/manual';
 		return { ...common, input: incidentInput };
 	}
+	if (bindingId === 'xtal.verify') return { ...common, ...verifyRunVars(verifyOptions) };
 	return common;
 }
 

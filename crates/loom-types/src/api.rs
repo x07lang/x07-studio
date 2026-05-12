@@ -105,6 +105,12 @@ pub struct RunBindingRequest {
     pub vars: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RunXtalWorkflowRequest {
+    #[serde(default)]
+    pub vars: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactPreviewRequest {
     pub artifact: String,

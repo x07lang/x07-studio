@@ -18,6 +18,7 @@ import {
 	buildPlatformBridge,
 	buildProviderProbeGates,
 	buildProofCacheLedger,
+	buildVerifyCommandPreview,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
 	canonicalMcpTools,
@@ -32,6 +33,7 @@ import {
 	previewIntentWitnesses,
 	projectTemplates,
 	reduceDemoEvent,
+	verifyRunVars,
 	workflowChecklist
 } from './studio';
 
@@ -390,12 +392,38 @@ describe('x07 Studio XTAL web model', () => {
 
 		const ledger = buildProofCacheLedger(session, projectTemplates[0], null);
 		expect(ledger.find((item) => item.label === 'Cache key preview')?.value).toContain('contract-locked');
+		expect(ledger.find((item) => item.label === 'Cache key preview')?.value).toContain('balanced');
 		expect(ledger.find((item) => item.label === 'Verify artifact')?.state).toBe('ready');
-		expect(ledger.find((item) => item.label === 'Proof policy')?.value).toBe('solve-pure proof');
+		expect(ledger.find((item) => item.label === 'Proof policy')?.value).toBe('solve-pure proof / balanced');
 		expect(ledger.find((item) => item.label === 'Certification dependency')?.state).toBe('pending');
 
 		const draftLedger = buildProofCacheLedger(demoSession(), projectTemplates[0], null);
 		expect(draftLedger.find((item) => item.label === 'Certification dependency')?.state).toBe('blocked');
+	});
+
+	it('builds bounded xtal verify command options', () => {
+		const options = {
+			proofPolicy: 'strict' as const,
+			allowOsWorld: true,
+			unwind: '3',
+			maxBytesLen: '16',
+			inputLenBytes: '24'
+		};
+
+		expect(buildVerifyCommandPreview(options)).toBe(
+			'x07 xtal verify --proof-policy strict --allow-os-world --unwind 3 --max-bytes-len 16 --input-len-bytes 24'
+		);
+		expect(verifyRunVars(options)).toEqual({
+			proof_policy: 'strict',
+			allow_os_world: 'true',
+			unwind: '3',
+			max_bytes_len: '16',
+			input_len_bytes: '24'
+		});
+
+		const ledger = buildProofCacheLedger(demoSession(), projectTemplates[0], null, options);
+		expect(ledger.find((item) => item.label === 'Cache key preview')?.value).toContain('strict');
+		expect(ledger.find((item) => item.label === 'Proof policy')?.detail).toContain('OS-capable worlds');
 	});
 
 	it('models visible canonical operation records', () => {

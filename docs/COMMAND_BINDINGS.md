@@ -30,6 +30,12 @@ Loom treats CLI execution as a rendered binding, not as free-form shell text.
 - `check.project`
 - `pkg.lock.atlas.frontend`
 
+`xtal.verify` accepts the Studio verify run variables `proof_policy`,
+`allow_os_world`, `unwind`, `max_bytes_len`, and `input_len_bytes`. Loom
+validates those values before rendering them as `x07 xtal verify` flags, so the
+browser proof/world/bounds controls change the canonical command rather than
+only decorating the review surface.
+
 ### x07-wasm
 
 - `wasm.app.profile.validate.atlas_dev`

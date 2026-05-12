@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -122,6 +122,9 @@ impl CliAdapter {
         let binding =
             binding_by_id(binding_id).with_context(|| format!("unknown binding `{binding_id}`"))?;
         let mut rendered = binding.render(vars);
+        if binding_id == "xtal.verify" {
+            rendered.args.extend(xtal_verify_args_from_vars(vars)?);
+        }
 
         let mut report_path = None;
         match binding.machine_json {
@@ -191,6 +194,61 @@ fn interpolate(template: &str, vars: &BTreeMap<String, String>) -> String {
         out = out.replace(&format!("{{{key}}}"), value);
     }
     out
+}
+
+pub fn validate_xtal_verify_vars(vars: &BTreeMap<String, String>) -> anyhow::Result<()> {
+    let _ = xtal_verify_args_from_vars(vars)?;
+    Ok(())
+}
+
+pub fn xtal_verify_args_from_vars(vars: &BTreeMap<String, String>) -> anyhow::Result<Vec<String>> {
+    let mut args = Vec::new();
+    if let Some(policy) = non_empty_var(vars, "proof_policy") {
+        match policy {
+            "balanced" | "strict" => {
+                args.push("--proof-policy".to_string());
+                args.push(policy.to_string());
+            }
+            other => bail!("unsupported xtal verify proof_policy `{other}`"),
+        }
+    }
+    if let Some(value) = non_empty_var(vars, "allow_os_world") {
+        match value {
+            "true" | "1" | "yes" => args.push("--allow-os-world".to_string()),
+            "false" | "0" | "no" => {}
+            other => bail!("unsupported xtal verify allow_os_world `{other}`"),
+        }
+    }
+    append_positive_usize_arg(vars, &mut args, "unwind", "--unwind")?;
+    append_positive_usize_arg(vars, &mut args, "max_bytes_len", "--max-bytes-len")?;
+    append_positive_usize_arg(vars, &mut args, "input_len_bytes", "--input-len-bytes")?;
+    Ok(args)
+}
+
+fn non_empty_var<'a>(vars: &'a BTreeMap<String, String>, key: &str) -> Option<&'a str> {
+    vars.get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+}
+
+fn append_positive_usize_arg(
+    vars: &BTreeMap<String, String>,
+    args: &mut Vec<String>,
+    key: &str,
+    flag: &str,
+) -> anyhow::Result<()> {
+    let Some(value) = non_empty_var(vars, key) else {
+        return Ok(());
+    };
+    let parsed = value
+        .parse::<usize>()
+        .with_context(|| format!("xtal verify {key} must be a positive integer"))?;
+    if parsed == 0 {
+        bail!("xtal verify {key} must be greater than zero");
+    }
+    args.push(flag.to_string());
+    args.push(parsed.to_string());
+    Ok(())
 }
 
 fn resolve_program(key: ProgramKey, root: &Utf8Path) -> String {
@@ -1460,7 +1518,10 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{binding_by_id, find_nearby_x07lp_driver, CliAdapter, MachineJsonMode};
+    use super::{
+        binding_by_id, find_nearby_x07lp_driver, xtal_verify_args_from_vars, CliAdapter,
+        MachineJsonMode,
+    };
 
     #[test]
     fn spec_scaffold_binding_interpolates_arguments_and_artifacts() {
@@ -1611,6 +1672,47 @@ mod tests {
         ] {
             assert!(ids.contains(&required), "missing {required}");
         }
+    }
+
+    #[test]
+    fn xtal_verify_vars_render_bounded_flags() {
+        let args = xtal_verify_args_from_vars(&BTreeMap::from([
+            ("proof_policy".to_string(), "strict".to_string()),
+            ("allow_os_world".to_string(), "true".to_string()),
+            ("unwind".to_string(), "3".to_string()),
+            ("max_bytes_len".to_string(), "16".to_string()),
+            ("input_len_bytes".to_string(), "24".to_string()),
+        ]))
+        .expect("render xtal verify args");
+
+        assert_eq!(
+            args,
+            vec![
+                "--proof-policy",
+                "strict",
+                "--allow-os-world",
+                "--unwind",
+                "3",
+                "--max-bytes-len",
+                "16",
+                "--input-len-bytes",
+                "24"
+            ]
+        );
+    }
+
+    #[test]
+    fn xtal_verify_vars_reject_invalid_values() {
+        assert!(xtal_verify_args_from_vars(&BTreeMap::from([(
+            "proof_policy".to_string(),
+            "loose".to_string()
+        )]))
+        .is_err());
+        assert!(xtal_verify_args_from_vars(&BTreeMap::from([(
+            "unwind".to_string(),
+            "0".to_string()
+        )]))
+        .is_err());
     }
 
     #[test]

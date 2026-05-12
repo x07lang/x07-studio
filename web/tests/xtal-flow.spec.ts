@@ -181,14 +181,25 @@ test('semantic patch review explains implementation sync changes', async ({ page
 	await page.getByRole('button', { name: 'New Session', exact: true }).click();
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
-	await page.getByRole('button', { name: 'Approve and Run' }).click();
+	await page.getByRole('tab', { name: 'Verify' }).click();
+	await page.getByLabel('Proof policy selector').getByRole('button', { name: 'Strict' }).click();
+	await page.getByLabel('Allow OS world').check();
+	await page.getByLabel('Unwind').fill('2');
+	await page.getByLabel('Max bytes').fill('12');
+	await expect(page.getByLabel('XTAL verify run controls')).toContainText('--proof-policy strict');
+	await expect(page.getByLabel('XTAL verify run controls')).toContainText('--allow-os-world');
+	await expect(page.getByLabel('XTAL verify run controls')).toContainText('--unwind 2');
+	await expect(page.getByLabel('XTAL verify run controls')).toContainText('--max-bytes-len 12');
+	await expect(page.getByLabel('Proof cache readiness')).toContainText('strict');
+	await page.getByRole('button', { name: 'Run Verification' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
 
-	await page.getByRole('tab', { name: 'Verify' }).click();
 	await expect(page.getByLabel('Proof cache readiness')).toContainText('Cache key preview');
 	await expect(page.getByLabel('Proof cache readiness')).toContainText('xtal-proof');
 	await expect(page.getByLabel('Proof cache readiness')).toContainText('Verify artifact');
 	await expect(page.getByLabel('Proof cache readiness')).toContainText('compiler-backed proof cache is not persisted yet');
+	await expect(page.getByLabel('Operation log')).toContainText('--proof-policy strict');
+	await expect(page.getByLabel('Operation log')).toContainText('--unwind 2');
 	await expect(inspectOperation(page, 'impl.sync.write')).toBeVisible();
 	await inspectOperation(page, 'impl.sync.write').click();
 	await expect(page.getByLabel('Selected operation inspector')).toContainText('impl.sync.write');

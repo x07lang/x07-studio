@@ -293,6 +293,16 @@ export interface ProofCacheItem {
 	opId?: string | null;
 }
 
+export type VerifyProofPolicy = 'balanced' | 'strict';
+
+export interface VerifyRunOptions {
+	proofPolicy: VerifyProofPolicy;
+	allowOsWorld: boolean;
+	unwind: string;
+	maxBytesLen: string;
+	inputLenBytes: string;
+}
+
 export interface AgentLane {
 	id: 'codex' | 'claude-code';
 	label: string;
@@ -1485,10 +1495,61 @@ export function buildEvidenceCoverage(
 	];
 }
 
+export function defaultVerifyRunOptions(): VerifyRunOptions {
+	return {
+		proofPolicy: 'balanced',
+		allowOsWorld: false,
+		unwind: '',
+		maxBytesLen: '',
+		inputLenBytes: ''
+	};
+}
+
+export function normalizeVerifyRunOptions(options?: Partial<VerifyRunOptions>): VerifyRunOptions {
+	const defaults = defaultVerifyRunOptions();
+	return {
+		proofPolicy: options?.proofPolicy === 'strict' ? 'strict' : defaults.proofPolicy,
+		allowOsWorld: Boolean(options?.allowOsWorld),
+		unwind: normalizePositiveIntegerText(options?.unwind),
+		maxBytesLen: normalizePositiveIntegerText(options?.maxBytesLen),
+		inputLenBytes: normalizePositiveIntegerText(options?.inputLenBytes)
+	};
+}
+
+export function verifyRunVars(options?: Partial<VerifyRunOptions>): Record<string, string> {
+	const normalized = normalizeVerifyRunOptions(options);
+	return {
+		proof_policy: normalized.proofPolicy,
+		allow_os_world: String(normalized.allowOsWorld),
+		unwind: normalized.unwind,
+		max_bytes_len: normalized.maxBytesLen,
+		input_len_bytes: normalized.inputLenBytes
+	};
+}
+
+export function buildVerifyCommandPreview(options?: Partial<VerifyRunOptions>): string {
+	const normalized = normalizeVerifyRunOptions(options);
+	const args = ['x07', 'xtal', 'verify', '--proof-policy', normalized.proofPolicy];
+	if (normalized.allowOsWorld) args.push('--allow-os-world');
+	if (normalized.unwind) args.push('--unwind', normalized.unwind);
+	if (normalized.maxBytesLen) args.push('--max-bytes-len', normalized.maxBytesLen);
+	if (normalized.inputLenBytes) args.push('--input-len-bytes', normalized.inputLenBytes);
+	return args.join(' ');
+}
+
+function normalizePositiveIntegerText(value: string | number | undefined): string {
+	const trimmed = value === undefined ? '' : String(value).trim();
+	if (!trimmed) return '';
+	const parsed = Number.parseInt(trimmed, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) return '';
+	return String(parsed);
+}
+
 export function buildProofCacheLedger(
 	session: SessionSnapshot | null | undefined,
 	template: ProjectTemplate,
-	radar: WorkspaceRadarResponse | null | undefined
+	radar: WorkspaceRadarResponse | null | undefined,
+	options?: Partial<VerifyRunOptions>
 ): ProofCacheItem[] {
 	const ops = session?.op_log ?? [];
 	const approved = Boolean(session?.contract) || (session ? phaseIndex(session.phase) >= phaseIndex('spec_approved') : false);
@@ -1511,12 +1572,21 @@ export function buildProofCacheLedger(
 	const moduleId = target?.module_id ?? template.sourcePath.split('/').at(-1) ?? 'x07.project';
 	const entry = target?.entry ?? 'main';
 	const proofPolicy = proofPolicyForTemplate(template);
+	const verifyOptions = normalizeVerifyRunOptions(options);
+	const proofKeyParts = [
+		proofPolicy.value,
+		verifyOptions.proofPolicy,
+		verifyOptions.allowOsWorld ? 'allow-os-world' : 'solve-world',
+		verifyOptions.unwind ? `unwind-${verifyOptions.unwind}` : 'default-unwind',
+		verifyOptions.maxBytesLen ? `bytes-${verifyOptions.maxBytesLen}` : 'default-bytes',
+		verifyOptions.inputLenBytes ? `input-${verifyOptions.inputLenBytes}` : 'default-input'
+	];
 	const cacheKey = [
 		'xtal-proof',
 		moduleId,
 		entry,
 		approved ? 'contract-locked' : 'draft',
-		proofPolicy.value
+		...proofKeyParts
 	].join(':');
 	const verifyArtifact =
 		radar?.latest_verify?.path ??
@@ -1553,9 +1623,9 @@ export function buildProofCacheLedger(
 		},
 		{
 			label: 'Proof policy',
-			value: proofPolicy.value,
+			value: `${proofPolicy.value} / ${verifyOptions.proofPolicy}`,
 			artifact: proofPolicy.artifact,
-			detail: proofPolicy.detail,
+			detail: `${proofPolicy.detail} ${verifyOptions.allowOsWorld ? 'OS-capable worlds are explicitly allowed.' : 'Deterministic solve-* worlds remain required.'}`,
 			state: approved ? 'ready' : 'blocked'
 		},
 		{

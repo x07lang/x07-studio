@@ -619,3 +619,16 @@ This document records friction found while implementing the Studio web surface.
    verify-artifact, and certification rows. The browser test proves the ledger
    appears after a simple XTAL run while still labeling the cache as a preview,
    not a persisted compiler-backed proof cache.
+
+58. Verify-room proof controls must affect the canonical command.
+
+   The phase plan names proof policy, world selection, and verification bounds
+   as Verify-room controls. Studio showed verify evidence and proof-cache
+   dependencies, but the browser had no way to choose `balanced` versus
+   `strict`, allow an OS-capable world, or set proof bounds before running the
+   XTAL workflow. That would force users back to a terminal for one of the main
+   proof decisions. Studio now carries bounded verify variables through the web
+   API and Loom daemon, validates them, and renders them as real
+   `x07 xtal verify` flags in the operation record. The browser workflow test
+   proves the command preview, proof-cache key, and operation log all reflect a
+   strict proof run with explicit bounds.

@@ -20,13 +20,16 @@
 		buildPlatformBridge,
 		buildProviderProbeGates,
 		buildProofCacheLedger,
+		buildVerifyCommandPreview,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
 		defaultPrompt,
+		defaultVerifyRunOptions,
 		demoHealth,
 		lifecycle,
 		nextPrimaryAction,
+		normalizeVerifyRunOptions,
 		phaseIndex,
 		previewIntentWitnesses,
 		projectTemplates,
@@ -51,6 +54,8 @@
 		type RuntimeComponentStatus,
 		type SessionSnapshot,
 		type TaskType,
+		type VerifyProofPolicy,
+		type VerifyRunOptions,
 		type WorkspaceRadarResponse
 	} from '$lib/studio';
 
@@ -96,6 +101,11 @@
 	let commandLaneMode: 'plan' | 'execute' = 'execute';
 	let commandLaneEnv = 'dev';
 	let commandLaneRegion = 'local';
+	let verifyProofPolicy: VerifyProofPolicy = defaultVerifyRunOptions().proofPolicy;
+	let verifyAllowOsWorld = defaultVerifyRunOptions().allowOsWorld;
+	let verifyUnwind = defaultVerifyRunOptions().unwind;
+	let verifyMaxBytesLen = defaultVerifyRunOptions().maxBytesLen;
+	let verifyInputLenBytes = defaultVerifyRunOptions().inputLenBytes;
 	let artifactPreviewKey = '';
 	let artifactPreviewStatus = 'No artifact preview loaded';
 	let selectedArtifactPreview: ArtifactPreviewResponse | null = null;
@@ -277,7 +287,20 @@
 	$: approvalLedger = buildApprovalLedger(selected, revisionHistory, approvalState);
 	$: automationPlan = buildAutomationPlan(selected, selectedProjectTemplate, approvalState);
 	$: evidenceCoverage = buildEvidenceCoverage(selected, selectedProjectTemplate, approvalState);
-	$: proofCacheLedger = buildProofCacheLedger(selected, selectedProjectTemplate, workspaceRadar);
+	$: verifyRunOptions = normalizeVerifyRunOptions({
+		proofPolicy: verifyProofPolicy,
+		allowOsWorld: verifyAllowOsWorld,
+		unwind: verifyUnwind,
+		maxBytesLen: verifyMaxBytesLen,
+		inputLenBytes: verifyInputLenBytes
+	});
+	$: verifyCommandPreview = buildVerifyCommandPreview(verifyRunOptions);
+	$: proofCacheLedger = buildProofCacheLedger(
+		selected,
+		selectedProjectTemplate,
+		workspaceRadar,
+		verifyRunOptions
+	);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
 	$: platformBridge = buildPlatformBridge(selected, selectedProjectTemplate);
 	$: graphOverlayTitle =
@@ -1140,9 +1163,13 @@
 		statusLine = label;
 	}
 
-	async function runBinding(bindingId: string) {
+	async function runBinding(bindingId: string, options?: Partial<VerifyRunOptions>) {
 		if (!selected) return;
-		const snapshot = await api.runBinding(selected, bindingId);
+		const snapshot = await api.runBinding(
+			selected,
+			bindingId,
+			options ?? (bindingId === 'xtal.verify' ? verifyRunOptions : undefined)
+		);
 		await replaceSession(snapshot);
 		statusLine = `Ran ${bindingId}`;
 	}
@@ -1229,7 +1256,7 @@
 			if (current.phase === 'intent_drafting' || current.phase === 'intent_ready' || current.phase === 'spec_draft') {
 				current = await approveSpecSnapshot(current);
 			}
-			current = await api.runXtalWorkflow(current);
+			current = await api.runXtalWorkflow(current, verifyRunOptions);
 			const failed = current.op_log.at(-1)?.status === 'failed';
 			await replaceSession(current);
 			statusLine =
@@ -1886,6 +1913,46 @@
 					</div>
 					<code>{latestVerifyOp?.report_path ?? 'target/xtal/verify/summary.json'}</code>
 				</div>
+				<div class="verify-run-controls" aria-label="XTAL verify run controls">
+					<div class="verify-control-group">
+						<span>Proof policy</span>
+						<div class="verify-segment" role="group" aria-label="Proof policy selector">
+							<button
+								type="button"
+								class:active={verifyProofPolicy === 'balanced'}
+								on:click={() => (verifyProofPolicy = 'balanced')}
+							>
+								Balanced
+							</button>
+							<button
+								type="button"
+								class:active={verifyProofPolicy === 'strict'}
+								on:click={() => (verifyProofPolicy = 'strict')}
+							>
+								Strict
+							</button>
+						</div>
+					</div>
+					<label class="verify-checkbox">
+						<input type="checkbox" bind:checked={verifyAllowOsWorld} />
+						<span>Allow OS world</span>
+					</label>
+					<div class="verify-bounds" aria-label="Proof bounds">
+						<label>
+							<span>Unwind</span>
+							<input type="text" inputmode="numeric" placeholder="default" bind:value={verifyUnwind} />
+						</label>
+						<label>
+							<span>Max bytes</span>
+							<input type="text" inputmode="numeric" placeholder="default" bind:value={verifyMaxBytesLen} />
+						</label>
+						<label>
+							<span>Input bytes</span>
+							<input type="text" inputmode="numeric" placeholder="default" bind:value={verifyInputLenBytes} />
+						</label>
+					</div>
+					<code>{verifyCommandPreview}</code>
+				</div>
 				<div class="proof-cache-ledger" aria-label="Proof cache readiness">
 					<div class="proof-cache-head">
 						<span>Proof cache readiness</span>
@@ -1906,7 +1973,7 @@
 					<button class="command-button primary" type="button" on:click={approveAndRun} disabled={busy || !canRunProject}>
 						Run Verification
 					</button>
-					<button class="command-button" type="button" on:click={() => runBinding('xtal.verify')} disabled={busy || !selected}>
+					<button class="command-button" type="button" on:click={() => runBinding('xtal.verify', verifyRunOptions)} disabled={busy || !selected}>
 						Run xtal.verify
 					</button>
 				</div>

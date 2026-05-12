@@ -20,9 +20,9 @@ use loom_types::api::{
     CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest,
     DispatchEventRequest, DocPreviewRequest, DocPreviewResponse, FormalizeIntentRequest,
     FormalizeIntentResponse, HealthResponse, McpCallResponse, ProbeProviderRequest,
-    ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest, RuntimeComponentState,
-    RuntimeComponentStatus, SaveAgentProfileRequest, SaveProviderProfileRequest, StudioDefaults,
-    WorkspaceRadarResponse,
+    ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest, RunXtalWorkflowRequest,
+    RuntimeComponentState, RuntimeComponentStatus, SaveAgentProfileRequest,
+    SaveProviderProfileRequest, StudioDefaults, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -411,10 +411,12 @@ async fn preview_doc(
 async fn run_xtal_workflow(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
+    request: Option<Json<RunXtalWorkflowRequest>>,
 ) -> Result<Json<SessionSnapshot>, (StatusCode, String)> {
+    let vars = request.map(|Json(body)| body.vars).unwrap_or_default();
     let mut kernel = state.kernel.lock().await;
     let snapshot = kernel
-        .run_xtal_workflow(session_id)
+        .run_xtal_workflow_with_vars(session_id, &vars)
         .await
         .map_err(internal_error)?;
     Ok(Json(snapshot))

@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -14,7 +14,7 @@ use loom_adapters::command_runner::{
 };
 use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::{ProviderIntentPolishRequest, ProviderProber};
-use loom_adapters::x07_cli::{CliAdapter, ExecutedBinding};
+use loom_adapters::x07_cli::{validate_xtal_verify_vars, CliAdapter, ExecutedBinding};
 use loom_store::FsStore;
 use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
 use loom_types::api::{
@@ -521,6 +521,16 @@ impl WorkspaceKernel {
     }
 
     pub async fn run_xtal_workflow(&mut self, session_id: Uuid) -> anyhow::Result<SessionSnapshot> {
+        self.run_xtal_workflow_with_vars(session_id, &BTreeMap::new())
+            .await
+    }
+
+    pub async fn run_xtal_workflow_with_vars(
+        &mut self,
+        session_id: Uuid,
+        run_vars: &BTreeMap<String, String>,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let verify_vars = checked_xtal_verify_run_vars(run_vars)?;
         let session = self
             .model
             .get_session(session_id)
@@ -539,7 +549,8 @@ impl WorkspaceKernel {
             .as_ref()
             .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
         let template = workflow_template_from_intent(intent);
-        let vars = xtal_workflow_vars_from_intent(intent);
+        let mut vars = xtal_workflow_vars_from_intent(intent);
+        vars.extend(verify_vars);
 
         if matches!(intent.source, IntentSource::Incident { .. }) {
             return self
@@ -1195,6 +1206,28 @@ pub fn xtal_workflow_vars_from_intent(intent: &IntentPacket) -> BTreeMap<String,
             "target/xtal/impl-sync.patchset.json".to_string(),
         ),
     ])
+}
+
+fn checked_xtal_verify_run_vars(
+    run_vars: &BTreeMap<String, String>,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let allowed = [
+        "proof_policy",
+        "allow_os_world",
+        "unwind",
+        "max_bytes_len",
+        "input_len_bytes",
+    ];
+    let mut verify_vars = BTreeMap::new();
+    for (key, value) in run_vars {
+        if allowed.contains(&key.as_str()) {
+            verify_vars.insert(key.clone(), value.clone());
+        } else {
+            bail!("unsupported xtal workflow var `{key}`");
+        }
+    }
+    validate_xtal_verify_vars(&verify_vars)?;
+    Ok(verify_vars)
 }
 
 fn atlas_platform_delivery_vars(
@@ -3956,6 +3989,8 @@ fn modified_unix_ms(path: &Utf8Path) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use uuid::Uuid;
 
@@ -3968,10 +4003,10 @@ mod tests {
     use loom_types::session::SessionSnapshot;
 
     use super::{
-        atlas_platform_delivery_vars, copy_example_tree, entry_from_spec_operation,
-        intent_packet_from_raw, platform_deployment_id_from_report, sha256_hex,
-        should_scaffold_spec, workflow_template_from_intent, xtal_workflow_vars_from_intent,
-        WorkflowTemplate, WorkspaceKernel,
+        atlas_platform_delivery_vars, checked_xtal_verify_run_vars, copy_example_tree,
+        entry_from_spec_operation, intent_packet_from_raw, platform_deployment_id_from_report,
+        sha256_hex, should_scaffold_spec, workflow_template_from_intent,
+        xtal_workflow_vars_from_intent, WorkflowTemplate, WorkspaceKernel,
     };
 
     #[test]
@@ -4028,6 +4063,24 @@ mod tests {
             Some("classify_and_repair")
         );
         assert_eq!(vars.get("result").map(String::as_str), Some("bytes"));
+    }
+
+    #[test]
+    fn xtal_workflow_run_vars_allow_only_verify_controls() {
+        let vars = checked_xtal_verify_run_vars(&BTreeMap::from([
+            ("proof_policy".to_string(), "strict".to_string()),
+            ("unwind".to_string(), "2".to_string()),
+        ]))
+        .expect("verify vars accepted");
+
+        assert_eq!(vars.get("proof_policy").map(String::as_str), Some("strict"));
+        assert_eq!(vars.get("unwind").map(String::as_str), Some("2"));
+
+        assert!(checked_xtal_verify_run_vars(&BTreeMap::from([(
+            "input".to_string(),
+            "spec/other.x07spec.json".to_string()
+        )]))
+        .is_err());
     }
 
     #[test]

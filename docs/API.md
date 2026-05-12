@@ -231,10 +231,28 @@ Run XTAL workflow request:
 POST /v1/sessions/{session_id}/xtal/run
 ```
 
+Optional request body:
+
+```json
+{
+  "vars": {
+    "proof_policy": "strict",
+    "allow_os_world": "false",
+    "unwind": "2",
+    "max_bytes_len": "12",
+    "input_len_bytes": ""
+  }
+}
+```
+
 The daemon derives safe binding variables from the approved intent packet. For
 starter workspaces with no `x07.json`, it initializes an `xtal-pure` project,
 then records visible operation records for `spec.scaffold`, `spec.check`,
 `tests.gen.write`, `impl.sync.write`, `impl.check`, and `xtal.verify`.
+For `xtal.verify`, Studio accepts only bounded verification controls from the
+browser: `proof_policy=balanced|strict`, `allow_os_world=true|false`, and
+positive integer values for `unwind`, `max_bytes_len`, and `input_len_bytes`.
+Those values become real `x07 xtal verify` flags in the operation record.
 
 For `incident_repair` sessions, `intent/formalize` persists the user's incident
 note as a session-scoped XTAL violation bundle under `.x07/studio/incidents/`.
