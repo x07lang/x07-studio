@@ -1007,6 +1007,9 @@ describe('x07 Studio XTAL web model', () => {
 		expect(review.boundaries).toContain('Use `x07 run` as the default execution front door.');
 		expect(review.runbook).toContain('`xtal.verify` -> verify summary.');
 		expect(review.eventProtocol).toContain('x07.studio.agent_event@0.1.0');
+		expect(review.envContract).toContain('X07_STUDIO_ALLOWED_VERBS=intent.formalize,xtal.verify');
+		expect(review.envContract).toContain('X07_STUDIO_WRITE_ROOTS=spec/,src/');
+		expect(review.envContract).toContain('X07_STUDIO_EVENT_SCHEMA=x07.studio.agent_event@0.1.0');
 	});
 
 	it('models pending human approval checkpoints', () => {

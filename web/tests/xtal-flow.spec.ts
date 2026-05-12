@@ -476,6 +476,9 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('Claude Code');
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('.x07/studio/handoffs');
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('Human checkpoint before execute');
+	await expect(page.getByLabel('Handoff environment contract')).toContainText('X07_STUDIO_ALLOWED_VERBS');
+	await expect(page.getByLabel('Handoff environment contract')).toContainText('X07_STUDIO_WRITE_ROOTS');
+	await expect(page.getByLabel('Handoff environment contract')).toContainText('X07_STUDIO_EVENT_SCHEMA');
 	await page.getByRole('button', { name: 'Plan Claude Code Run' }).click();
 	await expect(page.locator('footer').getByText('Claude Code supervised launch plan recorded')).toBeVisible();
 	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('agent.supervise.claude-code');

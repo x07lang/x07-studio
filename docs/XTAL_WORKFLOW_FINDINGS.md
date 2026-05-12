@@ -783,3 +783,13 @@ This document records friction found while implementing the Studio web surface.
    the agent-work row active until it sees a real `agent.handoff.*`,
    `agent.supervise.*`, `agent.run.*`, `agent.event.*`, or
    `agent.approval.*` operation.
+
+73. The supervised agent environment contract should be visible before run.
+
+   Loom already exports `X07_STUDIO_*` variables to supervised Codex/Claude
+   commands, but the browser handoff review only exposed that contract through
+   the prompt excerpt and operation evidence. That makes it harder for a human
+   reviewer to confirm which machine-readable rails the agent will receive
+   before execution. Studio now renders the handoff environment contract
+   directly in the Agents room, including session id, agent id, handoff path,
+   allowed verbs, MCP tools, write roots, approval mode, and event schema.

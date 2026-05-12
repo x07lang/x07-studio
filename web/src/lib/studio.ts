@@ -490,6 +490,7 @@ export interface AgentHandoffReview {
 	allowedVerbs: string[];
 	mcpTools: string[];
 	writeRoots: string[];
+	envContract: string[];
 	boundaries: string[];
 	runbook: string[];
 	eventProtocol: string;
@@ -1255,6 +1256,15 @@ export function buildAgentHandoffReview(
 			allowedVerbs: session?.allowed_verbs.slice(0, 6) ?? [],
 			mcpTools: session?.contract?.global_doctrine.mcp_tools.slice(0, 5) ?? canonicalMcpTools,
 			writeRoots: session?.contract?.project_doctrine.write_policy.paths ?? ['spec/', 'src/', 'tests/'],
+			envContract: handoffEnvironmentContract(
+				session?.session_id ?? '<pending>',
+				agentId,
+				'.x07/studio/handoffs/',
+				session?.allowed_verbs ?? [],
+				session?.contract?.global_doctrine.mcp_tools ?? canonicalMcpTools,
+				session?.contract?.project_doctrine.write_policy.paths ?? ['spec/', 'src/', 'tests/'],
+				true
+			),
 			boundaries: ['Generate a handoff to compile execution boundaries from the approved session.'],
 			runbook: ['Approve the spec before supervised agent execution.'],
 			eventProtocol: 'agent_event JSONL is advertised after handoff generation',
@@ -1281,12 +1291,42 @@ export function buildAgentHandoffReview(
 		allowedVerbs: handoff.allowed_verbs,
 		mcpTools: handoff.mcp_tools,
 		writeRoots: handoff.write_roots,
+		envContract: handoffEnvironmentContract(
+			handoff.session_id,
+			handoff.agent_id,
+			handoff.prompt_path,
+			handoff.allowed_verbs,
+			handoff.mcp_tools,
+			handoff.write_roots,
+			handoff.approval_required
+		),
 		boundaries: boundaries.length ? boundaries : ['solve-pure default lane; widening requires approval.'],
 		runbook: runbook.length ? runbook : ['Use x07 docs/MCP tools before selecting commands.'],
 		eventProtocol,
 		promptExcerpt: handoff.prompt.split('\n').slice(0, 10).join('\n').trim(),
 		opId: sourceOp?.id ?? null
 	};
+}
+
+function handoffEnvironmentContract(
+	sessionId: string,
+	agentId: string,
+	handoffPath: string,
+	allowedVerbs: string[],
+	mcpTools: string[],
+	writeRoots: string[],
+	approvalRequired: boolean
+): string[] {
+	return [
+		`X07_STUDIO_SESSION_ID=${sessionId}`,
+		`X07_STUDIO_AGENT_ID=${agentId}`,
+		`X07_STUDIO_HANDOFF_PATH=${handoffPath}`,
+		`X07_STUDIO_ALLOWED_VERBS=${allowedVerbs.join(',')}`,
+		`X07_STUDIO_MCP_TOOLS=${mcpTools.join(',')}`,
+		`X07_STUDIO_WRITE_ROOTS=${writeRoots.join(',')}`,
+		`X07_STUDIO_APPROVAL_REQUIRED=${String(approvalRequired)}`,
+		'X07_STUDIO_EVENT_SCHEMA=x07.studio.agent_event@0.1.0'
+	];
 }
 
 export function buildAgentExecutionTimeline(

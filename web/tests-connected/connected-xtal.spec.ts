@@ -115,6 +115,9 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('Execution Boundary');
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('x07 run');
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('x07.studio.agent_event@0.1.0');
+	await expect(page.getByLabel('Handoff environment contract')).toContainText('X07_STUDIO_ALLOWED_VERBS');
+	await expect(page.getByLabel('Handoff environment contract')).toContainText('X07_STUDIO_WRITE_ROOTS');
+	await expect(page.getByLabel('Handoff environment contract')).toContainText('X07_STUDIO_EVENT_SCHEMA');
 	await page.getByRole('button', { name: 'Plan OpenAI Codex Run' }).click();
 	await expect(page.locator('footer').getByText('OpenAI Codex supervised launch plan recorded')).toBeVisible();
 	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('agent.supervise.openai-codex');

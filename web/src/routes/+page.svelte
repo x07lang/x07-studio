@@ -2453,6 +2453,12 @@
 							<code>{root}</code>
 						{/each}
 					</div>
+					<div class="handoff-section" aria-label="Handoff environment contract">
+						<span>Environment Contract</span>
+						{#each agentHandoffReview.envContract as variable}
+							<code>{variable}</code>
+						{/each}
+					</div>
 					<pre aria-label="Handoff prompt excerpt">{agentHandoffReview.promptExcerpt}</pre>
 					<p>{agentHandoffReview.eventProtocol}</p>
 				</div>
