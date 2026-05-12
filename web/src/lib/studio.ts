@@ -282,6 +282,17 @@ export interface ProviderGateItem {
 	state: ProviderGateState;
 }
 
+export type ProofCacheState = 'ready' | 'pending' | 'blocked';
+
+export interface ProofCacheItem {
+	label: string;
+	value: string;
+	artifact: string;
+	detail: string;
+	state: ProofCacheState;
+	opId?: string | null;
+}
+
 export interface AgentLane {
 	id: 'codex' | 'claude-code';
 	label: string;
@@ -1472,6 +1483,139 @@ export function buildEvidenceCoverage(
 			op: trustOp
 		})
 	];
+}
+
+export function buildProofCacheLedger(
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate,
+	radar: WorkspaceRadarResponse | null | undefined
+): ProofCacheItem[] {
+	const ops = session?.op_log ?? [];
+	const approved = Boolean(session?.contract) || (session ? phaseIndex(session.phase) >= phaseIndex('spec_approved') : false);
+	const specOp = latestMatchingOp(ops, ['spec.check', 'spec.extract', 'spec.scaffold']);
+	const implOp = latestMatchingOp(ops, ['impl.sync.write', 'impl.check', 'wasm.app.build.atlas_dev']);
+	const verifyOp = latestMatchingOp(ops, [
+		'xtal.verify',
+		'gen.verify',
+		'test.manifest',
+		'wasm.app.verify.atlas_release',
+		'wasm.app.test.'
+	]);
+	const certOp = latestMatchingOp(ops, [
+		'xtal.certify',
+		'wasm.provenance.verify',
+		'wasm.provenance.attest',
+		'lp.deploy.status.local'
+	]);
+	const target = session?.intent?.targets[0];
+	const moduleId = target?.module_id ?? template.sourcePath.split('/').at(-1) ?? 'x07.project';
+	const entry = target?.entry ?? 'main';
+	const proofPolicy = proofPolicyForTemplate(template);
+	const cacheKey = [
+		'xtal-proof',
+		moduleId,
+		entry,
+		approved ? 'contract-locked' : 'draft',
+		proofPolicy.value
+	].join(':');
+	const verifyArtifact =
+		radar?.latest_verify?.path ??
+		verifyOp?.artifacts.find((artifact) => artifact.includes('verify') || artifact.includes('test')) ??
+		template.artifacts.find((artifact) => artifact.includes('verify') || artifact.includes('test')) ??
+		'target/xtal/verify/summary.json';
+	const certArtifact =
+		radar?.latest_certify?.path ??
+		certOp?.artifacts.find((artifact) => artifact.includes('cert') || artifact.includes('provenance') || artifact.includes('deploy')) ??
+		'target/xtal/cert/bundle.json';
+	return [
+		{
+			label: 'Cache key preview',
+			value: cacheKey,
+			artifact: '.x07/studio/proof-cache/<key>.json',
+			detail: 'Deterministic preview only; compiler-backed proof cache is not persisted yet.',
+			state: approved ? 'ready' : 'blocked'
+		},
+		{
+			label: 'Spec fingerprint',
+			value: specOp?.op ?? (approved ? 'contract locked' : 'awaiting approval'),
+			artifact: session?.contract?.task_doctrine.intent_ref ?? 'spec/*.x07spec.json',
+			detail: 'Spec and examples must be stable before reusing proof evidence.',
+			state: specOp || approved ? 'ready' : 'blocked',
+			opId: specOp?.id
+		},
+		{
+			label: 'Implementation hash',
+			value: implOp?.op ?? (approved ? 'pending sync' : 'blocked'),
+			artifact: 'target/xtal/impl-sync.patchset.json',
+			detail: 'Implementation realization is part of the future proof-cache key.',
+			state: implOp ? opStatusToProofCacheState(implOp.status) : approved ? 'pending' : 'blocked',
+			opId: implOp?.id
+		},
+		{
+			label: 'Proof policy',
+			value: proofPolicy.value,
+			artifact: proofPolicy.artifact,
+			detail: proofPolicy.detail,
+			state: approved ? 'ready' : 'blocked'
+		},
+		{
+			label: 'Verify artifact',
+			value: verifyOp?.op ?? (radar?.latest_verify ? 'workspace artifact' : 'not run'),
+			artifact: verifyArtifact,
+			detail: 'Coverage, proof, generated tests, app traces, or SLO results feed cache eligibility.',
+			state: verifyOp
+				? opStatusToProofCacheState(verifyOp.status)
+				: radar?.latest_verify
+					? 'ready'
+					: approved
+						? 'pending'
+						: 'blocked',
+			opId: verifyOp?.id
+		},
+		{
+			label: 'Certification dependency',
+			value: certOp?.op ?? (radar?.latest_certify ? 'workspace artifact' : 'not certified'),
+			artifact: certArtifact,
+			detail: 'Trust/cert evidence decides whether cached proof can support release-shaped work.',
+			state: certOp
+				? opStatusToProofCacheState(certOp.status)
+				: radar?.latest_certify
+					? 'ready'
+					: approved
+						? 'pending'
+						: 'blocked',
+			opId: certOp?.id
+		}
+	];
+}
+
+function proofPolicyForTemplate(template: ProjectTemplate): { value: string; artifact: string; detail: string } {
+	const haystack = `${template.riskProfile} ${template.prompt} ${template.canonicalCommands.join(' ')}`.toLowerCase();
+	if (haystack.includes('slo') || haystack.includes('budget')) {
+		return {
+			value: 'budgeted proof',
+			artifact: 'arch/budgets/',
+			detail: 'Budget/SLO evidence must be part of proof reuse decisions.'
+		};
+	}
+	if (haystack.includes('wasm') || haystack.includes('provenance') || haystack.includes('release')) {
+		return {
+			value: 'release proof',
+			artifact: 'dist/**/provenance',
+			detail: 'Release/provenance proof evidence must stay tied to the pack artifact.'
+		};
+	}
+	return {
+		value: 'solve-pure proof',
+		artifact: 'target/xtal/verify/',
+		detail: 'Default cache policy is deterministic solve-pure verification.'
+	};
+}
+
+function opStatusToProofCacheState(status: OperationStatus): ProofCacheState {
+	if (status === 'succeeded') return 'ready';
+	if (status === 'failed') return 'blocked';
+	return 'pending';
 }
 
 function coverageItem(input: {

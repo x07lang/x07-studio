@@ -19,6 +19,7 @@
 		buildOnboardingPlan,
 		buildPlatformBridge,
 		buildProviderProbeGates,
+		buildProofCacheLedger,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
@@ -276,6 +277,7 @@
 	$: approvalLedger = buildApprovalLedger(selected, revisionHistory, approvalState);
 	$: automationPlan = buildAutomationPlan(selected, selectedProjectTemplate, approvalState);
 	$: evidenceCoverage = buildEvidenceCoverage(selected, selectedProjectTemplate, approvalState);
+	$: proofCacheLedger = buildProofCacheLedger(selected, selectedProjectTemplate, workspaceRadar);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
 	$: platformBridge = buildPlatformBridge(selected, selectedProjectTemplate);
 	$: graphOverlayTitle =
@@ -1883,6 +1885,22 @@
 						<strong>{latestVerifyOp?.op ?? 'Run the XTAL workflow to produce verify evidence.'}</strong>
 					</div>
 					<code>{latestVerifyOp?.report_path ?? 'target/xtal/verify/summary.json'}</code>
+				</div>
+				<div class="proof-cache-ledger" aria-label="Proof cache readiness">
+					<div class="proof-cache-head">
+						<span>Proof cache readiness</span>
+						<strong>{proofCacheLedger.filter((item) => item.state === 'ready').length}/{proofCacheLedger.length} ready</strong>
+					</div>
+					<div class="proof-cache-grid">
+						{#each proofCacheLedger as item}
+							<div class={`proof-cache-item ${item.state}`}>
+								<span>{item.label}</span>
+								<strong>{item.value}</strong>
+								<code>{item.artifact}</code>
+								<small>{item.detail}</small>
+							</div>
+						{/each}
+					</div>
 				</div>
 				<div class="button-row">
 					<button class="command-button primary" type="button" on:click={approveAndRun} disabled={busy || !canRunProject}>

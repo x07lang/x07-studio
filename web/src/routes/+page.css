@@ -836,6 +836,72 @@ button:focus-visible {
 	overflow: auto;
 }
 
+.proof-cache-ledger {
+	display: grid;
+	gap: 9px;
+	margin: 10px 0;
+	border: 1px solid rgba(158, 140, 255, 0.18);
+	border-radius: var(--radius);
+	background: rgba(158, 140, 255, 0.04);
+	padding: 10px;
+}
+
+.proof-cache-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.proof-cache-head span,
+.proof-cache-item span,
+.proof-cache-item small {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.proof-cache-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.proof-cache-item {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.16);
+	padding: 8px;
+}
+
+.proof-cache-item.ready {
+	border-color: rgba(114, 228, 180, 0.32);
+	background: rgba(114, 228, 180, 0.055);
+}
+
+.proof-cache-item.pending {
+	border-color: rgba(255, 195, 91, 0.32);
+	background: rgba(255, 195, 91, 0.055);
+}
+
+.proof-cache-item.blocked {
+	border-color: rgba(243, 111, 141, 0.32);
+	background: rgba(243, 111, 141, 0.055);
+}
+
+.proof-cache-item strong,
+.proof-cache-item code,
+.proof-cache-item small {
+	overflow-wrap: anywhere;
+}
+
+.proof-cache-item code {
+	color: var(--cyan);
+	font-size: 11px;
+}
+
 .panel {
 	padding: 12px;
 	min-width: 0;
@@ -3234,6 +3300,10 @@ textarea {
 	}
 
 	.provider-gates {
+		grid-template-columns: 1fr;
+	}
+
+	.proof-cache-grid {
 		grid-template-columns: 1fr;
 	}
 

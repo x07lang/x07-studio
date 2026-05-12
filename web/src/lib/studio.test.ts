@@ -17,6 +17,7 @@ import {
 	buildOnboardingPlan,
 	buildPlatformBridge,
 	buildProviderProbeGates,
+	buildProofCacheLedger,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
 	canonicalMcpTools,
@@ -377,6 +378,24 @@ describe('x07 Studio XTAL web model', () => {
 			'lp.deploy.status.local'
 		);
 		expect(bridge.items.find((item) => item.id === 'feedback')?.state).toBe('optional');
+	});
+
+	it('builds proof cache readiness from verified XTAL evidence', () => {
+		let session = demoSession();
+		session = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, 'Create a sorter.'));
+		session = reduceDemoEvent(session, 'approve_spec');
+		session = appendDemoOp(session, 'spec.check', 'succeeded');
+		session = appendDemoOp(session, 'impl.sync.write', 'succeeded');
+		session = appendDemoOp(session, 'xtal.verify', 'succeeded');
+
+		const ledger = buildProofCacheLedger(session, projectTemplates[0], null);
+		expect(ledger.find((item) => item.label === 'Cache key preview')?.value).toContain('contract-locked');
+		expect(ledger.find((item) => item.label === 'Verify artifact')?.state).toBe('ready');
+		expect(ledger.find((item) => item.label === 'Proof policy')?.value).toBe('solve-pure proof');
+		expect(ledger.find((item) => item.label === 'Certification dependency')?.state).toBe('pending');
+
+		const draftLedger = buildProofCacheLedger(demoSession(), projectTemplates[0], null);
+		expect(draftLedger.find((item) => item.label === 'Certification dependency')?.state).toBe('blocked');
 	});
 
 	it('models visible canonical operation records', () => {

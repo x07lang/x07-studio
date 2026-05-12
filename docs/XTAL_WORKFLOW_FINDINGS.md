@@ -607,3 +607,15 @@ This document records friction found while implementing the Studio web surface.
    Claude Code lanes. The browser workflow test now proves the probe gate is
    visible and that provider-backed polish stays reviewable rather than being a
    hidden prompt enhancement.
+
+57. Proof caching needs a visible dependency ledger before a compiler cache.
+
+   The phase plan calls for proof and trust evidence to be reusable only when
+   the spec, implementation, proof policy, verify artifact, and certification
+   context still match. Studio had verify and certify operation records, but no
+   single surface that explained what a future proof cache key would depend on.
+   The Verify room now renders a proof-cache readiness ledger with a
+   deterministic key preview and explicit spec, implementation, proof-policy,
+   verify-artifact, and certification rows. The browser test proves the ledger
+   appears after a simple XTAL run while still labeling the cache as a preview,
+   not a persisted compiler-backed proof cache.

@@ -184,6 +184,11 @@ test('semantic patch review explains implementation sync changes', async ({ page
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
 
+	await page.getByRole('tab', { name: 'Verify' }).click();
+	await expect(page.getByLabel('Proof cache readiness')).toContainText('Cache key preview');
+	await expect(page.getByLabel('Proof cache readiness')).toContainText('xtal-proof');
+	await expect(page.getByLabel('Proof cache readiness')).toContainText('Verify artifact');
+	await expect(page.getByLabel('Proof cache readiness')).toContainText('compiler-backed proof cache is not persisted yet');
 	await expect(inspectOperation(page, 'impl.sync.write')).toBeVisible();
 	await inspectOperation(page, 'impl.sync.write').click();
 	await expect(page.getByLabel('Selected operation inspector')).toContainText('impl.sync.write');
