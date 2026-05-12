@@ -1,17 +1,31 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { AskAnswer, LadderState, SessionSnapshot, TryItRequest, TryItResult } from '$lib/studio';
+	import type {
+		AskAnswer,
+		CassetteEntry,
+		LadderState,
+		SessionSnapshot,
+		TryItRequest,
+		TryItResult,
+		VisualKind,
+		VisualResponse
+	} from '$lib/studio';
 	import { describePhase } from '$lib/plainEnglish';
 	import TryItPanel from './TryItPanel.svelte';
 	import ShippingLadder from './ShippingLadder.svelte';
+	import VisualEditor from './VisualEditor.svelte';
 
 	export let session: SessionSnapshot | null = null;
 	export let ladder: LadderState | null = null;
 	export let tryResult: TryItResult | null = null;
 	export let askAnswer: AskAnswer | null = null;
+	export let cassettes: CassetteEntry[] = [];
+	export let visualParseResult: VisualResponse | null = null;
+	export let visualEmitResult: VisualResponse | null = null;
 	export let busy = false;
 
 	let question = '';
+	let syncClaim = '';
 
 	const dispatch = createEventDispatcher<{
 		build: void;
@@ -20,7 +34,17 @@
 		scan: void;
 		ask: string;
 		sync: void;
+		claimSync: string;
+		quorum: void;
+		cassetteLoad: void;
+		cassetteBranch: { idx: number; title: string };
+		visualParse: { kind: VisualKind; source: unknown };
+		visualEmit: { kind: VisualKind; graph: unknown };
 	}>();
+
+	function branchTitle(entry: CassetteEntry) {
+		return `Replay ${entry.key}`;
+	}
 </script>
 
 <aside class="now-panel" data-testid="now-panel">
@@ -38,10 +62,47 @@
 		<button type="button" class="command-button" disabled={!session || busy} on:click={() => dispatch('sync')}>
 			Continue elsewhere
 		</button>
+		<div class="inline-form">
+			<input bind:value={syncClaim} placeholder="Sync code" aria-label="Sync code" />
+			<button type="button" class="command-button" disabled={busy || !syncClaim.trim()} on:click={() => dispatch('claimSync', syncClaim)}>
+				Claim
+			</button>
+		</div>
+		<button type="button" class="command-button" disabled={!session || busy} on:click={() => dispatch('quorum')} data-testid="run-quorum">
+			Run quorum
+		</button>
 	</section>
 
 	<TryItPanel result={tryResult} {busy} on:invoke={(event) => dispatch('invoke', event.detail)} />
 	<ShippingLadder {ladder} {busy} on:climb={(event) => dispatch('climb', event.detail)} />
+
+	<section class="now-card cassette-card">
+		<header>
+			<h2>Time travel</h2>
+			<span>{cassettes.length} entries</span>
+		</header>
+		<button type="button" class="command-button" disabled={!session || busy} on:click={() => dispatch('cassetteLoad')}>
+			Load cassettes
+		</button>
+		{#if cassettes.length}
+			<div class="cassette-list" data-testid="cassette-list">
+				{#each cassettes.slice(0, 5) as entry}
+					<div>
+						<span><code>#{entry.idx}</code> {entry.key}</span>
+						<button
+							type="button"
+							class="command-button"
+							disabled={busy}
+							on:click={() => dispatch('cassetteBranch', { idx: entry.idx, title: branchTitle(entry) })}
+						>
+							Branch
+						</button>
+						<small>{entry.kind} - {entry.size_bytes} bytes</small>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</section>
 
 	<section class="now-card ask-card">
 		<header>
@@ -60,4 +121,13 @@
 			</ul>
 		{/if}
 	</section>
+
+	<VisualEditor
+		{session}
+		{busy}
+		parseResult={visualParseResult}
+		emitResult={visualEmitResult}
+		on:parse={(event) => dispatch('visualParse', event.detail)}
+		on:emit={(event) => dispatch('visualEmit', event.detail)}
+	/>
 </aside>

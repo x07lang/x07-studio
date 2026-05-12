@@ -591,10 +591,84 @@ async fn run_intent_quorum(
     State(state): State<ApiState>,
     Json(request): Json<QuorumRequest>,
 ) -> Result<Json<QuorumRound>, (StatusCode, String)> {
-    let mut kernel = state.kernel.lock().await;
-    let round = kernel
-        .run_intent_quorum(session_id, &request.agent_ids)
-        .map_err(conflict_error)?;
+    let genpack_seed = {
+        let kernel = state.kernel.lock().await;
+        kernel
+            .genpack_context_seed(session_id)
+            .map_err(conflict_error)?
+    };
+    let genpack = WorkspaceKernel::resolve_genpack_context(genpack_seed).await;
+    let prepared = {
+        let mut kernel = state.kernel.lock().await;
+        kernel
+            .prepare_intent_quorum_with_genpack(
+                session_id,
+                &request.agent_ids,
+                request.timeout_seconds,
+                genpack.as_ref(),
+            )
+            .map_err(conflict_error)?
+    };
+    let round = prepared
+        .iter()
+        .filter_map(|item| item.clarify_round)
+        .min()
+        .ok_or_else(|| internal_error(anyhow::anyhow!("quorum prepared no clarify runs")))?;
+    let runs = prepared
+        .iter()
+        .map(|item| (item.handoff.agent_id.clone(), item.op.id))
+        .collect::<Vec<_>>();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut join_set = tokio::task::JoinSet::new();
+    for item in prepared {
+        if let Some(command) = item.command {
+            let updates = tx.clone();
+            join_set.spawn(async move {
+                WorkspaceKernel::execute_agent_command_streaming(command, updates).await
+            });
+        }
+    }
+    drop(tx);
+    let mut running = join_set.len();
+    let mut updates_open = true;
+    while running > 0 || updates_open {
+        tokio::select! {
+            update = rx.recv(), if updates_open => {
+                if let Some(update) = update {
+                    let mut kernel = state.kernel.lock().await;
+                    kernel
+                        .complete_agent_run(update)
+                        .map_err(internal_error)?;
+                } else {
+                    updates_open = false;
+                }
+            }
+            joined = join_set.join_next(), if running > 0 => {
+                running -= 1;
+                let final_op = joined
+                    .ok_or_else(|| internal_error(anyhow::anyhow!("quorum task ended without result")))?
+                    .map_err(|error| internal_error(anyhow::anyhow!("quorum task join failed: {error}")))?;
+                let mut kernel = state.kernel.lock().await;
+                kernel
+                    .complete_agent_run(final_op)
+                    .map_err(internal_error)?;
+            }
+        }
+    }
+    {
+        let mut kernel = state.kernel.lock().await;
+        for (agent_id, run_op_id) in &runs {
+            kernel
+                .ingest_clarify_questions_at_round(session_id, agent_id, *run_op_id, round)
+                .map_err(internal_error)?;
+        }
+    }
+    let round = {
+        let mut kernel = state.kernel.lock().await;
+        kernel
+            .complete_intent_quorum(session_id, round, &request.agent_ids)
+            .map_err(conflict_error)?
+    };
     Ok(Json(round))
 }
 
@@ -924,7 +998,7 @@ async fn claim_sync_code(
     Path(code): Path<String>,
     State(state): State<ApiState>,
 ) -> Result<Json<SyncClaimResponse>, (StatusCode, String)> {
-    let kernel = state.kernel.lock().await;
+    let mut kernel = state.kernel.lock().await;
     let session = kernel.claim_sync_code(&code).map_err(conflict_error)?;
     Ok(Json(SyncClaimResponse { session }))
 }

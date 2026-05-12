@@ -221,6 +221,18 @@ export interface SyncCode {
 	session_id: string;
 }
 
+export interface SyncClaimResponse {
+	session: SessionSnapshot;
+}
+
+export type VisualKind = 'streampipe' | 'statemachine' | 'tasks';
+
+export interface VisualResponse {
+	schema_version: 'x07.studio.visual@0.1.0';
+	kind: VisualKind | string;
+	value: unknown;
+}
+
 export interface StudioMemory {
 	preferences: {
 		default_agent?: string | null;

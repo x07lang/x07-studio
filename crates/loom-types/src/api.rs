@@ -316,6 +316,8 @@ pub struct QuorumDiff {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuorumRequest {
     pub agent_ids: Vec<String>,
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -352,7 +354,7 @@ pub struct AnswerCitation {
     pub locator: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SyncCode {
     pub code: String,
     pub expires_at: String,

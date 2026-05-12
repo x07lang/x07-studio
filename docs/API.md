@@ -575,12 +575,14 @@ Intent quorum request:
 
 ```json
 {
-  "agent_ids": ["openai-codex", "claude-code"]
+  "agent_ids": ["openai-codex", "claude-code"],
+  "timeout_seconds": 90
 }
 ```
 
-`POST /v1/sessions/{session_id}/intent/quorum` records a deterministic review
-round with per-agent clarification questions and a diff summary.
+`POST /v1/sessions/{session_id}/intent/quorum` runs the requested agents in
+parallel supervised clarify mode, ingests their structured `clarify_question`
+events into one shared quorum round, and records a diff summary operation.
 
 Image witness upload uses `multipart/form-data`:
 
@@ -605,6 +607,11 @@ Cassette endpoints:
 }
 ```
 
+Branching creates a sibling session from the source session, replays cassette
+entries through the selected index into
+`.x07/studio/cassette_branches/{session}/replay`, truncates later session
+operations, and records a replay manifest as the branch operation artifact.
+
 Project Q&A request:
 
 ```json
@@ -627,8 +634,8 @@ The scan reads `.x07-wasm/incidents`, `target/xtal/violations`, and
 Repair records the bounded `xtal.repair` / ingest-improve lane for the chosen
 incident.
 
-Visual parse/emit endpoints normalize simple graph payloads for
-`streampipe`, `statemachine`, and `tasks`:
+Visual parse/emit endpoints normalize graph payloads for `streampipe`,
+`statemachine`, and `tasks`; the browser visual editor uses the same contract:
 
 ```json
 {
@@ -649,9 +656,11 @@ Visual parse/emit endpoints normalize simple graph payloads for
 - `GET /v1/memory`
 - `POST /v1/memory`
 
-Sync codes point at the daemon's current first session and expire while the
-daemon is running. Studio memory is stored locally as append-only JSONL at
-`~/.x07-studio/memory.jsonl` unless `X07_STUDIO_MEMORY_PATH` overrides it.
+Sync codes point at the daemon's current first session, expire after their
+timestamp, and are persisted under `.x07/studio/sync_codes.json` so a restarted
+local daemon can still claim unexpired codes. Studio memory is stored locally as
+append-only JSONL at `~/.x07-studio/memory.jsonl` unless
+`X07_STUDIO_MEMORY_PATH` overrides it.
 `POST /v1/memory` accepts a JSON merge-style patch and returns the projected
 memory state, which contains preferences, recent projects, and reusable spec
 references.

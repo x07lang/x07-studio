@@ -18,7 +18,7 @@ test('connected timeline formalizes, clarifies, builds, tries, and scans inciden
 	await expect(page.getByTestId('turn-agent_clarify')).toBeVisible({ timeout: 20_000 });
 	await expect(page.getByTestId('clarify-card')).toHaveCount(2, { timeout: 20_000 });
 
-	const empty = page.locator('[data-testid="clarify-card"][data-question-id="q-empty-input"]');
+	const empty = page.locator('[data-testid="clarify-card"][data-question-id="q-claude-empty-input"]');
 	await empty.getByRole('button', { name: 'Reject with an error' }).click();
 	await empty.getByTestId('clarify-answer-submit').click();
 	await expect(empty.getByTestId('clarify-answer-locked')).toBeVisible({ timeout: 10_000 });
@@ -91,4 +91,48 @@ test('connected handoff embeds detected service genpack schema', async ({ page }
 	expect(handoff.handoff.prompt).toContain('Detected archetype: `api-cell`');
 	expect(handoff.handoff.prompt).toContain('x07.service.genpack.schema_v1');
 	expect(handoff.handoff.prompt).toContain('api-cell ::= service operations policy');
+});
+
+test('connected continuity tools run quorum, sync claims, cassette branches, and visual emit', async ({
+	page
+}) => {
+	const prompt = 'Build an API gateway service with a replay cassette and visual task flow.';
+	await page.goto('/?details=open');
+	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+
+	await page.getByTestId('composer-input').fill(prompt);
+	await page.getByTestId('composer-submit').click();
+	await expect(page.getByTestId('turn-user_intent')).toContainText('API gateway', {
+		timeout: 15_000
+	});
+
+	await page.getByTestId('run-quorum').click();
+	await expect(page.getByTestId('timeline')).toContainText('openai-codex', { timeout: 30_000 });
+	await expect(page.getByTestId('timeline')).toContainText('claude-code', { timeout: 30_000 });
+
+	await page.getByRole('button', { name: 'Continue elsewhere' }).click();
+	await expect(page.getByText('Sync code')).toBeVisible({ timeout: 10_000 });
+	const radarText = await page.locator('.session-radar').innerText();
+	const code = radarText.match(/[A-Z0-9]{8}/)?.[0];
+	expect(code).toBeTruthy();
+	await page.getByLabel('Sync code').fill(code ?? '');
+	await page.getByRole('button', { name: 'Claim' }).click();
+	await expect(page.getByText(`Claimed sync code ${code}`)).toBeVisible({ timeout: 10_000 });
+
+	await page.getByRole('button', { name: 'Load cassettes' }).click();
+	await expect(page.getByTestId('cassette-list')).toContainText('001-request.json', {
+		timeout: 10_000
+	});
+	await page.getByTestId('cassette-list').getByRole('button', { name: 'Branch' }).first().click();
+	await expect(page.locator('.session-radar')).toContainText('Replay .x07_rr/http/001-request.json', {
+		timeout: 10_000
+	});
+
+	const visual = page.getByTestId('visual-editor');
+	await visual.getByRole('button', { name: 'Parse' }).click();
+	await expect(visual.getByLabel('Node 0 label')).toHaveValue('fetch input');
+	await visual.getByRole('button', { name: 'Emit' }).click();
+	await expect(page.getByTestId('visual-output')).toContainText('fetch input | normalize | verify', {
+		timeout: 10_000
+	});
 });

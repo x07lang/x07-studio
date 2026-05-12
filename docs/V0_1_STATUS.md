@@ -79,7 +79,7 @@
 - Try-It endpoint and browser panel invoke verified artifacts with text, file, base64, or argv input and return proof citations next to output
 - shipping ladder projects local preview, shareable, team, and production rungs and records trust commands when climbing
 - incident scan and repair endpoints ingest `.x07-wasm/incidents`, `target/xtal/violations`, and `target/xtal/ingest` bundles into the Timeline
-- cassette history, branch creation, project Q&A with citations, daemon sync codes, append-only local memory, intent quorum rounds, image witnesses, and visual parse/emit endpoints are wired through Loom and the browser shell
+- cassette history, replaying branch creation, project Q&A with citations, persistent daemon sync codes, append-only local memory, live parallel intent quorum rounds, image witnesses, visual parse/emit endpoints, and visual graph editors are wired through Loom and the browser shell
 
 ## Still intentionally thin in v0.1
 
@@ -89,9 +89,7 @@
 - the v0.1 shells expose lifecycle controls, graph overlays, artifact logs, a compact trust review queue, artifact-backed patchset previews, semantic patch review rows, path-level before/after visual patch review, and browser speech transcript capture with confidence review; richer provider and STT backend configuration remains a later UI layer
 - no compiler-backed persisted proof cache yet
 - no persisted audio capture or local STT model selection yet
-- quorum review is deterministic in Cycle 2; it records comparable questions and diffs but is not yet a live multi-agent scheduler
-- sync codes are daemon-memory local and expire with the running daemon
-- visual parse/emit endpoints normalize simple payloads; richer graphical editors remain later UI work
+- visual graph editors cover the current `streampipe`, `statemachine`, and `tasks` graph exchange layer; future domain-specific editors can build on the same API
 
 ## Validation done here
 

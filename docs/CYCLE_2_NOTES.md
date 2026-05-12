@@ -15,26 +15,24 @@ state through the browser, native Studio shell, Forge shell, and daemon API.
 - Shipping ladder state and rung-climb operations.
 - Incident scanning and repair from canonical Studio, XTAL, and x07-wasm
   incident surfaces.
-- Intent quorum rounds, image witnesses, cassette entries, cassette branching,
-  project Q&A, sync codes, local memory, and visual parse/emit endpoints.
+- Live parallel intent quorum rounds, image witnesses, cassette entries,
+  replaying cassette branches, project Q&A, persistent sync codes, local
+  memory, visual parse/emit endpoints, and browser visual graph editors.
 - Genpack-aware agent handoff prompts for detected service archetypes, including
   local `x07 service genpack schema` and `grammar` output when available.
 - Trust binding coverage for sandbox reports, profile checks, and profile
   certification.
 - Browser tests and connected daemon tests for the Timeline path, Atlas
-  workflow lane, incident repair, and genpack-aware handoff prompts.
+  workflow lane, incident repair, genpack-aware handoff prompts, live quorum,
+  sync claims, cassette branching, and visual graph editing.
 
 ## Intentional Limits
 
-- Quorum rounds are deterministic local projections, not live parallel agent
-  execution.
-- Sync codes are in-memory for the running daemon.
 - Local Studio memory is append-only JSONL under `~/.x07-studio`, not a hosted
   identity or cloud sync system.
-- Cassette branching creates a sibling session from a selected entry but does
-  not yet replay or truncate every persisted artifact below that point.
-- Visual parse/emit is a normalized graph exchange layer; full visual editors
-  are a later cycle.
+- Visual editors are local graph editors for the currently supported
+  `streampipe`, `statemachine`, and `tasks` graph exchange layer; they are not a
+  domain-specific layout engine for every future x07 surface.
 
 ## Validation Targets
 

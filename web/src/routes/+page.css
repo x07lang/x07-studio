@@ -224,6 +224,12 @@
 	color: var(--text);
 }
 
+.inline-form {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 8px;
+}
+
 .run-it {
 	display: grid;
 	gap: 8px;
@@ -359,6 +365,63 @@
 	grid-column: 1 / -1;
 	color: var(--muted);
 	overflow-wrap: anywhere;
+}
+
+.cassette-list,
+.visual-editor,
+.visual-edges {
+	display: grid;
+	gap: 8px;
+}
+
+.cassette-list div {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 4px 8px;
+	align-items: center;
+	padding: 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.cassette-list span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.cassette-list small {
+	grid-column: 1 / -1;
+	color: var(--muted);
+}
+
+.visual-canvas {
+	min-height: 160px;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+	gap: 10px;
+	padding: 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: rgba(85, 214, 231, 0.045);
+}
+
+.visual-node {
+	display: grid;
+	gap: 7px;
+	align-content: start;
+	padding: 9px;
+	border: 1px solid rgba(85, 214, 231, 0.28);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.18);
+}
+
+.visual-edges span {
+	padding: 6px 8px;
+	border: 1px solid var(--border);
+	border-radius: 99px;
+	color: var(--muted);
+	font-family: var(--font-mono);
+	font-size: 11px;
 }
 
 .composer {

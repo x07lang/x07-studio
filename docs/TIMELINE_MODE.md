@@ -30,8 +30,8 @@ screens.
    `shareable`, `team`, and `production` rungs with missing evidence and a
    controlled climb action.
 6. **`NowPanel`** keeps operational controls close to the current work:
-   quorum review, incident scan/repair, cassette history, project Q&A,
-   sync-code minting, and memory load.
+   live quorum review, incident scan/repair, cassette history and branching,
+   project Q&A, sync-code mint/claim, memory load, and visual graph editing.
 
 ## Timeline Contract
 
@@ -96,12 +96,10 @@ provider, agent, MCP, preview, and build endpoints:
 - `POST /v1/sessions/{id}/visual/{streampipe|statemachine|tasks}/parse`
 - `POST /v1/sessions/{id}/visual/{streampipe|statemachine|tasks}/emit`
 
-## Intentional Limits
+## Current Limits
 
-- Quorum review is deterministic and local in Cycle 2. It records comparable
-  questions and diffs, but it is not yet a live multi-agent scheduler.
-- Sync codes live in daemon memory and are valid only while that daemon runs.
 - Studio memory is a local JSONL append surface under `~/.x07-studio`; it is
   not a hosted account system.
-- Visual parse/emit endpoints normalize simple graph payloads for supported
-  surfaces; they are not full graphical editors.
+- Visual editors cover the supported `streampipe`, `statemachine`, and `tasks`
+  graph exchange layer; specialized editors for future x07 surfaces should
+  build on the same parse/emit contract.

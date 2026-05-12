@@ -44,10 +44,13 @@ import {
 	type SessionStreamEvent,
 	type SessionTurn,
 	type StudioMemory,
+	type SyncClaimResponse,
 	type SyncCode,
 	type TaskType,
 	type TryItRequest,
 	type TryItResult,
+	type VisualKind,
+	type VisualResponse,
 	type RepairRunOptions,
 	type VerifyRunOptions,
 	type WorkspaceRadarResponse
@@ -397,11 +400,15 @@ export class StudioApi {
 		}
 	}
 
-	async runIntentQuorum(session: SessionSnapshot, agentIds: string[]): Promise<QuorumRound | null> {
+	async runIntentQuorum(
+		session: SessionSnapshot,
+		agentIds: string[],
+		options: { timeoutSeconds?: number } = {}
+	): Promise<QuorumRound | null> {
 		if (this.demoMode) return null;
 		const response = await request<QuorumRound>(`/v1/sessions/${session.session_id}/intent/quorum`, {
 			method: 'POST',
-			body: JSON.stringify({ agent_ids: agentIds })
+			body: JSON.stringify({ agent_ids: agentIds, timeout_seconds: options.timeoutSeconds ?? null })
 		});
 		return response;
 	}
@@ -550,6 +557,16 @@ export class StudioApi {
 		return [];
 	}
 
+	async branchCassette(session: SessionSnapshot, fromEntry: number, newTitle: string): Promise<string | null> {
+		if (!this.demoMode) {
+			return await request<string>(`/v1/sessions/${session.session_id}/cassette/branch`, {
+				method: 'POST',
+				body: JSON.stringify({ from_entry: fromEntry, new_title: newTitle })
+			});
+		}
+		return null;
+	}
+
 	async askProject(session: SessionSnapshot, question: string): Promise<AskAnswer> {
 		if (!this.demoMode) {
 			return await request<AskAnswer>(`/v1/sessions/${session.session_id}/ask`, {
@@ -568,9 +585,52 @@ export class StudioApi {
 		return await request<SyncCode>('/v1/sync/codes');
 	}
 
+	async claimSyncCode(code: string): Promise<SyncClaimResponse | null> {
+		if (this.demoMode) return null;
+		return await request<SyncClaimResponse>(`/v1/sync/${encodeURIComponent(code)}/claim`, {
+			method: 'POST'
+		});
+	}
+
 	async loadMemory(): Promise<StudioMemory | null> {
 		if (this.demoMode) return null;
 		return await request<StudioMemory>('/v1/memory');
+	}
+
+	async visualParse(
+		session: SessionSnapshot,
+		kind: VisualKind,
+		source: unknown
+	): Promise<VisualResponse | null> {
+		if (this.demoMode) {
+			return {
+				schema_version: 'x07.studio.visual@0.1.0',
+				kind,
+				value: demoVisualParse(kind, source)
+			};
+		}
+		return await request<VisualResponse>(`/v1/sessions/${session.session_id}/visual/${kind}/parse`, {
+			method: 'POST',
+			body: JSON.stringify({ source })
+		});
+	}
+
+	async visualEmit(
+		session: SessionSnapshot,
+		kind: VisualKind,
+		graph: unknown
+	): Promise<VisualResponse | null> {
+		if (this.demoMode) {
+			return {
+				schema_version: 'x07.studio.visual@0.1.0',
+				kind,
+				value: kind === 'streampipe' ? labelsFromGraph(graph).join(' | ') : graph
+			};
+		}
+		return await request<VisualResponse>(`/v1/sessions/${session.session_id}/visual/${kind}/emit`, {
+			method: 'POST',
+			body: JSON.stringify({ graph })
+		});
 	}
 
 	subscribeSession(
@@ -1329,6 +1389,36 @@ function agentRunApproved(session: SessionSnapshot, agentId: string): boolean {
 function sanitizeOpName(value: string): string {
 	const lowered = value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 	return lowered || 'run_v1';
+}
+
+function demoVisualParse(kind: VisualKind, source: unknown) {
+	if (kind === 'streampipe') {
+		const labels = String(source ?? '')
+			.split('|')
+			.map((item) => item.trim())
+			.filter(Boolean);
+		return {
+			nodes: labels.map((label, index) => ({ id: String(index + 1), label })),
+			edges: labels.slice(1).map((_, index) => ({
+				from: String(index + 1),
+				to: String(index + 2),
+				label: 'pipe'
+			}))
+		};
+	}
+	return source;
+}
+
+function labelsFromGraph(graph: unknown): string[] {
+	if (!graph || typeof graph !== 'object' || !('nodes' in graph)) return [];
+	const nodes = (graph as { nodes?: unknown }).nodes;
+	if (!Array.isArray(nodes)) return [];
+	return nodes
+		.map((node) => {
+			if (!node || typeof node !== 'object' || !('label' in node)) return '';
+			return String((node as { label?: unknown }).label ?? '').trim();
+		})
+		.filter(Boolean);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

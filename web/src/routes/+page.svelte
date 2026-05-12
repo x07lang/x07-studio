@@ -4,6 +4,7 @@
 	import { StudioApi } from '$lib/api';
 	import type {
 		AskAnswer,
+		CassetteEntry,
 		HealthResponse,
 		IntentAnswer,
 		IntentInputMode,
@@ -14,7 +15,9 @@
 		StudioMemory,
 		SyncCode,
 		TryItRequest,
-		TryItResult
+		TryItResult,
+		VisualKind,
+		VisualResponse
 	} from '$lib/studio';
 	import { demoHealth } from '$lib/studio';
 	import Timeline from '$lib/components/Timeline.svelte';
@@ -30,6 +33,9 @@
 	let ladder: LadderState | null = null;
 	let tryResult: TryItResult | null = null;
 	let askAnswer: AskAnswer | null = null;
+	let cassettes: CassetteEntry[] = [];
+	let visualParseResult: VisualResponse | null = null;
+	let visualEmitResult: VisualResponse | null = null;
 	let memory: StudioMemory | null = null;
 	let syncCode: SyncCode | null = null;
 	let busy = false;
@@ -224,6 +230,63 @@
 		status = syncCode ? `Sync code ${syncCode.code}` : 'Sync unavailable in demo mode';
 	}
 
+	async function claimSync(code: string) {
+		const claimed = await api.claimSyncCode(code);
+		if (!claimed) {
+			status = 'Sync claim unavailable in demo mode';
+			return;
+		}
+		replaceSelected(claimed.session);
+		subscribe(claimed.session.session_id);
+		await refreshDerived();
+		status = `Claimed sync code ${code.trim().toUpperCase()}`;
+	}
+
+	async function runQuorum() {
+		if (!selected) return;
+		busy = true;
+		try {
+			const round = await api.runIntentQuorum(selected, ['openai-codex', 'claude-code'], {
+				timeoutSeconds: 90
+			});
+			selected = await api.getSession(selected.session_id);
+			await refreshDerived();
+			status = round ? `Quorum round ${round.round} complete` : 'Quorum unavailable in demo mode';
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function loadCassettes() {
+		if (!selected) return;
+		cassettes = await api.cassetteEntries(selected);
+		status = cassettes.length ? `Loaded ${cassettes.length} cassette entries` : 'No cassettes recorded';
+	}
+
+	async function branchCassette(detail: { idx: number; title: string }) {
+		if (!selected) return;
+		const branchId = await api.branchCassette(selected, detail.idx, detail.title);
+		if (branchId) {
+			sessions = await api.listSessions();
+			selected = await api.getSession(branchId);
+			subscribe(branchId);
+			await refreshDerived();
+			status = `Branched cassette entry ${detail.idx}`;
+		}
+	}
+
+	async function visualParse(detail: { kind: VisualKind; source: unknown }) {
+		if (!selected) return;
+		visualParseResult = await api.visualParse(selected, detail.kind, detail.source);
+		status = `Parsed ${detail.kind} graph`;
+	}
+
+	async function visualEmit(detail: { kind: VisualKind; graph: unknown }) {
+		if (!selected) return;
+		visualEmitResult = await api.visualEmit(selected, detail.kind, detail.graph);
+		status = `Emitted ${detail.kind} source`;
+	}
+
 	async function uploadImage(detail: { file: File }) {
 		if (!selected) return;
 		const form = new FormData();
@@ -288,6 +351,9 @@
 			{ladder}
 			{tryResult}
 			{askAnswer}
+			{cassettes}
+			{visualParseResult}
+			{visualEmitResult}
 			{busy}
 			on:build={build}
 			on:invoke={(event) => invoke(event.detail)}
@@ -295,6 +361,12 @@
 			on:scan={scanIncidents}
 			on:ask={(event) => ask(event.detail)}
 			on:sync={mintSync}
+			on:claimSync={(event) => claimSync(event.detail)}
+			on:quorum={runQuorum}
+			on:cassetteLoad={loadCassettes}
+			on:cassetteBranch={(event) => branchCassette(event.detail)}
+			on:visualParse={(event) => visualParse(event.detail)}
+			on:visualEmit={(event) => visualEmit(event.detail)}
 		/>
 	</div>
 

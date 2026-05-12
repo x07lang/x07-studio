@@ -27,7 +27,8 @@ use loom_types::api::{
     AnswerCitation, ArtifactPreviewResponse, AskAnswer, AskRequest, CassetteEntry, DocPreviewEntry,
     DocPreviewResponse, LadderState, PatchsetPreview, PatchsetTargetPreview, ProofCitation,
     QuorumAgent, QuorumDiff, QuorumRound, SessionTurn, StudioMemory, SyncCode, TryItInputKind,
-    TryItRequest, TryItResult, VisualResponse, WorkspacePathState, WorkspaceRadarResponse,
+    TryItRequest, TryItResult, TurnQuestion, VisualResponse, WorkspacePathState,
+    WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
@@ -57,6 +58,7 @@ pub struct PreparedAgentRun {
     pub op: OpRecord,
     pub session: SessionSnapshot,
     pub command: Option<AgentCommandPlan>,
+    pub clarify_round: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +95,17 @@ impl WorkspaceKernel {
         }
 
         let cli = CliAdapter::new(root.as_path(), store.reports_dir());
+        let sync_codes = store
+            .load_sync_codes()?
+            .into_iter()
+            .filter(|code| !sync_code_is_expired(&code.expires_at))
+            .map(|code| {
+                (
+                    code.code.to_ascii_uppercase(),
+                    (code.session_id, code.expires_at),
+                )
+            })
+            .collect();
         Ok(Self {
             root,
             model,
@@ -100,7 +113,7 @@ impl WorkspaceKernel {
             cli,
             providers: ProviderProber::default(),
             mcp_connections: HashMap::new(),
-            sync_codes: HashMap::new(),
+            sync_codes,
             event_bus: Arc::new(SessionEventBus::new()),
         })
     }
@@ -330,9 +343,47 @@ impl WorkspaceKernel {
         self.run_binding(session_id, "xtal.improve", &vars).await
     }
 
-    pub fn run_intent_quorum(
+    pub fn prepare_intent_quorum_with_genpack(
         &mut self,
         session_id: Uuid,
+        agent_ids: &[String],
+        timeout_seconds: Option<u64>,
+        genpack: Option<&GenpackHandoffContext>,
+    ) -> anyhow::Result<Vec<PreparedAgentRun>> {
+        let mut prepared = Vec::new();
+        for agent_id in agent_ids
+            .iter()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .take(3)
+        {
+            prepared.push(self.start_intent_clarify_with_genpack(
+                session_id,
+                agent_id,
+                timeout_seconds,
+                genpack,
+            )?);
+        }
+        if prepared.is_empty() {
+            bail!("intent quorum requires at least one agent");
+        }
+        Ok(prepared)
+    }
+
+    pub fn ingest_clarify_questions_at_round(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        run_op_id: Uuid,
+        round: u32,
+    ) -> anyhow::Result<SessionSnapshot> {
+        self.ingest_clarify_questions_inner(session_id, agent_id, run_op_id, Some(round))
+    }
+
+    pub fn complete_intent_quorum(
+        &mut self,
+        session_id: Uuid,
+        round: u32,
         agent_ids: &[String],
     ) -> anyhow::Result<QuorumRound> {
         let session = self
@@ -340,68 +391,51 @@ impl WorkspaceKernel {
             .get_session(session_id)
             .cloned()
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
-        let mut intent = session
+        let intent = session
             .intent
             .clone()
             .ok_or_else(|| anyhow!("session `{session_id}` has no intent"))?;
-        let round = intent
-            .clarification_history
+        let requested = agent_ids
             .iter()
-            .map(|turn| turn.round)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let mut agents = Vec::new();
-        for agent_id in agent_ids.iter().filter(|id| !id.trim().is_empty()).take(3) {
-            let questions = quorum_questions_for_intent(&intent)
-                .into_iter()
-                .enumerate()
-                .map(|(index, text)| {
-                    let id = format!("q-quorum-{round}-{agent_id}-{index}");
-                    loom_types::api::TurnQuestion {
-                        id,
-                        text,
-                        witness_kind: WitnessKind::DesiredBehavior,
-                        options: Vec::new(),
-                        answer: None,
-                    }
-                })
-                .collect::<Vec<_>>();
-            for question in &questions {
-                intent
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .take(3)
+            .collect::<Vec<_>>();
+        let agents = requested
+            .iter()
+            .map(|agent_id| {
+                let questions = intent
                     .clarification_history
-                    .push(loom_types::artifacts::ClarificationTurn {
-                        question_id: question.id.clone(),
-                        question_text: question.text.clone(),
-                        witness_kind: question.witness_kind.clone(),
-                        round,
-                        agent_id: agent_id.clone(),
-                        options: question.options.clone(),
-                        question_recorded_at: now_string(),
-                        answer_text: None,
-                        answer_recorded_at: None,
-                    });
-            }
-            agents.push(QuorumAgent {
-                agent_id: agent_id.clone(),
-                questions,
-            });
-        }
+                    .iter()
+                    .filter(|turn| turn.round == round && turn.agent_id == *agent_id)
+                    .map(|turn| TurnQuestion {
+                        id: turn.question_id.clone(),
+                        text: turn.question_text.clone(),
+                        witness_kind: turn.witness_kind.clone(),
+                        options: turn.options.clone(),
+                        answer: turn.answer_text.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                QuorumAgent {
+                    agent_id: agent_id.clone(),
+                    questions,
+                }
+            })
+            .collect::<Vec<_>>();
+        let total_questions = agents
+            .iter()
+            .map(|agent| agent.questions.len())
+            .sum::<usize>();
         let diff = vec![QuorumDiff {
-            label: "Assumption coverage".to_string(),
+            label: "Live agent coverage".to_string(),
             detail: format!(
-                "{} agent{} checked {} open item{}.",
+                "{} agent{} returned {} question{} in quorum round {round}.",
                 agents.len(),
                 if agents.len() == 1 { "" } else { "s" },
-                intent.ambiguities.len(),
-                if intent.ambiguities.len() == 1 {
-                    ""
-                } else {
-                    "s"
-                }
+                total_questions,
+                if total_questions == 1 { "" } else { "s" },
             ),
         }];
-        self.dispatch_with_publish(session_id, SessionEvent::FormalizeIntent(Box::new(intent)))?;
         let op = quorum_op(session_id, round, &agents);
         self.append_op(session_id, op)?;
         Ok(QuorumRound {
@@ -424,20 +458,57 @@ impl WorkspaceKernel {
         from_entry: u32,
         title: &str,
     ) -> anyhow::Result<Uuid> {
-        self.model
+        let source = self
+            .model
             .get_session(session_id)
+            .cloned()
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
-        let new_session = self.create_session(
-            if title.trim().is_empty() {
-                format!("Cassette branch {from_entry}")
-            } else {
-                title.to_string()
-            },
-            TaskType::BehaviorChange,
+        let entries = cassette_entries_from_workspace(self.root.as_path());
+        let selected = entries
+            .iter()
+            .find(|entry| entry.idx == from_entry)
+            .ok_or_else(|| anyhow!("unknown cassette entry `{from_entry}`"))?;
+        let replayed = entries
+            .iter()
+            .filter(|entry| entry.idx <= from_entry)
+            .cloned()
+            .collect::<Vec<_>>();
+        let truncated = entries
+            .iter()
+            .filter(|entry| entry.idx > from_entry)
+            .cloned()
+            .collect::<Vec<_>>();
+        let branch_session_id = Uuid::new_v4();
+        let replay_manifest = materialize_cassette_branch(
+            self.root.as_path(),
+            branch_session_id,
+            session_id,
+            from_entry,
+            &replayed,
+            &truncated,
         )?;
-        let op = cassette_branch_op(new_session.session_id, session_id, from_entry);
-        self.append_op(new_session.session_id, op)?;
-        Ok(new_session.session_id)
+        let mut branch = source.clone();
+        branch.session_id = branch_session_id;
+        branch.title = if title.trim().is_empty() {
+            format!("Cassette branch {from_entry}")
+        } else {
+            title.to_string()
+        };
+        branch.task_type = TaskType::BehaviorChange;
+        branch.root = self.root.to_string();
+        branch.op_log = truncate_ops_for_cassette(&source.op_log, selected);
+        let op = cassette_branch_op(
+            branch_session_id,
+            session_id,
+            from_entry,
+            &replayed,
+            &truncated,
+            replay_manifest,
+        );
+        branch.op_log.push(op);
+        self.model.load_session(branch.clone());
+        self.store.save_session(&branch)?;
+        Ok(branch_session_id)
     }
 
     pub fn ask_project(&self, session_id: Uuid, req: AskRequest) -> anyhow::Result<AskAnswer> {
@@ -491,6 +562,7 @@ impl WorkspaceKernel {
         let expires_at = sync_expires_at();
         self.sync_codes
             .insert(code.clone(), (session_id, expires_at.clone()));
+        self.save_sync_codes_state()?;
         Ok(SyncCode {
             code,
             expires_at,
@@ -498,7 +570,8 @@ impl WorkspaceKernel {
         })
     }
 
-    pub fn claim_sync_code(&self, code: &str) -> anyhow::Result<SessionSnapshot> {
+    pub fn claim_sync_code(&mut self, code: &str) -> anyhow::Result<SessionSnapshot> {
+        self.prune_expired_sync_codes()?;
         let normalized = code.trim().to_ascii_uppercase();
         let (session_id, _) = self
             .sync_codes
@@ -508,6 +581,30 @@ impl WorkspaceKernel {
             .get_session(*session_id)
             .cloned()
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))
+    }
+
+    fn prune_expired_sync_codes(&mut self) -> anyhow::Result<()> {
+        let before = self.sync_codes.len();
+        self.sync_codes
+            .retain(|_, (_, expires_at)| !sync_code_is_expired(expires_at));
+        if self.sync_codes.len() != before {
+            self.save_sync_codes_state()?;
+        }
+        Ok(())
+    }
+
+    fn save_sync_codes_state(&self) -> anyhow::Result<()> {
+        let mut codes = self
+            .sync_codes
+            .iter()
+            .map(|(code, (session_id, expires_at))| SyncCode {
+                code: code.clone(),
+                expires_at: expires_at.clone(),
+                session_id: *session_id,
+            })
+            .collect::<Vec<_>>();
+        codes.sort_by(|left, right| left.code.cmp(&right.code));
+        self.store.save_sync_codes(&codes)
     }
 
     pub fn load_memory(&self) -> anyhow::Result<StudioMemory> {
@@ -1473,6 +1570,7 @@ impl WorkspaceKernel {
                         op,
                         session: snapshot,
                         command: None,
+                        clarify_round: None,
                     });
                 }
                 let op = agent_running_op(session_id, &agent, &handoff, &prompt_path);
@@ -1497,6 +1595,7 @@ impl WorkspaceKernel {
             op,
             session: snapshot,
             command,
+            clarify_round: None,
         })
     }
 
@@ -1576,6 +1675,7 @@ impl WorkspaceKernel {
             op,
             session: snapshot,
             command: Some(command),
+            clarify_round: Some(round),
         })
     }
 
@@ -1610,6 +1710,16 @@ impl WorkspaceKernel {
         agent_id: &str,
         run_op_id: Uuid,
     ) -> anyhow::Result<SessionSnapshot> {
+        self.ingest_clarify_questions_inner(session_id, agent_id, run_op_id, None)
+    }
+
+    fn ingest_clarify_questions_inner(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        run_op_id: Uuid,
+        forced_round: Option<u32>,
+    ) -> anyhow::Result<SessionSnapshot> {
         let session = self
             .model
             .get_session(session_id)
@@ -1626,13 +1736,15 @@ impl WorkspaceKernel {
             .map(|op| op.started_at.clone())
             .unwrap_or_default();
         let event_op_name = format!("agent.event.{agent_id}.clarify_question");
-        let round = intent
-            .clarification_history
-            .iter()
-            .map(|turn| turn.round)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1);
+        let round = forced_round.unwrap_or_else(|| {
+            intent
+                .clarification_history
+                .iter()
+                .map(|turn| turn.round)
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1)
+        });
         let mut appended = 0u32;
         for op in session.op_log.iter() {
             if op.op != event_op_name {
@@ -1647,17 +1759,23 @@ impl WorkspaceKernel {
                 .and_then(|value| value.get("structured"))
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
-            let question_id = structured
+            let mut question_id = structured
                 .get("id")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("q-{}", op.id));
-            if intent
+            let duplicate = intent
                 .clarification_history
                 .iter()
-                .any(|turn| turn.question_id == question_id)
+                .find(|turn| turn.question_id == question_id);
+            if duplicate
+                .map(|turn| turn.agent_id == agent_id)
+                .unwrap_or(false)
             {
                 continue;
+            }
+            if duplicate.is_some() {
+                question_id = format!("{question_id}-{agent_id}");
             }
             let question_text = structured
                 .get("text")
@@ -2105,19 +2223,6 @@ fn incident_detected_op(session_id: Uuid, incident: &crate::incidents::IncidentB
     }
 }
 
-fn quorum_questions_for_intent(intent: &IntentPacket) -> Vec<String> {
-    let mut questions = intent
-        .ambiguities
-        .iter()
-        .take(2)
-        .map(|ambiguity| format!("How should I resolve: {ambiguity}?"))
-        .collect::<Vec<_>>();
-    if questions.is_empty() {
-        questions.push("What output shape should the first verified example use?".to_string());
-    }
-    questions
-}
-
 fn quorum_op(session_id: Uuid, round: u32, agents: &[QuorumAgent]) -> OpRecord {
     let now = now_string();
     OpRecord {
@@ -2137,9 +2242,11 @@ fn quorum_op(session_id: Uuid, round: u32, agents: &[QuorumAgent]) -> OpRecord {
         status: OperationStatus::Succeeded,
         exit_code: Some(0),
         artifacts: vec![format!(".x07/studio/sessions/{session_id}.json")],
-        notes: Some(format!("Recorded quorum clarify round {round}.")),
+        notes: Some(format!(
+            "Completed live parallel quorum clarify round {round}."
+        )),
         stdout: Some(format!(
-            "{} agents contributed clarify questions.",
+            "{} agents completed supervised clarify runs.",
             agents.len()
         )),
         stderr: None,
@@ -2147,6 +2254,7 @@ fn quorum_op(session_id: Uuid, round: u32, agents: &[QuorumAgent]) -> OpRecord {
         stderr_json: None,
         report_json: Some(serde_json::json!({
             "schema_version": "x07.studio.quorum_round@0.1.0",
+            "execution": "live_parallel",
             "round": round,
             "agents": agents,
         })),
@@ -2155,8 +2263,7 @@ fn quorum_op(session_id: Uuid, round: u32, agents: &[QuorumAgent]) -> OpRecord {
 }
 
 fn cassette_entries_from_workspace(root: &Utf8Path) -> Vec<CassetteEntry> {
-    let mut entries = Vec::new();
-    let mut idx = 0u32;
+    let mut entries = Vec::<CassetteEntry>::new();
     visit_workspace_files(root.join(".x07_rr").as_path(), &mut |path| {
         if !path.is_file() {
             return;
@@ -2167,7 +2274,7 @@ fn cassette_entries_from_workspace(root: &Utf8Path) -> Vec<CassetteEntry> {
             .map(|relative| relative.to_string())
             .unwrap_or_else(|_| path.to_string());
         entries.push(CassetteEntry {
-            idx,
+            idx: 0,
             kind: path
                 .extension()
                 .map(str::to_string)
@@ -2178,12 +2285,97 @@ fn cassette_entries_from_workspace(root: &Utf8Path) -> Vec<CassetteEntry> {
                 .unwrap_or_else(|| "0".to_string()),
             size_bytes,
         });
-        idx += 1;
     });
+    entries.sort_by(|left, right| {
+        left.ts
+            .cmp(&right.ts)
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    for (idx, entry) in entries.iter_mut().enumerate() {
+        entry.idx = u32::try_from(idx).unwrap_or(u32::MAX);
+    }
     entries
 }
 
-fn cassette_branch_op(new_session_id: Uuid, source_session_id: Uuid, from_entry: u32) -> OpRecord {
+fn materialize_cassette_branch(
+    root: &Utf8Path,
+    branch_session_id: Uuid,
+    source_session_id: Uuid,
+    from_entry: u32,
+    replayed: &[CassetteEntry],
+    truncated: &[CassetteEntry],
+) -> anyhow::Result<String> {
+    let relative_manifest =
+        format!(".x07/studio/cassette_branches/{branch_session_id}/replay.json");
+    let branch_dir = root.join(format!(".x07/studio/cassette_branches/{branch_session_id}"));
+    let replay_dir = branch_dir.join("replay");
+    fs::create_dir_all(replay_dir.as_path())?;
+    for entry in replayed {
+        let source = root.join(&entry.key);
+        if !source.is_file() {
+            continue;
+        }
+        let replay_relative = entry
+            .key
+            .strip_prefix(".x07_rr/")
+            .unwrap_or(entry.key.as_str());
+        let dest = replay_dir.join(replay_relative);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, dest)?;
+    }
+    let manifest = serde_json::json!({
+        "schema_version": "x07.studio.cassette_replay@0.1.0",
+        "source_session_id": source_session_id,
+        "branch_session_id": branch_session_id,
+        "from_entry": from_entry,
+        "replay_root": format!(".x07/studio/cassette_branches/{branch_session_id}/replay"),
+        "replayed_entries": replayed,
+        "truncated_entries": truncated,
+    });
+    let manifest_path = root.join(&relative_manifest);
+    if let Some(parent) = manifest_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(
+        manifest_path,
+        format!("{}\n", serde_json::to_string_pretty(&manifest)?),
+    )?;
+    Ok(relative_manifest)
+}
+
+fn truncate_ops_for_cassette(ops: &[OpRecord], selected: &CassetteEntry) -> Vec<OpRecord> {
+    let cutoff = selected.ts.parse::<u64>().ok().map(|value| {
+        if value > 10_000_000_000 {
+            value / 1000
+        } else {
+            value
+        }
+    });
+    match cutoff {
+        Some(cutoff) => ops
+            .iter()
+            .filter(|op| {
+                op.started_at
+                    .parse::<u64>()
+                    .map(|started| started <= cutoff)
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect(),
+        None => ops.to_vec(),
+    }
+}
+
+fn cassette_branch_op(
+    new_session_id: Uuid,
+    source_session_id: Uuid,
+    from_entry: u32,
+    replayed: &[CassetteEntry],
+    truncated: &[CassetteEntry],
+    replay_manifest: String,
+) -> OpRecord {
     let now = now_string();
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
@@ -2201,10 +2393,12 @@ fn cassette_branch_op(new_session_id: Uuid, source_session_id: Uuid, from_entry:
         finished_at: Some(now),
         status: OperationStatus::Succeeded,
         exit_code: Some(0),
-        artifacts: vec![".x07_rr/".to_string()],
+        artifacts: vec![replay_manifest.clone()],
         notes: Some("Created a sibling session from cassette history.".to_string()),
         stdout: Some(format!(
-            "Branched from session {source_session_id} at cassette entry {from_entry}."
+            "Branched from session {source_session_id} at cassette entry {from_entry}; replayed {} entries and truncated {} entries.",
+            replayed.len(),
+            truncated.len()
         )),
         stderr: None,
         stdout_json: None,
@@ -2213,6 +2407,9 @@ fn cassette_branch_op(new_session_id: Uuid, source_session_id: Uuid, from_entry:
             "schema_version": "x07.studio.cassette_branch@0.1.0",
             "source_session_id": source_session_id,
             "from_entry": from_entry,
+            "replay_manifest": replay_manifest,
+            "replayed_entries": replayed,
+            "truncated_entries": truncated,
         })),
         report_path: None,
     }
@@ -2224,6 +2421,17 @@ fn sync_expires_at() -> String {
         .map(|duration| duration.as_secs() + 600)
         .unwrap_or(600);
     format!("{seconds}")
+}
+
+fn sync_code_is_expired(expires_at: &str) -> bool {
+    let Ok(expires_at) = expires_at.parse::<u64>() else {
+        return true;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    expires_at <= now
 }
 
 fn visual_parse_value(kind: &str, source: serde_json::Value) -> serde_json::Value {
@@ -5980,6 +6188,108 @@ mod tests {
         let clarify = agent_clarify_handoff_from_session(&session, &agent, 1, Some(&genpack));
         assert!(clarify.prompt.contains("## Service Genpack Context"));
         assert!(clarify.prompt.contains("Detected archetype: `api-cell`"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn sync_codes_survive_kernel_reopen() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("sync source", TaskType::NewBehavior)
+            .expect("create session");
+        let code = kernel
+            .mint_sync_code(session.session_id)
+            .expect("mint sync code");
+        drop(kernel);
+
+        let mut reopened = WorkspaceKernel::open(root.clone()).expect("reopen kernel");
+        let claimed = reopened
+            .claim_sync_code(&code.code)
+            .expect("claim sync code");
+
+        assert_eq!(claimed.session_id, session.session_id);
+        assert!(root.join(".x07/studio/sync_codes.json").exists());
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn cassette_branch_replays_entries_and_truncates_session_ops() {
+        let root = temp_root();
+        std::fs::create_dir_all(root.join(".x07_rr/http")).expect("cassette dir");
+        std::fs::write(
+            root.join(".x07_rr/http/001-request.json"),
+            b"{\"request\":1}",
+        )
+        .expect("first cassette");
+        std::fs::write(
+            root.join(".x07_rr/http/002-response.json"),
+            b"{\"response\":2}",
+        )
+        .expect("second cassette");
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("cassette source", TaskType::NewBehavior)
+            .expect("create session");
+        let old_op = OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id: session.session_id,
+            op: "rr.replay.old".to_string(),
+            backend: "test".to_string(),
+            command: Vec::new(),
+            started_at: "1".to_string(),
+            finished_at: Some("1".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: vec![".x07_rr/http/001-request.json".to_string()],
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: None,
+            report_path: None,
+        };
+        let future_op = OpRecord {
+            started_at: "9999999999".to_string(),
+            finished_at: Some("9999999999".to_string()),
+            op: "rr.replay.future".to_string(),
+            id: Uuid::new_v4(),
+            artifacts: vec![".x07_rr/http/002-response.json".to_string()],
+            ..old_op.clone()
+        };
+        kernel
+            .dispatch_event(
+                session.session_id,
+                SessionEvent::AppendOp(Box::new(old_op.clone())),
+            )
+            .expect("append old");
+        kernel
+            .dispatch_event(
+                session.session_id,
+                SessionEvent::AppendOp(Box::new(future_op)),
+            )
+            .expect("append future");
+
+        let branch_id = kernel
+            .branch_from_cassette(session.session_id, 0, "Replay first")
+            .expect("branch cassette");
+        let branch = kernel.get_session(branch_id).expect("branch session");
+
+        assert_eq!(branch.title, "Replay first");
+        assert!(branch.op_log.iter().any(|op| op.op == "rr.replay.old"));
+        assert!(!branch.op_log.iter().any(|op| op.op == "rr.replay.future"));
+        let branch_op = branch
+            .op_log
+            .iter()
+            .find(|op| op.op == "cassette.branch")
+            .expect("branch op");
+        let manifest = branch_op.artifacts.first().expect("manifest artifact");
+        let manifest_text = std::fs::read_to_string(root.join(manifest)).expect("manifest");
+        assert!(manifest_text.contains("001-request.json"));
+        assert!(manifest_text.contains("truncated_entries"));
 
         std::fs::remove_dir_all(root).ok();
     }

@@ -163,7 +163,7 @@ def run_agent(command: str, args: list[str]) -> None:
                 {
                     "schema_version": "x07.studio.agent_event@0.1.0",
                     "kind": "clarify_question",
-                    "id": "q-empty-input",
+                    "id": f"q-{command}-empty-input",
                     "text": "What should happen for empty input?",
                     "witness_kind": "forbidden_behavior",
                     "options": [
@@ -178,7 +178,7 @@ def run_agent(command: str, args: list[str]) -> None:
                 {
                     "schema_version": "x07.studio.agent_event@0.1.0",
                     "kind": "clarify_question",
-                    "id": "q-stability",
+                    "id": f"q-{command}-stability",
                     "text": "Should equal items keep their original order?",
                     "witness_kind": "desired_behavior",
                     "options": ["Yes, stable", "No, any permutation"],
@@ -311,6 +311,17 @@ def write_connected_incident(workspace: Path) -> None:
     )
 
 
+def write_connected_cassettes(workspace: Path) -> None:
+    cassette_dir = workspace / ".x07_rr/http"
+    cassette_dir.mkdir(parents=True, exist_ok=True)
+    first = cassette_dir / "001-request.json"
+    second = cassette_dir / "002-response.json"
+    write_json(first, {"request": "/v1/accounts", "status": "seeded"})
+    write_json(second, {"response": {"ok": True}, "status": "later"})
+    os.utime(first, (1_778_600_001, 1_778_600_001))
+    os.utime(second, (1_778_600_002, 1_778_600_002))
+
+
 def reset_target_path(repo_root: Path, path: Path) -> None:
     target_root = (repo_root / "target").resolve()
     if path != target_root and target_root not in path.parents:
@@ -331,6 +342,7 @@ def main() -> int:
     reset_target_path(repo_root, examples_root)
     write_connected_examples(examples_root)
     write_connected_incident(workspace)
+    write_connected_cassettes(workspace)
 
     x07 = write_fake_tool(bin_dir, "x07")
     x07_wasm = write_fake_tool(bin_dir, "x07-wasm")

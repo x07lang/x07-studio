@@ -3,7 +3,7 @@ use std::io::Write;
 
 use anyhow::Context;
 use camino::{Utf8Path, Utf8PathBuf};
-use loom_types::api::StudioMemory;
+use loom_types::api::{StudioMemory, SyncCode};
 use loom_types::artifacts::{AgentHandoff, AgentProfile, ProviderProbeReport, ProviderProfile};
 use loom_types::session::SessionSnapshot;
 
@@ -46,6 +46,10 @@ impl FsStore {
 
     pub fn reports_dir(&self) -> Utf8PathBuf {
         self.root.join("reports")
+    }
+
+    pub fn sync_codes_path(&self) -> Utf8PathBuf {
+        self.root.join("sync_codes.json")
     }
 
     pub fn memory_path(&self) -> Utf8PathBuf {
@@ -195,6 +199,20 @@ impl FsStore {
         Ok(())
     }
 
+    pub fn load_sync_codes(&self) -> anyhow::Result<Vec<SyncCode>> {
+        let path = self.sync_codes_path();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let bytes = fs::read(&path)?;
+        serde_json::from_slice(&bytes)
+            .with_context(|| format!("failed to parse Studio sync codes at {path}"))
+    }
+
+    pub fn save_sync_codes(&self, codes: &[SyncCode]) -> anyhow::Result<()> {
+        write_json(&self.sync_codes_path(), codes)
+    }
+
     pub fn save_intent_image(
         &self,
         session_id: uuid::Uuid,
@@ -248,7 +266,7 @@ fn json_files(dir: &Utf8Path) -> anyhow::Result<Vec<Utf8PathBuf>> {
     Ok(out)
 }
 
-fn write_json<T: serde::Serialize>(path: &Utf8Path, value: &T) -> anyhow::Result<()> {
+fn write_json<T: serde::Serialize + ?Sized>(path: &Utf8Path, value: &T) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -274,6 +292,7 @@ mod tests {
     use std::fs;
 
     use camino::Utf8PathBuf;
+    use loom_types::api::SyncCode;
     use loom_types::artifacts::{
         AgentHandoff, AgentProfile, ProbeStatus, ProviderCapabilities, ProviderProbeMode,
         ProviderProbeReport, ProviderProfile,
@@ -353,6 +372,26 @@ mod tests {
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].id, "codex-local");
         assert_eq!(profiles[0].command, "codex");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn sync_codes_roundtrip_through_studio_store() {
+        let root = temp_root();
+        let store = FsStore::new(root.as_path());
+        store.init().expect("store init");
+        let code = SyncCode {
+            code: "A1B2C3D4".to_string(),
+            expires_at: "9999999999".to_string(),
+            session_id: Uuid::nil(),
+        };
+
+        store
+            .save_sync_codes(std::slice::from_ref(&code))
+            .expect("save sync code");
+        let codes = store.load_sync_codes().expect("load sync codes");
+
+        assert_eq!(codes, vec![code]);
         fs::remove_dir_all(root).ok();
     }
 

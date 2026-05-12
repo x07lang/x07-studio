@@ -930,10 +930,11 @@ This document records friction found while implementing the Studio web surface.
 84. Shared context needs small local primitives before hosted accounts.
 
    Cycle 2 adds sync codes and local memory, but deliberately keeps them small:
-   sync codes are daemon-memory handles to the current session, and memory is
-   append-only JSONL under `~/.x07-studio`. That is enough for local continuity
-   and device handoff experiments without introducing identity, hosted storage,
-   or account semantics before the product needs them.
+   sync codes are local handles to the current session persisted under
+   `.x07/studio/sync_codes.json`, and memory is append-only JSONL under
+   `~/.x07-studio`. That is enough for local continuity and device handoff
+   experiments without introducing identity, hosted storage, or account
+   semantics before the product needs them.
 
 85. Service-shaped handoffs need the released genpack contract inline.
 
@@ -945,3 +946,14 @@ This document records friction found while implementing the Studio web surface.
    output directly in normal and clarify handoff prompts. If the local x07 CLI
    cannot provide either block, the prompt says so explicitly instead of
    fabricating a contract.
+
+86. Cycle 2 continuity features need to replay real state, not summaries.
+
+   The first Timeline pass exposed quorum, cassette, sync, and visual endpoints,
+   but each stopped at a thin projection. The follow-up wires quorum to live
+   supervised agent clarify runs, persists unexpired sync codes across daemon
+   restart, branches cassettes by replaying selected `.x07_rr` entries while
+   truncating later session operations, and adds browser graph editors for the
+   `streampipe`, `statemachine`, and `tasks` parse/emit contract. Connected E2E
+   now exercises those paths against the daemon instead of treating them as
+   documentation-only surfaces.
