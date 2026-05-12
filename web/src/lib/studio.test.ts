@@ -18,6 +18,7 @@ import {
 	buildPlatformBridge,
 	buildProviderProbeGates,
 	buildProofCacheLedger,
+	buildRepairCommandPreview,
 	buildVerifyEvidenceBoard,
 	buildVerifyCommandPreview,
 	buildWorldBudgetGuard,
@@ -34,6 +35,7 @@ import {
 	previewIntentWitnesses,
 	projectTemplates,
 	reduceDemoEvent,
+	repairRunVars,
 	verifyRunVars,
 	workflowChecklist
 } from './studio';
@@ -425,6 +427,31 @@ describe('x07 Studio XTAL web model', () => {
 		const ledger = buildProofCacheLedger(demoSession(), projectTemplates[0], null, options);
 		expect(ledger.find((item) => item.label === 'Cache key preview')?.value).toContain('strict');
 		expect(ledger.find((item) => item.label === 'Proof policy')?.detail).toContain('OS-capable worlds');
+	});
+
+	it('builds bounded xtal repair command options', () => {
+		const options = {
+			entry: 'toy.sorter.sort_u8_asc',
+			strategy: 'spec_patch' as const,
+			write: true,
+			allowEditNonStubs: true,
+			maxRounds: '2',
+			maxCandidates: '4',
+			semanticMaxDepth: '3'
+		};
+
+		expect(buildRepairCommandPreview(options)).toBe(
+			'x07 xtal repair --entry toy.sorter.sort_u8_asc --write --max-rounds 2 --max-candidates 4 --semantic-max-depth 3 --allow-edit-non-stubs --suggest-spec-patch'
+		);
+		expect(repairRunVars(options)).toEqual({
+			repair_entry: 'toy.sorter.sort_u8_asc',
+			repair_strategy: 'spec_patch',
+			repair_write: 'true',
+			repair_allow_edit_non_stubs: 'true',
+			repair_max_rounds: '2',
+			repair_max_candidates: '4',
+			repair_semantic_max_depth: '3'
+		});
 	});
 
 	it('builds verify evidence from xtal verify summary reports', () => {

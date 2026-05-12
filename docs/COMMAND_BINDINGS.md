@@ -36,6 +36,13 @@ validates those values before rendering them as `x07 xtal verify` flags, so the
 browser proof/world/bounds controls change the canonical command rather than
 only decorating the review surface.
 
+`xtal.repair` accepts the Studio repair variables `repair_entry`,
+`repair_strategy`, `repair_write`, `repair_max_rounds`,
+`repair_max_candidates`, `repair_semantic_max_depth`, and
+`repair_allow_edit_non_stubs`. Loom validates those values before rendering
+them as `x07 xtal repair` flags, so the browser repair-room controls change the
+canonical repair command rather than only decorating the Counterexample Theater.
+
 ### x07-wasm
 
 - `wasm.app.profile.validate.atlas_dev`

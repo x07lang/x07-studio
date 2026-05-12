@@ -1,5 +1,6 @@
 import {
 	appendDemoOp,
+	buildRepairCommandPreview,
 	buildVerifyCommandPreview,
 	createIntentPacket,
 	defaultAgentProfiles,
@@ -9,6 +10,7 @@ import {
 	demoSession,
 	normalizeVerifyRunOptions,
 	reduceDemoEvent,
+	repairRunVars,
 	verifyRunVars,
 	type AgentApprovalResponse,
 	type AgentHandoffResponse,
@@ -27,9 +29,12 @@ import {
 	type ProviderProfile,
 	type SessionSnapshot,
 	type TaskType,
+	type RepairRunOptions,
 	type VerifyRunOptions,
 	type WorkspaceRadarResponse
 } from './studio';
+
+type BindingRunOptions = Partial<VerifyRunOptions> | Partial<RepairRunOptions>;
 
 export class StudioApi {
 	private demoMode = false;
@@ -216,13 +221,13 @@ export class StudioApi {
 	async runBinding(
 		session: SessionSnapshot,
 		binding_id: string,
-		verifyOptions?: Partial<VerifyRunOptions>
+		options?: BindingRunOptions
 	): Promise<SessionSnapshot> {
 		if (!this.demoMode) {
 			try {
 				return await request<SessionSnapshot>(`/v1/sessions/${session.session_id}/bindings/run`, {
 					method: 'POST',
-					body: JSON.stringify({ binding_id, vars: bindingVars(session, binding_id, verifyOptions) })
+					body: JSON.stringify({ binding_id, vars: bindingVars(session, binding_id, options) })
 				});
 			} catch {
 				this.demoMode = true;
@@ -233,9 +238,9 @@ export class StudioApi {
 			session,
 			binding_id,
 			failed ? 'failed' : 'succeeded',
-			binding_id === 'xtal.verify' ? buildVerifyCommandPreview(verifyOptions).split(' ') : undefined,
+			bindingCommandPreview(binding_id, options),
 			undefined,
-			binding_id === 'xtal.verify' ? demoVerifySummary(session, verifyOptions) : undefined
+			binding_id === 'xtal.verify' ? demoVerifySummary(session, options as Partial<VerifyRunOptions>) : undefined
 		);
 		this.replaceDemo(next);
 		return next;
@@ -507,7 +512,7 @@ export class StudioApi {
 function bindingVars(
 	session: SessionSnapshot,
 	bindingId: string,
-	verifyOptions?: Partial<VerifyRunOptions>
+	options?: BindingRunOptions
 ): Record<string, string> {
 	const target = session.intent?.targets[0];
 	const moduleId = target?.module_id || 'app.main';
@@ -529,8 +534,19 @@ function bindingVars(
 				: '.x07/studio/incidents/manual';
 		return { ...common, input: incidentInput };
 	}
-	if (bindingId === 'xtal.verify') return { ...common, ...verifyRunVars(verifyOptions) };
+	if (bindingId === 'xtal.verify') return { ...common, ...verifyRunVars(options as Partial<VerifyRunOptions>) };
+	if (bindingId === 'xtal.repair') return { ...common, ...repairRunVars(options as Partial<RepairRunOptions>) };
 	return common;
+}
+
+function bindingCommandPreview(bindingId: string, options?: BindingRunOptions): string[] | undefined {
+	if (bindingId === 'xtal.verify') {
+		return buildVerifyCommandPreview(options as Partial<VerifyRunOptions>).split(' ');
+	}
+	if (bindingId === 'xtal.repair') {
+		return buildRepairCommandPreview(options as Partial<RepairRunOptions>).split(' ');
+	}
+	return undefined;
 }
 
 function demoVerifySummary(session: SessionSnapshot, verifyOptions?: Partial<VerifyRunOptions>) {

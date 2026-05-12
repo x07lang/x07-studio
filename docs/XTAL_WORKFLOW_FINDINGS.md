@@ -645,3 +645,14 @@ This document records friction found while implementing the Studio web surface.
    test, diagnostic, entry, and artifact rows. Demo mode now emits a
    representative summary, so browser tests verify the evidence projection even
    when the local daemon is intentionally unavailable.
+
+60. Repair-room controls must affect the canonical repair command.
+
+   The Counterexample Theater already made failures and repair artifacts
+   reviewable, but the browser still only had a raw `Run Repair` button. That
+   left important XTAL repair choices such as entrypoint, semantic-only versus
+   quickfix-only, spec-patch suggestion, write mode, candidate bounds, semantic
+   depth, and non-stub edits outside the visible Studio workflow. Studio now
+   renders those choices in the Repair room, carries them through the web API,
+   and validates them before appending real `x07 xtal repair` flags to the Loom
+   operation record.

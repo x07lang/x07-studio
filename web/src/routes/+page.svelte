@@ -20,16 +20,19 @@
 		buildPlatformBridge,
 		buildProviderProbeGates,
 		buildProofCacheLedger,
+		buildRepairCommandPreview,
 		buildVerifyEvidenceBoard,
 		buildVerifyCommandPreview,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
 		defaultPrompt,
+		defaultRepairRunOptions,
 		defaultVerifyRunOptions,
 		demoHealth,
 		lifecycle,
 		nextPrimaryAction,
+		normalizeRepairRunOptions,
 		normalizeVerifyRunOptions,
 		phaseIndex,
 		previewIntentWitnesses,
@@ -51,6 +54,8 @@
 		type ProviderProbeReport,
 		type ProviderProfile,
 		type ProjectDifficulty,
+		type RepairRunOptions,
+		type RepairStrategy,
 		type Room,
 		type RuntimeComponentStatus,
 		type SessionSnapshot,
@@ -107,6 +112,13 @@
 	let verifyUnwind = defaultVerifyRunOptions().unwind;
 	let verifyMaxBytesLen = defaultVerifyRunOptions().maxBytesLen;
 	let verifyInputLenBytes = defaultVerifyRunOptions().inputLenBytes;
+	let repairEntry = defaultRepairRunOptions().entry;
+	let repairStrategy: RepairStrategy = defaultRepairRunOptions().strategy;
+	let repairWrite = defaultRepairRunOptions().write;
+	let repairAllowEditNonStubs = defaultRepairRunOptions().allowEditNonStubs;
+	let repairMaxRounds = defaultRepairRunOptions().maxRounds;
+	let repairMaxCandidates = defaultRepairRunOptions().maxCandidates;
+	let repairSemanticMaxDepth = defaultRepairRunOptions().semanticMaxDepth;
 	let artifactPreviewKey = '';
 	let artifactPreviewStatus = 'No artifact preview loaded';
 	let selectedArtifactPreview: ArtifactPreviewResponse | null = null;
@@ -296,6 +308,25 @@
 		inputLenBytes: verifyInputLenBytes
 	});
 	$: verifyCommandPreview = buildVerifyCommandPreview(verifyRunOptions);
+	$: repairEntryPlaceholder = selected?.intent?.targets[0]
+		? `${selected.intent.targets[0].module_id}.${selected.intent.targets[0].entry ?? 'run_v1'}`
+		: 'module.entry';
+	$: repairRunOptions = normalizeRepairRunOptions({
+		entry: repairEntry,
+		strategy: repairStrategy,
+		write: repairWrite,
+		allowEditNonStubs: repairAllowEditNonStubs,
+		maxRounds: repairMaxRounds,
+		maxCandidates: repairMaxCandidates,
+		semanticMaxDepth: repairSemanticMaxDepth
+	});
+	$: repairCommandPreview = buildRepairCommandPreview(repairRunOptions);
+	$: repairGateLabel =
+		repairRunOptions.strategy === 'spec_patch'
+			? 'spec-changing repair proposal requires human approval'
+			: repairRunOptions.allowEditNonStubs
+				? 'non-stub implementation edits require write-boundary review'
+				: 'spec-preserving repair lane';
 	$: verifyEvidenceBoard = buildVerifyEvidenceBoard(
 		latestVerifyOp,
 		selected,
@@ -970,7 +1001,7 @@
 
 	async function runRepairBinding() {
 		selectedRoom = 'repair';
-		await runBinding('xtal.repair');
+		await runBinding('xtal.repair', repairRunOptions);
 	}
 
 	async function loadArtifactPreview(sessionId: string, opId: string, artifact: string) {
@@ -1170,15 +1201,38 @@
 		statusLine = label;
 	}
 
-	async function runBinding(bindingId: string, options?: Partial<VerifyRunOptions>) {
+	async function runBinding(bindingId: string, options?: Partial<VerifyRunOptions> | Partial<RepairRunOptions>) {
 		if (!selected) return;
+		const activeRoom = selectedRoom;
 		const snapshot = await api.runBinding(
 			selected,
 			bindingId,
-			options ?? (bindingId === 'xtal.verify' ? verifyRunOptions : undefined)
+			options ??
+				(bindingId === 'xtal.verify'
+					? verifyRunOptions
+					: bindingId === 'xtal.repair'
+						? repairRunOptions
+						: undefined)
 		);
 		await replaceSession(snapshot);
+		selectedRoom = roomForBinding(bindingId, activeRoom);
 		statusLine = `Ran ${bindingId}`;
+	}
+
+	function roomForBinding(bindingId: string, fallback: Room): Room {
+		if (bindingId.includes('repair') || bindingId.includes('incident') || bindingId.includes('ingest')) {
+			return 'repair';
+		}
+		if (bindingId.includes('verify') || bindingId.includes('test') || bindingId.includes('slo')) {
+			return 'verify';
+		}
+		if (bindingId.includes('cert') || bindingId.includes('deploy') || bindingId.includes('provenance')) {
+			return 'trust';
+		}
+		if (bindingId.includes('impl') || bindingId.includes('project.')) return 'realization';
+		if (bindingId.includes('spec')) return 'spec';
+		if (bindingId.includes('agent.')) return 'providers';
+		return fallback;
 	}
 
 	async function generateAgentHandoff(agentId: string) {
@@ -2595,6 +2649,78 @@
 				{#each counterexampleTheater.evidence.length ? counterexampleTheater.evidence : ['No evidence artifact recorded'] as artifact}
 					<code>{artifact}</code>
 				{/each}
+			</div>
+			<div class="repair-run-controls" aria-label="XTAL repair controls">
+				<div class="repair-control-group">
+					<label>
+						<span>Entry</span>
+						<input
+							aria-label="Repair entry"
+							type="text"
+							placeholder={repairEntryPlaceholder}
+							bind:value={repairEntry}
+						/>
+					</label>
+					<div>
+						<span>Strategy</span>
+						<div class="repair-segment" role="group" aria-label="Repair strategy">
+							<button
+								type="button"
+								class:active={repairStrategy === 'semantic'}
+								on:click={() => (repairStrategy = 'semantic')}
+							>
+								Semantic
+							</button>
+							<button
+								type="button"
+								class:active={repairStrategy === 'semantic_only'}
+								on:click={() => (repairStrategy = 'semantic_only')}
+							>
+								Semantic only
+							</button>
+							<button
+								type="button"
+								class:active={repairStrategy === 'quickfix_only'}
+								on:click={() => (repairStrategy = 'quickfix_only')}
+							>
+								Quickfix
+							</button>
+							<button
+								type="button"
+								class:active={repairStrategy === 'spec_patch'}
+								on:click={() => (repairStrategy = 'spec_patch')}
+							>
+								Spec patch
+							</button>
+						</div>
+					</div>
+				</div>
+				<div class="repair-bounds" aria-label="Repair bounds">
+					<label>
+						<span>Max rounds</span>
+						<input type="text" inputmode="numeric" placeholder="default" bind:value={repairMaxRounds} />
+					</label>
+					<label>
+						<span>Max candidates</span>
+						<input type="text" inputmode="numeric" placeholder="default" bind:value={repairMaxCandidates} />
+					</label>
+					<label>
+						<span>Semantic depth</span>
+						<input type="text" inputmode="numeric" placeholder="default" bind:value={repairSemanticMaxDepth} />
+					</label>
+				</div>
+				<label class="repair-checkbox">
+					<input type="checkbox" bind:checked={repairWrite} />
+					<span>Write patchset</span>
+				</label>
+				<label class="repair-checkbox">
+					<input type="checkbox" bind:checked={repairAllowEditNonStubs} />
+					<span>Allow non-stub edits</span>
+				</label>
+				<div class="repair-command-preview">
+					<small>{repairGateLabel}</small>
+					<code>{repairCommandPreview}</code>
+				</div>
 			</div>
 			<div class="counterexample-actions">
 				<button class="command-button" type="button" on:click={inspectCounterexample} disabled={!counterexampleTheater.opId}>

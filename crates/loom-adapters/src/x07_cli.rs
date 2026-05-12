@@ -124,6 +124,8 @@ impl CliAdapter {
         let mut rendered = binding.render(vars);
         if binding_id == "xtal.verify" {
             rendered.args.extend(xtal_verify_args_from_vars(vars)?);
+        } else if binding_id == "xtal.repair" {
+            rendered.args.extend(xtal_repair_args_from_vars(vars)?);
         }
 
         let mut report_path = None;
@@ -225,6 +227,53 @@ pub fn xtal_verify_args_from_vars(vars: &BTreeMap<String, String>) -> anyhow::Re
     Ok(args)
 }
 
+pub fn xtal_repair_args_from_vars(vars: &BTreeMap<String, String>) -> anyhow::Result<Vec<String>> {
+    let mut args = Vec::new();
+    if let Some(entry) = non_empty_var(vars, "repair_entry") {
+        args.push("--entry".to_string());
+        args.push(entry.to_string());
+    }
+    append_bool_flag_arg(vars, &mut args, "repair_write", "--write", "xtal repair")?;
+    append_positive_usize_arg_for(
+        vars,
+        &mut args,
+        "repair_max_rounds",
+        "--max-rounds",
+        "xtal repair",
+    )?;
+    append_positive_usize_arg_for(
+        vars,
+        &mut args,
+        "repair_max_candidates",
+        "--max-candidates",
+        "xtal repair",
+    )?;
+    append_positive_usize_arg_for(
+        vars,
+        &mut args,
+        "repair_semantic_max_depth",
+        "--semantic-max-depth",
+        "xtal repair",
+    )?;
+    append_bool_flag_arg(
+        vars,
+        &mut args,
+        "repair_allow_edit_non_stubs",
+        "--allow-edit-non-stubs",
+        "xtal repair",
+    )?;
+    if let Some(strategy) = non_empty_var(vars, "repair_strategy") {
+        match strategy {
+            "semantic" => {}
+            "semantic_only" => args.push("--semantic-only".to_string()),
+            "quickfix_only" => args.push("--quickfix-only".to_string()),
+            "spec_patch" => args.push("--suggest-spec-patch".to_string()),
+            other => bail!("unsupported xtal repair strategy `{other}`"),
+        }
+    }
+    Ok(args)
+}
+
 fn non_empty_var<'a>(vars: &'a BTreeMap<String, String>, key: &str) -> Option<&'a str> {
     vars.get(key)
         .map(|value| value.trim())
@@ -237,17 +286,45 @@ fn append_positive_usize_arg(
     key: &str,
     flag: &str,
 ) -> anyhow::Result<()> {
+    append_positive_usize_arg_for(vars, args, key, flag, "xtal verify")
+}
+
+fn append_positive_usize_arg_for(
+    vars: &BTreeMap<String, String>,
+    args: &mut Vec<String>,
+    key: &str,
+    flag: &str,
+    context: &str,
+) -> anyhow::Result<()> {
     let Some(value) = non_empty_var(vars, key) else {
         return Ok(());
     };
     let parsed = value
         .parse::<usize>()
-        .with_context(|| format!("xtal verify {key} must be a positive integer"))?;
+        .with_context(|| format!("{context} {key} must be a positive integer"))?;
     if parsed == 0 {
-        bail!("xtal verify {key} must be greater than zero");
+        bail!("{context} {key} must be greater than zero");
     }
     args.push(flag.to_string());
     args.push(parsed.to_string());
+    Ok(())
+}
+
+fn append_bool_flag_arg(
+    vars: &BTreeMap<String, String>,
+    args: &mut Vec<String>,
+    key: &str,
+    flag: &str,
+    context: &str,
+) -> anyhow::Result<()> {
+    let Some(value) = non_empty_var(vars, key) else {
+        return Ok(());
+    };
+    match value {
+        "true" | "1" | "yes" => args.push(flag.to_string()),
+        "false" | "0" | "no" => {}
+        other => bail!("{context} {key} must be true or false, got `{other}`"),
+    }
     Ok(())
 }
 
@@ -1519,8 +1596,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        binding_by_id, find_nearby_x07lp_driver, xtal_verify_args_from_vars, CliAdapter,
-        MachineJsonMode,
+        binding_by_id, find_nearby_x07lp_driver, xtal_repair_args_from_vars,
+        xtal_verify_args_from_vars, CliAdapter, MachineJsonMode,
     };
 
     #[test]
@@ -1711,6 +1788,62 @@ mod tests {
         assert!(xtal_verify_args_from_vars(&BTreeMap::from([(
             "unwind".to_string(),
             "0".to_string()
+        )]))
+        .is_err());
+    }
+
+    #[test]
+    fn xtal_repair_vars_render_bounded_flags() {
+        let args = xtal_repair_args_from_vars(&BTreeMap::from([
+            (
+                "repair_entry".to_string(),
+                "toy.sorter.sort_u8_asc".to_string(),
+            ),
+            ("repair_write".to_string(), "true".to_string()),
+            ("repair_max_rounds".to_string(), "2".to_string()),
+            ("repair_max_candidates".to_string(), "4".to_string()),
+            ("repair_semantic_max_depth".to_string(), "3".to_string()),
+            (
+                "repair_allow_edit_non_stubs".to_string(),
+                "true".to_string(),
+            ),
+            ("repair_strategy".to_string(), "spec_patch".to_string()),
+        ]))
+        .expect("render xtal repair args");
+
+        assert_eq!(
+            args,
+            vec![
+                "--entry",
+                "toy.sorter.sort_u8_asc",
+                "--write",
+                "--max-rounds",
+                "2",
+                "--max-candidates",
+                "4",
+                "--semantic-max-depth",
+                "3",
+                "--allow-edit-non-stubs",
+                "--suggest-spec-patch"
+            ]
+        );
+    }
+
+    #[test]
+    fn xtal_repair_vars_reject_invalid_values() {
+        assert!(xtal_repair_args_from_vars(&BTreeMap::from([(
+            "repair_strategy".to_string(),
+            "unchecked".to_string()
+        )]))
+        .is_err());
+        assert!(xtal_repair_args_from_vars(&BTreeMap::from([(
+            "repair_max_rounds".to_string(),
+            "0".to_string()
+        )]))
+        .is_err());
+        assert!(xtal_repair_args_from_vars(&BTreeMap::from([(
+            "repair_write".to_string(),
+            "maybe".to_string()
         )]))
         .is_err());
     }

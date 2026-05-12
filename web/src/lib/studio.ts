@@ -355,6 +355,18 @@ export interface VerifyRunOptions {
 	inputLenBytes: string;
 }
 
+export type RepairStrategy = 'semantic' | 'semantic_only' | 'quickfix_only' | 'spec_patch';
+
+export interface RepairRunOptions {
+	entry: string;
+	strategy: RepairStrategy;
+	write: boolean;
+	allowEditNonStubs: boolean;
+	maxRounds: string;
+	maxCandidates: string;
+	semanticMaxDepth: string;
+}
+
 export interface AgentLane {
 	id: 'codex' | 'claude-code';
 	label: string;
@@ -1579,6 +1591,48 @@ export function verifyRunVars(options?: Partial<VerifyRunOptions>): Record<strin
 	};
 }
 
+export function defaultRepairRunOptions(): RepairRunOptions {
+	return {
+		entry: '',
+		strategy: 'semantic',
+		write: false,
+		allowEditNonStubs: false,
+		maxRounds: '',
+		maxCandidates: '',
+		semanticMaxDepth: ''
+	};
+}
+
+export function normalizeRepairRunOptions(options?: Partial<RepairRunOptions>): RepairRunOptions {
+	const defaults = defaultRepairRunOptions();
+	const strategy = options?.strategy;
+	return {
+		entry: (options?.entry ?? defaults.entry).trim(),
+		strategy:
+			strategy === 'semantic_only' || strategy === 'quickfix_only' || strategy === 'spec_patch'
+				? strategy
+				: defaults.strategy,
+		write: Boolean(options?.write),
+		allowEditNonStubs: Boolean(options?.allowEditNonStubs),
+		maxRounds: normalizePositiveIntegerText(options?.maxRounds),
+		maxCandidates: normalizePositiveIntegerText(options?.maxCandidates),
+		semanticMaxDepth: normalizePositiveIntegerText(options?.semanticMaxDepth)
+	};
+}
+
+export function repairRunVars(options?: Partial<RepairRunOptions>): Record<string, string> {
+	const normalized = normalizeRepairRunOptions(options);
+	return {
+		repair_entry: normalized.entry,
+		repair_strategy: normalized.strategy,
+		repair_write: String(normalized.write),
+		repair_allow_edit_non_stubs: String(normalized.allowEditNonStubs),
+		repair_max_rounds: normalized.maxRounds,
+		repair_max_candidates: normalized.maxCandidates,
+		repair_semantic_max_depth: normalized.semanticMaxDepth
+	};
+}
+
 export function buildVerifyCommandPreview(options?: Partial<VerifyRunOptions>): string {
 	const normalized = normalizeVerifyRunOptions(options);
 	const args = ['x07', 'xtal', 'verify', '--proof-policy', normalized.proofPolicy];
@@ -1586,6 +1640,21 @@ export function buildVerifyCommandPreview(options?: Partial<VerifyRunOptions>): 
 	if (normalized.unwind) args.push('--unwind', normalized.unwind);
 	if (normalized.maxBytesLen) args.push('--max-bytes-len', normalized.maxBytesLen);
 	if (normalized.inputLenBytes) args.push('--input-len-bytes', normalized.inputLenBytes);
+	return args.join(' ');
+}
+
+export function buildRepairCommandPreview(options?: Partial<RepairRunOptions>): string {
+	const normalized = normalizeRepairRunOptions(options);
+	const args = ['x07', 'xtal', 'repair'];
+	if (normalized.entry) args.push('--entry', normalized.entry);
+	if (normalized.write) args.push('--write');
+	if (normalized.maxRounds) args.push('--max-rounds', normalized.maxRounds);
+	if (normalized.maxCandidates) args.push('--max-candidates', normalized.maxCandidates);
+	if (normalized.semanticMaxDepth) args.push('--semantic-max-depth', normalized.semanticMaxDepth);
+	if (normalized.allowEditNonStubs) args.push('--allow-edit-non-stubs');
+	if (normalized.strategy === 'semantic_only') args.push('--semantic-only');
+	if (normalized.strategy === 'quickfix_only') args.push('--quickfix-only');
+	if (normalized.strategy === 'spec_patch') args.push('--suggest-spec-patch');
 	return args.join(' ');
 }
 
