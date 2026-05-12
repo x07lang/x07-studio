@@ -518,3 +518,14 @@ This document records friction found while implementing the Studio web surface.
    `x07.studio.agent_event@0.1.0` protocol. The connected test now drives an
    OpenAI Codex handoff through plan, approval, execute, artifact event, and
    Codex worklog filtering before repeating the Claude Code flow.
+
+49. Coding-agent contracts need a machine-readable process surface.
+
+   The handoff prompt named allowed verbs, write roots, MCP tools, and approval
+   gates, but the launched Codex or Claude process only received a markdown
+   file path. That invites each coding agent wrapper to parse prose before it
+   can enforce Studio's XTAL contract. Loom now exports `X07_STUDIO_*`
+   environment variables to supervised agent commands: session id, agent id,
+   handoff path, allowed verbs, MCP tools, write roots, approval mode, and the
+   structured event schema. This is still not a full OS path sandbox, but it
+   gives agent wrappers and future launchers a deterministic contract surface.

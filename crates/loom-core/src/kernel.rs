@@ -1023,12 +1023,13 @@ impl WorkspaceKernel {
     }
 
     pub async fn execute_agent_command(command: AgentCommandPlan) -> OpRecord {
+        let envs = agent_command_env(&command);
         match CommandRunner
             .run_with_timeout(
                 command.cwd.as_path(),
                 &command.program,
                 &command.args,
-                &BTreeMap::new(),
+                &envs,
                 Some(command.timeout_seconds),
             )
             .await
@@ -1045,12 +1046,13 @@ impl WorkspaceKernel {
         let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel();
         let run_command = command.clone();
         let execution = async move {
+            let envs = agent_command_env(&run_command);
             CommandRunner
                 .run_with_timeout_streaming(
                     run_command.cwd.as_path(),
                     &run_command.program,
                     &run_command.args,
-                    &BTreeMap::new(),
+                    &envs,
                     Some(run_command.timeout_seconds),
                     chunk_tx,
                 )
@@ -2948,6 +2950,9 @@ fn render_agent_handoff_prompt(
     out.push_str(
         "- Keep solve-pure deterministic by default; OS, sandbox, network, release, provenance, and budget widening require approval.\n",
     );
+    out.push_str(
+        "- Read the `X07_STUDIO_*` environment variables for the machine-readable session contract; they mirror the allowed verbs, write roots, handoff path, and agent event schema.\n",
+    );
     for boundary in handoff_execution_boundaries(session) {
         out.push_str(&format!("- {boundary}\n"));
     }
@@ -2969,6 +2974,9 @@ fn render_agent_handoff_prompt(
     for root in &agent.write_roots {
         out.push_str(&format!("- `{root}`\n"));
     }
+    out.push_str(
+        "\nThese roots are the supervised write contract; report any required write outside them as an approval event before acting.\n",
+    );
     if let Some(contract) = &session.contract {
         out.push_str("\n## Session Contract\n\n");
         out.push_str("Canonical docs:\n");
@@ -3299,6 +3307,44 @@ fn agent_running_op(
         })),
         report_path: None,
     }
+}
+
+fn agent_command_env(command: &AgentCommandPlan) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (
+            "X07_STUDIO_SESSION_ID".to_string(),
+            command.session_id.to_string(),
+        ),
+        ("X07_STUDIO_AGENT_ID".to_string(), command.agent.id.clone()),
+        (
+            "X07_STUDIO_AGENT_LABEL".to_string(),
+            command.agent.label.clone(),
+        ),
+        (
+            "X07_STUDIO_HANDOFF_PATH".to_string(),
+            command.prompt_path.to_string(),
+        ),
+        (
+            "X07_STUDIO_ALLOWED_VERBS".to_string(),
+            command.agent.allowed_verbs.join(","),
+        ),
+        (
+            "X07_STUDIO_MCP_TOOLS".to_string(),
+            command.agent.mcp_tools.join(","),
+        ),
+        (
+            "X07_STUDIO_WRITE_ROOTS".to_string(),
+            command.agent.write_roots.join(","),
+        ),
+        (
+            "X07_STUDIO_APPROVAL_REQUIRED".to_string(),
+            command.agent.approval_required.to_string(),
+        ),
+        (
+            "X07_STUDIO_EVENT_SCHEMA".to_string(),
+            "x07.studio.agent_event@0.1.0".to_string(),
+        ),
+    ])
 }
 
 fn agent_streaming_op(command: &AgentCommandPlan, update: CommandStreamUpdate) -> OpRecord {
@@ -4128,6 +4174,7 @@ mod tests {
         assert!(handoff.prompt.contains("## Execution Boundary"));
         assert!(handoff.prompt.contains("## Automation Runbook"));
         assert!(handoff.prompt.contains("`x07 run`"));
+        assert!(handoff.prompt.contains("`X07_STUDIO_*`"));
         assert!(handoff.prompt.contains("`approve_spec`"));
         assert!(handoff.prompt.contains("agents cannot self-approve"));
         assert!(handoff.prompt.contains("`xtal.verify`"));
@@ -4153,7 +4200,7 @@ mod tests {
             command: "/bin/sh".to_string(),
             args: vec![
                 "-c".to_string(),
-                "printf '%s\\nartifact: target/xtal/verify/summary.json\\napproval required: policy widening\\nsupervised:%s' '{\"schema_version\":\"x07.studio.agent_event@0.1.0\",\"kind\":\"approval\",\"summary\":\"structured policy gate\",\"artifact\":\"arch/xtal/xtal.json\"}' \"$1\"".to_string(),
+                "printf '%s\\nartifact: target/xtal/verify/summary.json\\napproval required: policy widening\\nsupervised:%s\\nenv:%s:%s:%s:%s' '{\"schema_version\":\"x07.studio.agent_event@0.1.0\",\"kind\":\"approval\",\"summary\":\"structured policy gate\",\"artifact\":\"arch/xtal/xtal.json\"}' \"$1\" \"$X07_STUDIO_AGENT_ID\" \"$X07_STUDIO_ALLOWED_VERBS\" \"$X07_STUDIO_WRITE_ROOTS\" \"$X07_STUDIO_EVENT_SCHEMA\"".to_string(),
                 "x07-studio-agent".to_string(),
             ],
             allowed_verbs: vec!["intent.formalize".to_string()],
@@ -4242,6 +4289,11 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains(&handoff.prompt_path));
+        assert!(run_op
+            .stdout
+            .as_deref()
+            .unwrap_or_default()
+            .contains("env:echo-agent:intent.formalize:src/:x07.studio.agent_event@0.1.0"));
         assert!(stream_updates.iter().any(|op| {
             op.status == OperationStatus::Running
                 && op
