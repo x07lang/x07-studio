@@ -467,6 +467,9 @@ describe('x07 Studio XTAL web model', () => {
 		expect(review?.files.find((file) => file.path === 'src/main.x07.json')?.action).toBe(
 			'add 1, replace 1'
 		);
+		expect(
+			review?.files.find((file) => file.path === 'src/main.x07.json')?.semantics.map((row) => row.surface)
+		).toEqual(['Exports / declarations', 'Implementation body']);
 		expect(review?.files.map((file) => file.path)).toContain('target/xtal/impl-sync.patchset.json');
 	});
 
@@ -496,6 +499,9 @@ describe('x07 Studio XTAL web model', () => {
 		expect(review?.files.find((file) => file.path === 'src/main.x07.json')?.after).toContain(
 			'ok'
 		);
+		const semantics = review?.files.find((file) => file.path === 'src/main.x07.json')?.semantics ?? [];
+		expect(semantics.find((row) => row.pointer === '/solve')?.before).toContain('todo');
+		expect(semantics.find((row) => row.pointer === '/solve')?.after).toContain('ok');
 	});
 
 	it('loads demo documentation previews for doctrine refs', async () => {

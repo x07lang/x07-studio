@@ -167,6 +167,25 @@ test('voice transcript capture appends a spoken witness before spec approval', a
 	await expect(page.getByLabel('Spec approval preview')).toContainText('workflow.graph');
 });
 
+test('semantic patch review explains implementation sync changes', async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto('/');
+
+	await page.getByLabel('Project title').fill('Semantic patch review sorter');
+	await page.getByRole('button', { name: 'New Session', exact: true }).click();
+	await page.getByRole('button', { name: 'Polish Intent' }).click();
+	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Approve and Run' }).click();
+	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
+
+	await expect(inspectOperation(page, 'impl.sync.write')).toBeVisible();
+	await inspectOperation(page, 'impl.sync.write').click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('impl.sync.write');
+	await expect(page.getByLabel('Semantic diff src/main.x07.json')).toContainText('Implementation body');
+	await expect(page.getByLabel('Semantic diff src/main.x07.json')).toContainText('runtime behavior changes');
+	await expect(page.getByLabel('Semantic diff src/main.x07.json')).toContainText('ok');
+});
+
 test('user can create increasingly difficult x07 project sessions and exercise controls', async ({ page }) => {
 	await page.setViewportSize({ width: 1728, height: 972 });
 	await page.goto('/');

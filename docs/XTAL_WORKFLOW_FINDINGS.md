@@ -165,9 +165,7 @@ This document records friction found while implementing the Studio web surface.
    for recorded operation artifacts, so patchset artifact paths can become
    concrete patch entries without granting arbitrary filesystem reads. Recorded
    x07 patchsets now also get in-memory before/after JSON previews for bounded
-   workspace targets, with target-level errors surfaced in the review row. The
-   remaining gap is richer semantic side-by-side diff tooling for large or
-   domain-specific x07AST changes.
+   workspace targets, with target-level errors surfaced in the review row.
 
 17. Docs-example seeding must not copy generated `.x07` state.
 
@@ -571,3 +569,15 @@ This document records friction found while implementing the Studio web surface.
    the graph panel. Each mode highlights the relevant lifecycle nodes and shows
    a compact evidence summary beside the graph, while the browser workflow test
    proves the overlay controls and status feedback.
+
+54. Patch review must explain meaning, not only file paths.
+
+   File-level patch review and before/after JSON previews made deterministic
+   x07 patchsets visible, but a non-expert still had to read raw x07AST to know
+   whether a patch touched an export, implementation body, spec contract, or
+   policy boundary. The browser now derives semantic patch rows from JSON Patch
+   operations, enriches them with bounded before/after preview values when
+   available, and renders a side-by-side semantic diff inside the operation
+   inspector. The demo workflow test now proves an implementation sync patch
+   exposes that semantic review surface before the user continues reviewing
+   trust evidence.

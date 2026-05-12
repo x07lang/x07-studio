@@ -2088,6 +2088,31 @@
 										{#if file.applyError}
 											<p class="patch-error">{file.applyError}</p>
 										{/if}
+										{#if file.semantics.length}
+											<div class="semantic-diff" aria-label={`Semantic diff ${file.path}`}>
+												<span>Semantic diff</span>
+												{#each file.semantics as row}
+													<section>
+														<div>
+															<strong>{row.surface}</strong>
+															<em>{row.operation}</em>
+														</div>
+														<code>{row.pointer}</code>
+														<div class="semantic-pair">
+															<div>
+																<span>Before</span>
+																<p>{row.before}</p>
+															</div>
+															<div>
+																<span>After</span>
+																<p>{row.after}</p>
+															</div>
+														</div>
+														<small>{row.impact}</small>
+													</section>
+												{/each}
+											</div>
+										{/if}
 										{#if file.before || file.after}
 											<div class="patch-diff" aria-label={`Patch before and after ${file.path}`}>
 												<div>

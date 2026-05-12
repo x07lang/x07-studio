@@ -4,6 +4,15 @@ export type ReviewTone = 'info' | 'warn' | 'ok';
 export type PatchReviewRisk = 'low' | 'medium' | 'high';
 export type PatchReviewSource = 'patchset' | 'artifact' | 'write-root' | 'evidence';
 
+export interface PatchSemanticRow {
+	surface: string;
+	pointer: string;
+	operation: string;
+	before: string;
+	after: string;
+	impact: string;
+}
+
 export interface ReviewSignal {
 	opId: string;
 	op: string;
@@ -20,6 +29,7 @@ export interface PatchReviewFile {
 	operations: number;
 	source: PatchReviewSource;
 	risk: PatchReviewRisk;
+	semantics: PatchSemanticRow[];
 	before?: string;
 	after?: string;
 	applyError?: string;
@@ -384,7 +394,8 @@ function patchsetFilesFromValue(value: unknown): PatchReviewFile[] {
 				note: textValue(record?.note) || 'Patchset entry',
 				operations: patch.length,
 				source: 'patchset' as const,
-				risk: riskForPath(path)
+				risk: riskForPath(path),
+				semantics: patchSemanticRows(path, patch)
 			}
 		];
 	});
@@ -432,6 +443,7 @@ function patchsetPreviewFilesFromValue(value: unknown): PatchReviewFile[] {
 				operations: numericValue(record?.operations),
 				source: 'patchset' as const,
 				risk: riskForPath(path),
+				semantics: [],
 				before: jsonSnippet(record?.before_json),
 				after: jsonSnippet(record?.after_json),
 				applyError: applyError || undefined
@@ -481,8 +493,115 @@ function mergePatchsetPreviewFiles(
 		existing.before = preview.before;
 		existing.after = preview.after;
 		existing.applyError = preview.applyError;
+		existing.semantics = enrichSemanticRows(existing.semantics, preview.before, preview.after);
 	}
 	return files;
+}
+
+function patchSemanticRows(path: string, patch: unknown[]): PatchSemanticRow[] {
+	return patch.flatMap((item) => {
+		const record = asRecord(item);
+		if (!record) return [];
+		const operation = textValue(record.op) || 'op';
+		const pointer = textValue(record.path) || '/';
+		return [
+			{
+				surface: semanticSurface(path, pointer),
+				pointer,
+				operation,
+				before: semanticBefore(record, operation),
+				after: semanticAfter(record, operation),
+				impact: semanticImpact(path, pointer, operation)
+			}
+		];
+	}).slice(0, 6);
+}
+
+function enrichSemanticRows(
+	rows: PatchSemanticRow[],
+	before: string | undefined,
+	after: string | undefined
+): PatchSemanticRow[] {
+	if (!rows.length || (!before && !after)) return rows;
+	const beforeJson = parseJsonPreview(before);
+	const afterJson = parseJsonPreview(after);
+	return rows.map((row) => ({
+		...row,
+		before: beforeJson ? semanticValueSummary(valueAtJsonPointer(beforeJson, row.pointer), row.before) : row.before,
+		after: afterJson ? semanticValueSummary(valueAtJsonPointer(afterJson, row.pointer), row.after) : row.after
+	}));
+}
+
+function semanticBefore(record: Record<string, unknown>, operation: string): string {
+	if (operation === 'add') return 'not present';
+	if (operation === 'copy' || operation === 'move') {
+		const from = textValue(record.from);
+		return from ? `from ${from}` : 'source pointer';
+	}
+	if (operation === 'remove') return 'target value';
+	return 'target preview required';
+}
+
+function semanticAfter(record: Record<string, unknown>, operation: string): string {
+	if (operation === 'remove') return 'removed';
+	if (operation === 'move') return 'moved value';
+	if (operation === 'copy') return 'copied value';
+	return semanticValueSummary(record.value, 'value unavailable');
+}
+
+function semanticSurface(path: string, pointer: string): string {
+	if (path.startsWith('spec/') || /\/(requires|ensures|examples|properties|operations)\b/.test(pointer)) {
+		return 'Spec contract';
+	}
+	if (path.startsWith('arch/') || /\/(policy|policies|autonomy|world|worlds|budget|budgets|capabilities)\b/.test(pointer)) {
+		return 'Architecture / policy';
+	}
+	if (/\/(decls|exports|imports)\b/.test(pointer)) return 'Exports / declarations';
+	if (/\/(solve|body|expr|statements)\b/.test(pointer)) return 'Implementation body';
+	if (path.startsWith('tests/') || path.startsWith('gen/')) return 'Generated tests';
+	return 'Project JSON';
+}
+
+function semanticImpact(path: string, pointer: string, operation: string): string {
+	if (path.startsWith('spec/') || /\/(requires|ensures|examples|properties|operations)\b/.test(pointer)) {
+		return 'contract meaning changes; human approval should cover this';
+	}
+	if (path.startsWith('arch/') || /\/(policy|policies|autonomy|world|worlds|budget|budgets|capabilities)\b/.test(pointer)) {
+		return 'capability, world, or budget boundary changes';
+	}
+	if (/\/(decls|exports|imports)\b/.test(pointer)) return 'public module surface changes';
+	if (/\/(solve|body|expr|statements)\b/.test(pointer)) return 'runtime behavior changes';
+	if (operation === 'remove') return 'existing behavior or evidence is removed';
+	return 'review semantic intent before applying';
+}
+
+function parseJsonPreview(value: string | undefined): unknown {
+	if (!value || value.endsWith('...')) return undefined;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return undefined;
+	}
+}
+
+function valueAtJsonPointer(value: unknown, pointer: string): unknown {
+	if (!pointer) return value;
+	if (!pointer.startsWith('/')) return undefined;
+	return pointer
+		.slice(1)
+		.split('/')
+		.reduce<unknown>((current, part) => {
+			if (current === undefined || current === null) return undefined;
+			const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+			if (Array.isArray(current)) return current[Number(key)];
+			const record = asRecord(current);
+			return record ? record[key] : undefined;
+		}, value);
+}
+
+function semanticValueSummary(value: unknown, fallback: string): string {
+	if (value === undefined) return fallback;
+	return stringifyReviewValue(value);
 }
 
 function summarizePatchActions(patch: unknown[]): string {
@@ -504,7 +623,8 @@ function patchReviewFileFromArtifact(artifact: string): PatchReviewFile[] {
 				note: writeRootNote(artifact),
 				operations: 0,
 				source: 'write-root',
-				risk: riskForPath(artifact)
+				risk: riskForPath(artifact),
+				semantics: []
 			}
 		];
 	}
@@ -516,7 +636,8 @@ function patchReviewFileFromArtifact(artifact: string): PatchReviewFile[] {
 				note: 'Deterministic x07 patchset',
 				operations: 0,
 				source: 'artifact',
-				risk: riskForPath(artifact)
+				risk: riskForPath(artifact),
+				semantics: []
 			}
 		];
 	}
@@ -528,7 +649,8 @@ function patchReviewFileFromArtifact(artifact: string): PatchReviewFile[] {
 				note: 'Review evidence',
 				operations: 0,
 				source: 'evidence',
-				risk: 'low'
+				risk: 'low',
+				semantics: []
 			}
 		];
 	}

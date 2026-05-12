@@ -2284,6 +2284,84 @@ textarea {
 	line-height: 1.42;
 }
 
+.semantic-diff {
+	grid-column: 1 / -1;
+	display: grid;
+	gap: 8px;
+	border: 1px solid rgba(114, 228, 180, 0.14);
+	border-radius: var(--radius);
+	background: rgba(114, 228, 180, 0.045);
+	padding: 8px;
+	min-width: 0;
+}
+
+.semantic-diff > span,
+.semantic-diff section > small,
+.semantic-pair span {
+	color: var(--muted);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0;
+}
+
+.semantic-diff section {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.18);
+	padding: 8px;
+}
+
+.semantic-diff section > div:first-child {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.semantic-diff strong {
+	font-size: 12px;
+}
+
+.semantic-diff em {
+	color: var(--cyan);
+	font-style: normal;
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+.semantic-diff code,
+.semantic-pair p {
+	overflow-wrap: anywhere;
+}
+
+.semantic-diff code {
+	color: var(--gold);
+	font-size: 11px;
+}
+
+.semantic-pair {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.semantic-pair div {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
+.semantic-pair p {
+	margin: 0;
+	color: var(--text);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 1.35;
+}
+
 .patch-command {
 	display: grid;
 	gap: 4px;
@@ -3106,7 +3184,8 @@ textarea {
 	.op-inspector dl,
 	.artifact-list,
 	.handoff-contract-grid,
-	.patch-diff {
+	.patch-diff,
+	.semantic-pair {
 		grid-template-columns: 1fr;
 		gap: 3px;
 	}
