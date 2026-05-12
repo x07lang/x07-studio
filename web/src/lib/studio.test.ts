@@ -13,6 +13,7 @@ import {
 	buildAgentHandoffReview,
 	buildApprovalLedger,
 	buildAutomationPlan,
+	buildCertBundlePreview,
 	buildCertifyCommandPreview,
 	buildCertEvidenceBoard,
 	buildEvidenceCoverage,
@@ -796,6 +797,35 @@ describe('x07 Studio XTAL web model', () => {
 		const semantics = review?.files.find((file) => file.path === 'src/main.x07.json')?.semantics ?? [];
 		expect(semantics.find((row) => row.pointer === '/solve')?.before).toContain('todo');
 		expect(semantics.find((row) => row.pointer === '/solve')?.after).toContain('ok');
+	});
+
+	it('loads demo certify bundle previews for trust evidence review', async () => {
+		const api = new StudioApi();
+		await api.health();
+		const session = appendDemoOp(demoSession(), 'xtal.certify', 'succeeded');
+		const preview = await api.previewArtifact(session, 'target/xtal/cert/bundle.json');
+		const op = {
+			...session.op_log[0],
+			report_json: {
+				artifact_preview: {
+					artifact: preview.artifact,
+					json: preview.json
+				}
+			}
+		};
+
+		const bundle = buildCertBundlePreview(op);
+		expect(preview.schema_version).toBe('x07.studio.artifact_preview@0.1.0');
+		expect(preview.json).toMatchObject({
+			schema_version: 'x07.xtal.cert_bundle@0.1.0',
+			out_dir: 'target/xtal/cert'
+		});
+		expect(bundle?.outcome).toBe('pass');
+		expect(bundle?.entries[0].entry).toBe('toy.sorter.sort_u8_asc');
+		expect(bundle?.files.map((file) => file.path)).toContain(
+			'target/xtal/cert/toy/sorter/sort_u8_asc/certificate.json'
+		);
+		expect(bundle?.specDigests[0].path).toBe('spec/toy.sorter.x07spec.json');
 	});
 
 	it('loads demo documentation previews for doctrine refs', async () => {

@@ -743,7 +743,8 @@ function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
 		decls: [{ kind: 'export', names: ['main.run'] }],
 		solve: ['bytes.lit', 'ok']
 	};
-	const json = artifact.includes('patchset')
+	const isPatchset = artifact.includes('patchset');
+	const json = isPatchset
 		? {
 				schema_version: 'x07.patchset@0.1.0',
 				patches: [
@@ -765,7 +766,9 @@ function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
 					}
 				]
 			}
-		: null;
+		: artifact.includes('/cert/') && artifact.endsWith('bundle.json')
+			? demoCertBundleArtifact()
+			: null;
 	const text = json ? JSON.stringify(json, null, 2) : '';
 	return {
 		schema_version: 'x07.studio.artifact_preview@0.1.0',
@@ -775,7 +778,7 @@ function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
 		truncated: false,
 		text,
 		json,
-		patchset_preview: json
+		patchset_preview: isPatchset && json
 			? {
 					schema_version: 'x07.studio.patchset_preview@0.1.0',
 					targets: [
@@ -791,6 +794,49 @@ function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
 					]
 				}
 			: null
+	};
+}
+
+function demoCertBundleArtifact() {
+	return {
+		schema_version: 'x07.xtal.cert_bundle@0.1.0',
+		out_dir: 'target/xtal/cert',
+		spec_dir: 'spec',
+		generated_at: '1970-01-01T00:00:00Z',
+		ok: true,
+		entries: [{ entry: 'toy.sorter.sort_u8_asc', dir: 'target/xtal/cert/toy/sorter/sort_u8_asc' }],
+		files: [
+			{
+				path: 'target/xtal/cert/toy/sorter/sort_u8_asc/certificate.json',
+				sha256: demoSha('certificate'),
+				bytes_len: 4096
+			},
+			{
+				path: 'target/xtal/cert/toy/sorter/sort_u8_asc/trust.report.json',
+				sha256: demoSha('trust-report'),
+				bytes_len: 8192
+			},
+			{
+				path: 'target/xtal/cert/toy/sorter/sort_u8_asc/review.diff.json',
+				sha256: demoSha('review-diff'),
+				bytes_len: 1536
+			}
+		],
+		external_files: [],
+		spec_digests: [
+			{
+				path: 'spec/toy.sorter.x07spec.json',
+				sha256: demoSha('spec-module'),
+				bytes_len: 2048
+			}
+		],
+		examples_digests: [
+			{
+				path: 'spec/examples/toy.sorter.sort_u8_asc.jsonl',
+				sha256: demoSha('examples'),
+				bytes_len: 1024
+			}
+		]
 	};
 }
 

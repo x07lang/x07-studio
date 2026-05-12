@@ -15,6 +15,7 @@
 - browser XTAL repair controls for entrypoint, strategy, write mode, candidate bounds, semantic depth, and non-stub edit review that render into validated `x07 xtal repair` flags
 - browser XTAL certify controls for spec directory, entry scope, all-entry scope, and precheck policy that render into validated `x07 xtal certify` flags
 - browser Certify evidence board that projects `x07.xtal.certify_summary@0.1.0` into project digest, precheck, review-gate, certificate, trust-report, review-diff, and bundle rows
+- browser Certify bundle preview that projects `x07.xtal.cert_bundle@0.1.0` into entry, file, external-file, spec-digest, example-digest, byte-count, and digest inventory rows
 - browser focused/detail modes that keep the current XTAL room, visible agent worklog, and canonical command lane in the first workflow view while preserving the full audit surface behind an explicit Details toggle
 - browser graph overlay modes for Lineage, World Map, Trust Border, and Budget Heatmap on the XTAL graph panel
 - x07 Platform bridge that traces app packaging, provenance, deploy planning, local x07lp delivery, SLO/budget checks, and runtime feedback to canonical operation evidence

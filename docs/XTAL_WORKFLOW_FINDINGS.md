@@ -677,3 +677,13 @@ This document records friction found while implementing the Studio web surface.
    reviewers can see project inputs, precheck policy, review gates, entry
    certificates, trust-report digests, review diffs, and bundle evidence
    without opening raw JSON first.
+
+63. Certify bundles need a digest-inventory preview.
+
+   The certify summary names `target/xtal/cert/bundle.json`, but the bundle is
+   the artifact that seals the exact entry directories, files, external files,
+   spec digests, example digests, and byte counts that release reviewers must
+   trust. Studio now previews `x07.xtal.cert_bundle@0.1.0` from the selected
+   certify operation, so the operation inspector shows the bundle outcome,
+   spec/output directories, entries, file counts, covered bytes, and digest
+   inventory instead of forcing reviewers to leave the canonical command stream.

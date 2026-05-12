@@ -383,6 +383,31 @@ export interface CertEvidenceBoard {
 	artifacts: VerifyEvidenceArtifact[];
 }
 
+export interface CertBundleDigest {
+	path: string;
+	sha256: string;
+	bytesLen: string;
+}
+
+export interface CertBundleEntry {
+	entry: string;
+	dir: string;
+}
+
+export interface CertBundlePreview {
+	schemaVersion: string;
+	outcome: CertEvidenceState;
+	outDir: string;
+	specDir: string;
+	generatedAt: string;
+	entries: CertBundleEntry[];
+	files: CertBundleDigest[];
+	externalFiles: CertBundleDigest[];
+	specDigests: CertBundleDigest[];
+	examplesDigests: CertBundleDigest[];
+	totals: Array<{ label: string; value: string; detail: string }>;
+}
+
 export type VerifyProofPolicy = 'balanced' | 'strict';
 
 export interface VerifyRunOptions {
@@ -1740,6 +1765,38 @@ export function buildCertEvidenceBoard(
 	return certEvidenceBoardFromOperation(op ?? null, session, template, normalized);
 }
 
+export function buildCertBundlePreview(op: OpRecord | null | undefined): CertBundlePreview | null {
+	const bundle = certBundleFromValue(op?.report_json);
+	if (!bundle) return null;
+	const files = certBundleDigests(bundle.files);
+	const externalFiles = certBundleDigests(bundle.external_files);
+	const specDigests = certBundleDigests(bundle.spec_digests);
+	const examplesDigests = certBundleDigests(bundle.examples_digests);
+	const entries = certBundleEntries(bundle.entries);
+	const byteTotal = [...files, ...externalFiles, ...specDigests, ...examplesDigests].reduce(
+		(total, item) => total + (Number.parseInt(item.bytesLen, 10) || 0),
+		0
+	);
+	return {
+		schemaVersion: 'x07.xtal.cert_bundle@0.1.0',
+		outcome: booleanOutcomeState(bundle.ok),
+		outDir: stringValue(bundle.out_dir, 'target/xtal/cert'),
+		specDir: stringValue(bundle.spec_dir, 'spec'),
+		generatedAt: stringValue(bundle.generated_at, 'not generated'),
+		entries,
+		files,
+		externalFiles,
+		specDigests,
+		examplesDigests,
+		totals: [
+			{ label: 'Entries', value: String(entries.length), detail: 'certified entry dirs' },
+			{ label: 'Files', value: String(files.length), detail: `${byteTotal} bytes covered` },
+			{ label: 'External', value: String(externalFiles.length), detail: 'external evidence files' },
+			{ label: 'Spec digests', value: String(specDigests.length), detail: `${examplesDigests.length} example digests` }
+		]
+	};
+}
+
 export function buildRepairCommandPreview(options?: Partial<RepairRunOptions>): string {
 	const normalized = normalizeRepairRunOptions(options);
 	const args = ['x07', 'xtal', 'repair'];
@@ -1780,6 +1837,22 @@ function certSummaryFromValue(value: unknown): Record<string, unknown> | null {
 	const artifactPreview = asPlainRecord(report.artifact_preview);
 	const previewJson = asPlainRecord(artifactPreview?.json);
 	return previewJson?.schema_version === 'x07.xtal.certify_summary@0.1.0' ? previewJson : null;
+}
+
+function certBundleFromValue(value: unknown): Record<string, unknown> | null {
+	const report = asPlainRecord(value);
+	if (!report) return null;
+	if (report.schema_version === 'x07.xtal.cert_bundle@0.1.0') return report;
+	const artifactPreview = asPlainRecord(report.artifact_preview);
+	const previewJson = asPlainRecord(artifactPreview?.json);
+	if (previewJson?.schema_version === 'x07.xtal.cert_bundle@0.1.0') return previewJson;
+	const stdoutJson = asPlainRecord(report.stdout_json);
+	if (stdoutJson?.schema_version === 'x07.xtal.cert_bundle@0.1.0') return stdoutJson;
+	const result = asPlainRecord(report.result);
+	const resultStdoutJson = asPlainRecord(result?.stdout_json);
+	return resultStdoutJson?.schema_version === 'x07.xtal.cert_bundle@0.1.0'
+		? resultStdoutJson
+		: null;
 }
 
 function certEvidenceBoardFromReport(
@@ -2021,6 +2094,29 @@ function defaultCertEntry(
 function stringList(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];
 	return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function certBundleEntries(value: unknown): CertBundleEntry[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item) => asPlainRecord(item))
+		.filter((item): item is Record<string, unknown> => Boolean(item))
+		.map((item) => ({
+			entry: stringValue(item.entry, 'entry'),
+			dir: stringValue(item.dir, 'target/xtal/cert')
+		}));
+}
+
+function certBundleDigests(value: unknown): CertBundleDigest[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.map((item) => asPlainRecord(item))
+		.filter((item): item is Record<string, unknown> => Boolean(item))
+		.map((item) => ({
+			path: stringValue(item.path, 'artifact'),
+			sha256: stringValue(item.sha256, 'missing digest'),
+			bytesLen: stringValue(item.bytes_len, '0')
+		}));
 }
 
 function entryPathSegment(entry: string): string {

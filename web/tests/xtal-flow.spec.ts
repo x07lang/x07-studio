@@ -240,6 +240,10 @@ test('semantic patch review explains implementation sync changes', async ({ page
 	await expect(page.getByLabel('Certify evidence board')).toContainText('proof_coverage');
 	await expect(page.getByLabel('Operation log')).toContainText('--no-prechecks');
 	await expect(page.getByLabel('Operation log')).toContainText('--entry toy.sorter.sort_u8_asc');
+	await inspectOperation(page, 'xtal.certify').click();
+	await expect(page.getByLabel('Certify bundle preview')).toContainText('x07.xtal.cert_bundle@0.1.0');
+	await expect(page.getByLabel('Certify bundle preview')).toContainText('certificate.json');
+	await expect(page.getByLabel('Certify bundle digest inventory')).toContainText('spec/toy.sorter.x07spec.json');
 	await page.getByRole('tab', { name: 'Verify' }).click();
 	await expect(inspectOperation(page, 'impl.sync.write')).toBeVisible();
 	await inspectOperation(page, 'impl.sync.write').click();

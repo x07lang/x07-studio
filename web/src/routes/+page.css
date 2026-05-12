@@ -2837,6 +2837,63 @@ textarea {
 	font-size: 11px;
 }
 
+.cert-bundle-preview {
+	display: grid;
+	gap: 9px;
+	border: 1px solid rgba(114, 228, 180, 0.22);
+	border-radius: var(--radius);
+	background: rgba(114, 228, 180, 0.04);
+	padding: 10px;
+}
+
+.cert-bundle-meta,
+.cert-bundle-totals,
+.cert-bundle-entries,
+.cert-bundle-files {
+	display: grid;
+	gap: 7px;
+	min-width: 0;
+}
+
+.cert-bundle-totals {
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.cert-bundle-totals > div,
+.cert-bundle-entries > div,
+.cert-bundle-files > div {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.16);
+	padding: 8px;
+}
+
+.cert-bundle-meta code,
+.cert-bundle-entries code,
+.cert-bundle-files code,
+.cert-bundle-files small {
+	overflow-wrap: anywhere;
+}
+
+.cert-bundle-meta code,
+.cert-bundle-entries code,
+.cert-bundle-files code {
+	color: var(--cyan);
+	font-size: 11px;
+}
+
+.cert-bundle-meta small,
+.cert-bundle-totals span,
+.cert-bundle-totals small,
+.cert-bundle-entries span,
+.cert-bundle-files small {
+	color: var(--muted);
+	font-size: 11px;
+}
+
 .write-audit {
 	border: 1px solid rgba(114, 228, 180, 0.22);
 	border-radius: var(--radius);
@@ -3706,7 +3763,8 @@ textarea {
 	.cert-evidence-summary,
 	.cert-project-ref,
 	.cert-entry-paths,
-	.cert-artifact-strip {
+	.cert-artifact-strip,
+	.cert-bundle-totals {
 		grid-template-columns: 1fr;
 	}
 

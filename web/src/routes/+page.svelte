@@ -15,6 +15,7 @@
 		buildAgentHandoffReview,
 		buildApprovalLedger,
 		buildAutomationPlan,
+		buildCertBundlePreview,
 		buildCertifyCommandPreview,
 		buildCertEvidenceBoard,
 		buildEvidenceCoverage,
@@ -297,11 +298,12 @@
 		(selectedOpId ? allOps.find((op) => op.id === selectedOpId) : undefined) ??
 		allOps.at(-1) ??
 		null;
-	$: selectedPatchArtifact = patchsetArtifactForOp(selectedOp);
+	$: selectedPreviewArtifact = previewableArtifactForOp(selectedOp);
 	$: selectedOpWithPreview = mergeArtifactPreview(selectedOp, selectedArtifactPreview);
 	$: reviewSignals = buildReviewSignals(allOps);
 	$: counterexampleTheater = buildCounterexampleTheater(allOps);
 	$: selectedPatchReview = buildPatchReview(selectedOpWithPreview);
+	$: selectedCertBundlePreview = buildCertBundlePreview(selectedOpWithPreview);
 	$: selectedWriteAudit = writeAuditFromOp(selectedOp);
 	$: selectedOpDiagnostics = collectDiagnostics(selectedOp);
 	$: selectedOpOutput = operationOutput(selectedOp);
@@ -558,8 +560,8 @@
 		? selected.contract.allowed_verbs
 		: selected?.allowed_verbs ?? [];
 	$: lineageZoomLabel = `${Math.round(lineageZoom * 100)}%`;
-	$: if (selected && selectedOp && selectedPatchArtifact) {
-		void loadArtifactPreview(selected.session_id, selectedOp.id, selectedPatchArtifact);
+	$: if (selected && selectedOp && selectedPreviewArtifact) {
+		void loadArtifactPreview(selected.session_id, selectedOp.id, selectedPreviewArtifact);
 	}
 	$: if (autoScroll && selectedOpId) {
 		const opId = selectedOpId;
@@ -1081,8 +1083,14 @@
 		}
 	}
 
-	function patchsetArtifactForOp(op: OpRecord | null): string {
-		return op?.artifacts.find((artifact) => artifact.includes('patchset') && artifact.endsWith('.json')) ?? '';
+	function previewableArtifactForOp(op: OpRecord | null): string {
+		if (!op) return '';
+		const patchset = op.artifacts.find((artifact) => artifact.includes('patchset') && artifact.endsWith('.json'));
+		if (patchset) return patchset;
+		if (op.op.startsWith('xtal.certify')) {
+			return op.artifacts.find((artifact) => artifact.includes('/cert/') && artifact.endsWith('bundle.json')) ?? '';
+		}
+		return '';
 	}
 
 	function mergeArtifactPreview(
@@ -2532,6 +2540,50 @@
 							<div class="patch-command">
 								<span>Command</span>
 								<code>{selectedPatchReview.command}</code>
+							</div>
+							<div class="patch-command">
+								<span>Artifact preview</span>
+								<code>{artifactPreviewStatus}</code>
+							</div>
+						</div>
+					{/if}
+					{#if selectedCertBundlePreview}
+						<div class="cert-bundle-preview" aria-label="Certify bundle preview">
+							<div class="patch-review-head">
+								<div>
+									<span>Certify bundle</span>
+									<strong>{selectedCertBundlePreview.outcome}</strong>
+								</div>
+								<em>{selectedCertBundlePreview.schemaVersion}</em>
+							</div>
+							<div class="cert-bundle-meta">
+								<code>{selectedCertBundlePreview.specDir} / {selectedCertBundlePreview.outDir}</code>
+								<small>{selectedCertBundlePreview.generatedAt}</small>
+							</div>
+							<div class="cert-bundle-totals">
+								{#each selectedCertBundlePreview.totals as item}
+									<div>
+										<span>{item.label}</span>
+										<strong>{item.value}</strong>
+										<small>{item.detail}</small>
+									</div>
+								{/each}
+							</div>
+							<div class="cert-bundle-entries" aria-label="Certify bundle entries">
+								{#each selectedCertBundlePreview.entries as entry}
+									<div>
+										<span>{entry.entry}</span>
+										<code>{entry.dir}</code>
+									</div>
+								{/each}
+							</div>
+							<div class="cert-bundle-files" aria-label="Certify bundle digest inventory">
+								{#each [...selectedCertBundlePreview.files, ...selectedCertBundlePreview.specDigests, ...selectedCertBundlePreview.examplesDigests].slice(0, 6) as file}
+									<div>
+										<code>{file.path}</code>
+										<small>{file.bytesLen} bytes / {file.sha256}</small>
+									</div>
+								{/each}
 							</div>
 							<div class="patch-command">
 								<span>Artifact preview</span>
