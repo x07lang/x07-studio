@@ -1,18 +1,28 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import { plainOpLabel } from '$lib/plainEnglish';
-	import type { IntentWitnessKind, OpRecord, SessionSnapshot, SessionTurn } from '$lib/studio';
+	import type {
+		IntentWitnessKind,
+		OpRecord,
+		SessionSnapshot,
+		SessionTurn,
+		TryItRequest,
+		TryItResult
+	} from '$lib/studio';
 	import ClarifyQuestionCard from './ClarifyQuestionCard.svelte';
 	import ResultPreview from './ResultPreview.svelte';
 
 	export let turns: SessionTurn[] = [];
 	export let session: SessionSnapshot | null = null;
 	export let detailsOpen = false;
+	export let tryResult: TryItResult | null = null;
+	export let busy = false;
 
 	const dispatch = createEventDispatcher<{
 		answer: { questionId: string; text: string; witnessKind: IntentWitnessKind };
 		followup: string;
 		repair: string;
+		invoke: TryItRequest;
 	}>();
 
 	$: opsById = new Map((session?.op_log ?? []).map((op) => [op.id, op]));
@@ -107,7 +117,13 @@
 						<span>Verified</span>
 						<time>{turn.at}</time>
 					</header>
-					<ResultPreview summary={turn.summary} on:followup={(event) => dispatch('followup', event.detail)} />
+					<ResultPreview
+						summary={turn.summary}
+						{tryResult}
+						{busy}
+						on:followup={(event) => dispatch('followup', event.detail)}
+						on:invoke={(event) => dispatch('invoke', event.detail)}
+					/>
 				{:else if turn.kind === 'incident'}
 					<header>
 						<span>Incident</span>

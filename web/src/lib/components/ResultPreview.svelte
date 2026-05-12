@@ -1,14 +1,18 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { PlainEnglishSummary } from '$lib/studio';
+	import type { PlainEnglishSummary, TryItRequest, TryItResult } from '$lib/studio';
 
 	export let summary: PlainEnglishSummary;
+	export let tryResult: TryItResult | null = null;
+	export let busy = false;
 
 	let copied = false;
 	let showDetails = false;
+	let tryInput = '';
 
 	const dispatch = createEventDispatcher<{
 		followup: string;
+		invoke: TryItRequest;
 	}>();
 
 	async function copyInvocation() {
@@ -20,6 +24,25 @@
 		} catch {
 			copied = false;
 		}
+	}
+
+	function runIt() {
+		const text = tryInput.trim();
+		if (!text) return;
+		dispatch('invoke', {
+			input_kind: 'text',
+			input_text: text,
+			input_b64: null,
+			input_path: null,
+			argv: [],
+			profile: null
+		});
+	}
+
+	function formatOutput(result: TryItResult): string {
+		if (result.output_text) return result.output_text;
+		if (result.output_json) return JSON.stringify(result.output_json, null, 2);
+		return '(no output)';
 	}
 </script>
 
@@ -79,6 +102,56 @@
 				</p>
 			{/if}
 		</section>
+
+		<section class="try-inline" data-testid="try-inline">
+			<header>
+				<h3>Or try it right here</h3>
+			</header>
+			<div class="try-row">
+				<input
+					type="text"
+					bind:value={tryInput}
+					placeholder="Type input and press Run"
+					data-testid="try-inline-input"
+					on:keydown={(event) => {
+						if (event.key === 'Enter') {
+							event.preventDefault();
+							runIt();
+						}
+					}}
+					disabled={busy}
+				/>
+				<button
+					type="button"
+					class="command-button primary"
+					on:click={runIt}
+					disabled={busy || !tryInput.trim()}
+					data-testid="try-inline-run"
+				>
+					{busy ? 'Running…' : 'Run it'}
+				</button>
+			</div>
+			{#if tryResult}
+				<div
+					class="try-output"
+					data-testid="try-inline-output"
+					data-kind={tryResult.output_kind}
+				>
+					<header>
+						<span class="kind-label">{tryResult.output_kind}</span>
+						{#if tryResult.proof_citations.length}
+							<span class="proof-chip"
+								>✓ proved by {tryResult.proof_citations.length} clause{tryResult
+									.proof_citations.length === 1
+									? ''
+									: 's'}</span
+							>
+						{/if}
+					</header>
+					<pre>{formatOutput(tryResult)}</pre>
+				</div>
+			{/if}
+		</section>
 	{/if}
 
 	{#if summary.followups.length}
@@ -94,3 +167,93 @@
 		</section>
 	{/if}
 </section>
+
+<style>
+	.try-inline {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		margin-top: 0.65rem;
+		padding-top: 0.65rem;
+		border-top: 1px solid rgba(148, 163, 184, 0.18);
+	}
+	.try-inline header h3 {
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		margin: 0;
+		color: var(--muted, #aab1c0);
+	}
+	.try-row {
+		display: flex;
+		gap: 0.5rem;
+		align-items: stretch;
+	}
+	.try-row input {
+		flex: 1;
+		font: inherit;
+		padding: 0.5rem 0.7rem;
+		border-radius: 0.4rem;
+		border: 1px solid rgba(148, 163, 184, 0.35);
+		background: rgba(15, 18, 24, 0.65);
+		color: var(--text, #eef1f6);
+	}
+	.try-row input::placeholder {
+		color: rgba(148, 163, 184, 0.6);
+	}
+	.try-row input:disabled {
+		opacity: 0.55;
+	}
+	.try-output {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		padding: 0.55rem 0.75rem;
+		border-radius: 0.5rem;
+		background: rgba(15, 18, 24, 0.55);
+		border: 1px solid rgba(148, 163, 184, 0.2);
+	}
+	.try-output header {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
+		font-size: 0.7rem;
+	}
+	.try-output .kind-label {
+		color: var(--muted, #aab1c0);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.try-output .proof-chip {
+		color: #2bbf6b;
+	}
+	.try-output[data-kind='not_verified'] .proof-chip {
+		color: #f5a623;
+	}
+	.try-output pre {
+		margin: 0;
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.85rem;
+		white-space: pre-wrap;
+		word-break: break-word;
+		color: var(--text, #eef1f6);
+	}
+	@media (prefers-color-scheme: light) {
+		.try-row input {
+			background: #ffffff;
+			color: #1b1f2a;
+			border-color: #d0d4dc;
+		}
+		.try-row input::placeholder {
+			color: #6b7280;
+		}
+		.try-output {
+			background: #f8fafc;
+			border-color: #d0d4dc;
+		}
+		.try-output pre {
+			color: #1b1f2a;
+		}
+	}
+</style>

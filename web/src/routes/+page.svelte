@@ -342,9 +342,12 @@
 			{turns}
 			session={selected}
 			{detailsOpen}
+			{tryResult}
+			{busy}
 			on:answer={(event) => answer(event.detail)}
 			on:followup={(event) => followup(event.detail)}
 			on:repair={(event) => repairIncident(event.detail)}
+			on:invoke={(event) => invoke(event.detail)}
 		/>
 		<NowPanel
 			session={selected}

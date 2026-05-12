@@ -49,6 +49,14 @@ const DOCTRINE_FRAGMENTS: &[&str] = &[
     "agent may edit implementation paths after spec approval",
     "agent may not widen specs or architecture policy without approval",
     "generated outputs, arch contracts, and budget profiles require drift evidence",
+    // The seeded "examples" + "ambiguities" entries below are scaffold
+    // placeholders, not real domain content. They were leaking into the
+    // run-from-terminal snippet (as fake input) and the "Keep going"
+    // suggestions (as nonsensical follow-ups). Treat them as doctrine.
+    "input examples become spec examples before implementation",
+    "generated tests must be reviewable before verify",
+    "acceptance examples need final human approval",
+    "proof strictness should be selected before certify",
 ];
 
 pub(crate) fn is_doctrine(text: &str) -> bool {
@@ -250,7 +258,7 @@ fn run_invocation_for(intent: &IntentPacket) -> Option<String> {
         .examples
         .iter()
         .find_map(|example| invocation_input_from_example(example))
-        .unwrap_or_else(|| "<your input here>".to_string());
+        .unwrap_or_else(|| kind_aware_placeholder(intent));
     let escaped = example.replace('\\', "\\\\").replace('"', "\\\"");
     Some(format!(
         "printf \"%s\" \"{escaped}\" | x07 run --project x07.json --profile sandbox --stdin"
@@ -270,15 +278,49 @@ fn invocation_input_from_example(example: &str) -> Option<String> {
     }
 }
 
-pub fn derive_followups(intent: &IntentPacket, _session: &SessionSnapshot) -> Vec<String> {
-    let mut out = Vec::new();
-    for ambiguity in &intent.ambiguities {
-        let text = ambiguity.trim();
-        if text.is_empty() || is_doctrine(text) {
-            continue;
-        }
-        push_followup(&mut out, format!("What if {text}?"));
+/// Pick a plausible placeholder input based on the target module name so
+/// the "Run it from your terminal" snippet is copy-pasteable as-is.
+/// Falls back to a generic <your input here> when nothing matches.
+fn kind_aware_placeholder(intent: &IntentPacket) -> String {
+    let target = intent
+        .targets
+        .first()
+        .map(|target| {
+            format!(
+                "{} {}",
+                target.module_id,
+                target.entry.as_deref().unwrap_or_default()
+            )
+        })
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if target.contains("sort") {
+        "3 1 2 1 4".to_string()
+    } else if target.contains("crawl") {
+        "https://example.com".to_string()
+    } else if target.contains("greet") {
+        "World".to_string()
+    } else if target.contains("calc") {
+        "2 + 2".to_string()
+    } else if target.contains("parse") || target.contains("validator") {
+        "{\\\"hello\\\":\\\"world\\\"}".to_string()
+    } else if target.contains("gateway") || target.contains("service") {
+        "GET /health".to_string()
+    } else if target.contains("workflow") || target.contains("graph") {
+        "a:3 b:2 c:1 / a->b a->c".to_string()
+    } else if target.contains("incident") || target.contains("guard") {
+        "target/xtal/violations/<incident-id>".to_string()
+    } else {
+        "<your input here>".to_string()
     }
+}
+
+pub fn derive_followups(intent: &IntentPacket, _session: &SessionSnapshot) -> Vec<String> {
+    // Heuristics first: prompts derived from the target module are almost
+    // always more useful than generic XTAL ambiguities. Domain follow-ups
+    // anchor the user; ambiguities tail in as a safety net only when we
+    // run out of better suggestions.
+    let mut out = Vec::new();
     let target = intent
         .targets
         .first()
@@ -300,11 +342,46 @@ pub fn derive_followups(intent: &IntentPacket, _session: &SessionSnapshot) -> Ve
     } else if target.contains("crawl") {
         push_followup(&mut out, "What should it do for redirects?".to_string());
         push_followup(&mut out, "Should failed pages be retried?".to_string());
+        push_followup(
+            &mut out,
+            "Should it respect robots.txt and a polite delay?".to_string(),
+        );
+    } else if target.contains("greet") {
+        push_followup(
+            &mut out,
+            "Should it support multiple languages?".to_string(),
+        );
+        push_followup(
+            &mut out,
+            "Should it reject names with control characters?".to_string(),
+        );
+    } else if target.contains("calc") {
+        push_followup(&mut out, "Should it support parentheses?".to_string());
+        push_followup(&mut out, "What about division by zero?".to_string());
+    } else if target.contains("parse") {
+        push_followup(
+            &mut out,
+            "Should malformed input emit a structured error?".to_string(),
+        );
+    } else if target.contains("validator") {
+        push_followup(
+            &mut out,
+            "Should errors include the failing JSON pointer?".to_string(),
+        );
     } else if target.contains("gateway") {
         push_followup(
             &mut out,
             "Should unmatched routes return a structured error?".to_string(),
         );
+    } else if target.contains("service") {
+        push_followup(&mut out, "Should it expose a /health endpoint?".to_string());
+        push_followup(&mut out, "What's the rate limit?".to_string());
+    } else if target.contains("workflow") || target.contains("graph") {
+        push_followup(
+            &mut out,
+            "What if two tasks have no edges between them?".to_string(),
+        );
+        push_followup(&mut out, "Should retries widen the makespan?".to_string());
     } else if target.contains("incident") {
         push_followup(
             &mut out,
@@ -313,6 +390,13 @@ pub fn derive_followups(intent: &IntentPacket, _session: &SessionSnapshot) -> Ve
     }
     push_followup(&mut out, "Do you want a CLI wrapper for this?".to_string());
     push_followup(&mut out, "Should this become a service?".to_string());
+    for ambiguity in &intent.ambiguities {
+        let text = ambiguity.trim();
+        if text.is_empty() || is_doctrine(text) {
+            continue;
+        }
+        push_followup(&mut out, format!("What if {text}?"));
+    }
     out.truncate(3);
     out
 }
@@ -341,7 +425,10 @@ mod tests {
     use super::{derive_followups, plain_english_summary_from_session};
 
     #[test]
-    fn summary_has_fallback_run_invocation_without_examples() {
+    fn summary_uses_kind_aware_placeholder_when_no_examples() {
+        // The demo IntentPacket targets `toy.sorter/sort_u8_asc`, so the
+        // kind-aware placeholder should pick the sort-style example
+        // instead of the generic <your input here>.
         let session_id = Uuid::new_v4();
         let mut session =
             SessionSnapshot::new(session_id, "sorter", "/workspace", TaskType::NewBehavior);
@@ -354,12 +441,39 @@ mod tests {
 
         assert_eq!(
             summary.run_invocation.as_deref(),
+            Some("printf \"%s\" \"3 1 2 1 4\" | x07 run --project x07.json --profile sandbox --stdin")
+        );
+    }
+
+    #[test]
+    fn summary_falls_back_to_generic_placeholder_when_target_unknown() {
+        // A session whose target doesn't match any kind heuristic still
+        // produces a copy-pasteable command — just with a placeholder.
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "demo", "/workspace", TaskType::NewBehavior);
+        let mut intent = IntentPacket::demo(session_id, "/workspace");
+        intent.examples.clear();
+        intent.targets = vec![loom_types::artifacts::IntentTarget {
+            module_id: "studio.example.unknown".to_string(),
+            entry: Some("run_v1".to_string()),
+        }];
+        session.intent = Some(intent);
+        session.phase = SessionPhase::TrustReview;
+
+        let summary = plain_english_summary_from_session(&session).expect("summary");
+
+        assert_eq!(
+            summary.run_invocation.as_deref(),
             Some("printf \"%s\" \"<your input here>\" | x07 run --project x07.json --profile sandbox --stdin")
         );
     }
 
     #[test]
-    fn derive_followups_caps_ambiguities_and_heuristics() {
+    fn derive_followups_leads_with_domain_heuristics_not_ambiguities() {
+        // Heuristics first: for a sorter target the first suggestion should
+        // be domain-specific, not an "What if …?" rephrasing of the
+        // ambiguity list. Ambiguities still get a chance to fill the tail.
         let session_id = Uuid::new_v4();
         let session =
             SessionSnapshot::new(session_id, "sorter", "/workspace", TaskType::NewBehavior);
@@ -373,7 +487,10 @@ mod tests {
         let followups = derive_followups(&intent, &session);
 
         assert_eq!(followups.len(), 3);
-        assert!(followups[0].starts_with("What if"));
+        assert!(!followups[0].starts_with("What if"));
+        assert!(followups
+            .iter()
+            .any(|item| item.contains("negative numbers")));
     }
 
     #[test]
