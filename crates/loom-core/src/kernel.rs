@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::event_bus::SessionEventBus;
+use crate::genpack::GenpackHandoffContext;
 use loom_types::api::SessionStreamEvent;
 
 use loom_adapters::command_runner::{
@@ -1334,10 +1335,21 @@ impl WorkspaceKernel {
         self.store.save_agent_profile(profile)
     }
 
-    pub fn create_agent_handoff(
+    pub async fn create_agent_handoff(
         &mut self,
         session_id: Uuid,
         agent_id: &str,
+    ) -> anyhow::Result<(AgentHandoff, SessionSnapshot)> {
+        let seed = self.genpack_context_seed(session_id)?;
+        let genpack = Self::resolve_genpack_context(seed).await;
+        self.create_agent_handoff_with_genpack(session_id, agent_id, genpack.as_ref())
+    }
+
+    pub fn create_agent_handoff_with_genpack(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        genpack: Option<&GenpackHandoffContext>,
     ) -> anyhow::Result<(AgentHandoff, SessionSnapshot)> {
         let session = self
             .model
@@ -1350,7 +1362,7 @@ impl WorkspaceKernel {
             .find(|profile| profile.id == agent_id)
             .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
         ensure_agent_enabled(&agent, "creating a handoff")?;
-        let handoff = agent_handoff_from_session(&session, &agent);
+        let handoff = agent_handoff_from_session(&session, &agent, genpack);
         let prompt_path = self.store.save_agent_handoff(&handoff)?;
         let now = now_string();
         let op = OpRecord {
@@ -1389,7 +1401,9 @@ impl WorkspaceKernel {
         mode: AgentRunMode,
         timeout_seconds: Option<u64>,
     ) -> anyhow::Result<(AgentHandoff, OpRecord, SessionSnapshot)> {
-        let prepared = self.start_agent_handoff(session_id, agent_id, mode, timeout_seconds)?;
+        let prepared = self
+            .start_agent_handoff(session_id, agent_id, mode, timeout_seconds)
+            .await?;
         let handoff = prepared.handoff.clone();
         if let Some(command) = prepared.command {
             let op = Self::execute_agent_command(command).await;
@@ -1400,12 +1414,31 @@ impl WorkspaceKernel {
         }
     }
 
-    pub fn start_agent_handoff(
+    pub async fn start_agent_handoff(
         &mut self,
         session_id: Uuid,
         agent_id: &str,
         mode: AgentRunMode,
         timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let seed = self.genpack_context_seed(session_id)?;
+        let genpack = Self::resolve_genpack_context(seed).await;
+        self.start_agent_handoff_with_genpack(
+            session_id,
+            agent_id,
+            mode,
+            timeout_seconds,
+            genpack.as_ref(),
+        )
+    }
+
+    pub fn start_agent_handoff_with_genpack(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        mode: AgentRunMode,
+        timeout_seconds: Option<u64>,
+        genpack: Option<&GenpackHandoffContext>,
     ) -> anyhow::Result<PreparedAgentRun> {
         let session = self
             .model
@@ -1418,7 +1451,7 @@ impl WorkspaceKernel {
             .find(|profile| profile.id == agent_id)
             .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
         ensure_agent_enabled(&agent, "planning or executing a supervised run")?;
-        let handoff = agent_handoff_from_session(&session, &agent);
+        let handoff = agent_handoff_from_session(&session, &agent, genpack);
         let prompt_path = self.store.save_agent_handoff(&handoff)?;
 
         let (op, command) = match mode {
@@ -1472,11 +1505,28 @@ impl WorkspaceKernel {
     /// `agent_event` JSONL with kind `clarify_question`), then exits. The
     /// browser uses the resulting `agent.event.<agent>.clarify_question`
     /// records to render question cards. No files are written.
-    pub fn start_intent_clarify(
+    pub async fn start_intent_clarify(
         &mut self,
         session_id: Uuid,
         agent_id: &str,
         timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let seed = self.genpack_context_seed(session_id)?;
+        let genpack = Self::resolve_genpack_context(seed).await;
+        self.start_intent_clarify_with_genpack(
+            session_id,
+            agent_id,
+            timeout_seconds,
+            genpack.as_ref(),
+        )
+    }
+
+    pub fn start_intent_clarify_with_genpack(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        timeout_seconds: Option<u64>,
+        genpack: Option<&GenpackHandoffContext>,
     ) -> anyhow::Result<PreparedAgentRun> {
         let session = self
             .model
@@ -1500,7 +1550,7 @@ impl WorkspaceKernel {
             .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
         ensure_agent_enabled(&agent, "running an intent clarify round")?;
         ensure_agent_command_available(&agent)?;
-        let handoff = agent_clarify_handoff_from_session(&session, &agent, round);
+        let handoff = agent_clarify_handoff_from_session(&session, &agent, round, genpack);
         let prompt_path = self
             .store
             .save_agent_handoff_with_suffix(&handoff, "clarify")?;
@@ -1527,6 +1577,27 @@ impl WorkspaceKernel {
             session: snapshot,
             command: Some(command),
         })
+    }
+
+    pub fn genpack_context_seed(
+        &self,
+        session_id: Uuid,
+    ) -> anyhow::Result<Option<(CliAdapter, IntentPacket)>> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(session
+            .intent
+            .clone()
+            .map(|intent| (self.cli.clone(), intent)))
+    }
+
+    pub async fn resolve_genpack_context(
+        seed: Option<(CliAdapter, IntentPacket)>,
+    ) -> Option<GenpackHandoffContext> {
+        let (cli, intent) = seed?;
+        crate::genpack::handoff_context(&cli, &intent).await
     }
 
     /// After a clarify supervised run completes, walks the new
@@ -4079,7 +4150,11 @@ fn command_available(command: &str) -> bool {
     std::env::split_paths(&paths).any(|dir| dir.join(command).is_file())
 }
 
-fn agent_handoff_from_session(session: &SessionSnapshot, agent: &AgentProfile) -> AgentHandoff {
+fn agent_handoff_from_session(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    genpack: Option<&GenpackHandoffContext>,
+) -> AgentHandoff {
     let prompt_path = format!(
         ".x07/studio/handoffs/{}-{}.md",
         session.session_id, agent.id
@@ -4094,7 +4169,7 @@ fn agent_handoff_from_session(session: &SessionSnapshot, agent: &AgentProfile) -
         "x07.json".to_string(),
         "target/xtal/verify/summary.json".to_string(),
     ];
-    let prompt = render_agent_handoff_prompt(session, agent, &command);
+    let prompt = render_agent_handoff_prompt(session, agent, &command, genpack);
     AgentHandoff {
         schema_version: "x07.studio.agent_handoff@0.1.0".to_string(),
         session_id: session.session_id,
@@ -4116,6 +4191,7 @@ fn render_agent_handoff_prompt(
     session: &SessionSnapshot,
     agent: &AgentProfile,
     command: &[String],
+    genpack: Option<&GenpackHandoffContext>,
 ) -> String {
     let mut out = String::new();
     out.push_str("# x07 Studio Agent Handoff\n\n");
@@ -4215,6 +4291,9 @@ fn render_agent_handoff_prompt(
             out.push_str(&format!("- `{:?}`: {}\n", witness.kind, witness.text));
         }
     }
+    if let Some(genpack) = genpack {
+        render_genpack_section(&mut out, genpack);
+    }
     out.push_str("\n## Required Loop\n\n");
     out.push_str("1. Re-read this handoff and the session contract.\n");
     out.push_str("2. Use x07 docs/MCP tools before selecting commands.\n");
@@ -4241,6 +4320,7 @@ fn agent_clarify_handoff_from_session(
     session: &SessionSnapshot,
     agent: &AgentProfile,
     round: u32,
+    genpack: Option<&GenpackHandoffContext>,
 ) -> AgentHandoff {
     let mut clarify_agent = agent.clone();
     clarify_agent.allowed_verbs = vec!["intent.clarify".to_string()];
@@ -4257,7 +4337,7 @@ fn agent_clarify_handoff_from_session(
         prompt_path.clone(),
         format!(".x07/studio/sessions/{}.json", session.session_id),
     ];
-    let prompt = render_agent_clarify_prompt(session, &clarify_agent, &command, round);
+    let prompt = render_agent_clarify_prompt(session, &clarify_agent, &command, round, genpack);
     AgentHandoff {
         schema_version: "x07.studio.agent_handoff@0.1.0".to_string(),
         session_id: session.session_id,
@@ -4280,6 +4360,7 @@ fn render_agent_clarify_prompt(
     agent: &AgentProfile,
     command: &[String],
     round: u32,
+    genpack: Option<&GenpackHandoffContext>,
 ) -> String {
     let mut out = String::new();
     out.push_str("# x07 Studio — Intent Clarify Round\n\n");
@@ -4374,10 +4455,38 @@ Read the draft intent below and the prior clarification history. Then **either**
             }
         }
     }
+    if let Some(genpack) = genpack {
+        render_genpack_section(&mut out, genpack);
+    }
     out.push_str(
         "\nWhen you are done emitting events, exit. The supervisor will read your output.\n",
     );
     out
+}
+
+fn render_genpack_section(out: &mut String, genpack: &GenpackHandoffContext) {
+    out.push_str("\n## Service Genpack Context\n\n");
+    out.push_str(&format!("- Detected archetype: `{}`\n", genpack.archetype));
+    out.push_str(
+        "- Use this archetype contract when drafting service manifests or generated service artifacts.\n",
+    );
+    if let Some(schema) = &genpack.schema {
+        out.push_str("\nJSON Schema:\n\n```json\n");
+        match serde_json::to_string(schema) {
+            Ok(raw) => out.push_str(&raw),
+            Err(_) => out.push_str("{}"),
+        }
+        out.push_str("\n```\n");
+    } else {
+        out.push_str("\nJSON Schema: unavailable from local `x07 service genpack schema`.\n");
+    }
+    if let Some(grammar) = &genpack.grammar {
+        out.push_str("\nGrammar:\n\n```text\n");
+        out.push_str(grammar.trim());
+        out.push_str("\n```\n");
+    } else {
+        out.push_str("\nGrammar: unavailable from local `x07 service genpack grammar`.\n");
+    }
 }
 
 fn handoff_execution_boundaries(session: &SessionSnapshot) -> Vec<String> {
@@ -5353,10 +5462,11 @@ mod tests {
     use loom_types::session::SessionSnapshot;
 
     use super::{
+        agent_clarify_handoff_from_session, agent_handoff_from_session,
         atlas_platform_delivery_vars, checked_xtal_verify_run_vars, copy_example_tree,
         entry_from_spec_operation, intent_packet_from_raw, platform_deployment_id_from_report,
         sha256_hex, should_scaffold_spec, workflow_template_from_intent,
-        xtal_workflow_vars_from_intent, WorkflowTemplate, WorkspaceKernel,
+        xtal_workflow_vars_from_intent, GenpackHandoffContext, WorkflowTemplate, WorkspaceKernel,
     };
 
     #[test]
@@ -5794,8 +5904,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn agent_handoff_prompt_names_world_and_budget_boundaries() {
+    #[tokio::test]
+    async fn agent_handoff_prompt_names_world_and_budget_boundaries() {
         let root = temp_root();
         let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
         let session = kernel
@@ -5818,6 +5928,7 @@ mod tests {
 
         let (handoff, _session) = kernel
             .create_agent_handoff(session.session_id, "openai-codex")
+            .await
             .expect("create handoff");
 
         assert!(handoff.prompt.contains("## Execution Boundary"));
@@ -5831,6 +5942,44 @@ mod tests {
         assert!(handoff.prompt.contains("WASM app"));
         assert!(handoff.prompt.contains("release/provenance"));
         assert!(handoff.prompt.contains("SLO/budget"));
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn agent_handoff_prompt_embeds_genpack_context() {
+        let root = temp_root();
+        let mut session = SessionSnapshot::new(
+            Uuid::nil(),
+            "api gateway",
+            root.to_string(),
+            TaskType::NewBehavior,
+        );
+        session.intent = Some(intent_packet_from_raw(
+            &session,
+            "Build an API gateway service for account reads.",
+            IntentInputMode::Text,
+            &[],
+        ));
+        let agent = AgentProfile::codex();
+        let genpack = GenpackHandoffContext {
+            archetype: "api-cell",
+            schema: Some(serde_json::json!({
+                "type": "object",
+                "required": ["routes"]
+            })),
+            grammar: Some("api-cell = route+".to_string()),
+        };
+
+        let handoff = agent_handoff_from_session(&session, &agent, Some(&genpack));
+        assert!(handoff.prompt.contains("## Service Genpack Context"));
+        assert!(handoff.prompt.contains("Detected archetype: `api-cell`"));
+        assert!(handoff.prompt.contains(r#""required":["routes"]"#));
+        assert!(handoff.prompt.contains("api-cell = route+"));
+
+        let clarify = agent_clarify_handoff_from_session(&session, &agent, 1, Some(&genpack));
+        assert!(clarify.prompt.contains("## Service Genpack Context"));
+        assert!(clarify.prompt.contains("Detected archetype: `api-cell`"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -5881,6 +6030,7 @@ mod tests {
                 AgentRunMode::Execute,
                 Some(5),
             )
+            .await
             .expect("start blocked agent");
         assert_eq!(blocked.op.op, "agent.approval.echo-agent");
         assert_eq!(blocked.op.status, OperationStatus::Pending);
@@ -5908,6 +6058,7 @@ mod tests {
                 AgentRunMode::Execute,
                 Some(5),
             )
+            .await
             .expect("start agent");
         assert_eq!(prepared.op.op, "agent.run.echo-agent");
         assert_eq!(prepared.op.status, OperationStatus::Running);
@@ -5992,6 +6143,7 @@ mod tests {
                 AgentRunMode::Execute,
                 Some(5),
             )
+            .await
             .expect("start blocked agent after consumed approval");
         assert_eq!(blocked_again.op.op, "agent.approval.echo-agent");
         assert_eq!(blocked_again.op.status, OperationStatus::Pending);
@@ -6113,6 +6265,7 @@ mod tests {
 
         let handoff_error = kernel
             .create_agent_handoff(session.session_id, "disabled-agent")
+            .await
             .expect_err("disabled handoff should fail")
             .to_string();
         assert!(handoff_error.contains("disabled"));
@@ -6124,6 +6277,7 @@ mod tests {
                 AgentRunMode::Plan,
                 None,
             )
+            .await
             .expect_err("disabled run should fail")
             .to_string();
         assert!(run_error.contains("disabled"));
@@ -6165,6 +6319,7 @@ mod tests {
                 AgentRunMode::Execute,
                 Some(5),
             )
+            .await
             .expect_err("missing command should fail before supervised launch")
             .to_string();
         assert!(execute_error.contains("not available"));

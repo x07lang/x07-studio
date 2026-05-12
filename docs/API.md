@@ -407,6 +407,11 @@ allowed verbs, MCP tools, write roots, required XTAL loop, and an execution
 boundary section. That boundary names `x07 run` as the default execution front
 door and calls out solve-rr, sandbox/run-os, WASM app, release/provenance, and
 SLO/budget lanes when the session evidence implies those gates.
+When the approved intent matches a service archetype such as `api-cell`,
+`event-consumer`, `scheduled-job`, `policy-service`, or `workflow-service`,
+the handoff also embeds local `x07 service genpack schema --archetype ...`
+and `x07 service genpack grammar --archetype ...` output so the agent can
+draft service-shaped artifacts against the released contract.
 
 Handoff prompts also define a structured agent event JSONL protocol. Agents may
 emit one JSON object per line with

@@ -17,9 +17,12 @@ state through the browser, native Studio shell, Forge shell, and daemon API.
   incident surfaces.
 - Intent quorum rounds, image witnesses, cassette entries, cassette branching,
   project Q&A, sync codes, local memory, and visual parse/emit endpoints.
+- Genpack-aware agent handoff prompts for detected service archetypes, including
+  local `x07 service genpack schema` and `grammar` output when available.
 - Trust binding coverage for sandbox reports, profile checks, and profile
   certification.
-- Browser tests and connected daemon tests for the Timeline path.
+- Browser tests and connected daemon tests for the Timeline path, Atlas
+  workflow lane, incident repair, and genpack-aware handoff prompts.
 
 ## Intentional Limits
 

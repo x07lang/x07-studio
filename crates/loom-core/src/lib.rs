@@ -1,4 +1,5 @@
 pub mod event_bus;
+pub mod genpack;
 pub mod incidents;
 pub mod kernel;
 pub mod ladder;

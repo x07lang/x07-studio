@@ -33,4 +33,62 @@ test('connected timeline formalizes, clarifies, builds, tries, and scans inciden
 	await expect(page.getByTestId('try-it-panel')).toContainText('Latest verify evidence', {
 		timeout: 15_000
 	});
+
+	await page.getByRole('button', { name: 'Scan incidents' }).click();
+	await expect(page.getByTestId('turn-incident')).toContainText('demo-incident', {
+		timeout: 15_000
+	});
+	await page.getByRole('button', { name: 'Repair this' }).click();
+	await expect(page.getByTestId('turn-repair')).toContainText('latest', { timeout: 15_000 });
+});
+
+test('connected timeline runs the Atlas workflow lane', async ({ page }) => {
+	const prompt =
+		'Use docs/examples/wasm_showcases/x07_atlas to build x07 Atlas with profile validation, trace replay, release pack verification, provenance, deploy planning, and SLO evidence.';
+	await page.goto('/?details=open');
+	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+
+	await page.getByTestId('composer-input').fill(prompt);
+	await page.getByTestId('composer-submit').click();
+	await expect(page.getByTestId('turn-user_intent')).toContainText('wasm_showcases/x07_atlas', {
+		timeout: 15_000
+	});
+
+	await page.getByTestId('approve-build').click();
+	await expect(page.getByTestId('turn-verified')).toBeVisible({ timeout: 45_000 });
+	await expect(page.getByTestId('shipping-ladder')).toContainText('Production');
+
+	const response = await page.request.get('/v1/sessions');
+	const sessions = (await response.json()) as Array<{ title: string; op_log: Array<{ op: string }> }>;
+	const atlas = sessions.find((session) => session.title === prompt.slice(0, 80));
+	expect(atlas?.op_log.some((op) => op.op === 'wasm.app.verify.atlas_release')).toBe(true);
+	expect(atlas?.op_log.some((op) => op.op === 'wasm.provenance.verify.atlas_release')).toBe(true);
+	expect(atlas?.op_log.some((op) => op.op === 'lp.deploy.status.local')).toBe(true);
+});
+
+test('connected handoff embeds detected service genpack schema', async ({ page }) => {
+	const prompt = 'Build an API gateway service for account reads with request validation.';
+	await page.goto('/?details=open');
+	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+
+	await page.getByTestId('composer-input').fill(prompt);
+	await page.getByTestId('composer-submit').click();
+	await expect(page.getByTestId('turn-user_intent')).toContainText('API gateway', {
+		timeout: 15_000
+	});
+
+	const sessionsResponse = await page.request.get('/v1/sessions');
+	const sessions = (await sessionsResponse.json()) as Array<{ session_id: string; title: string }>;
+	const service = sessions.find((session) => session.title === prompt.slice(0, 80));
+	expect(service).toBeTruthy();
+
+	const handoffResponse = await page.request.post(
+		`/v1/sessions/${service?.session_id}/agents/openai-codex/handoff`
+	);
+	expect(handoffResponse.ok()).toBe(true);
+	const handoff = (await handoffResponse.json()) as { handoff: { prompt: string } };
+	expect(handoff.handoff.prompt).toContain('## Service Genpack Context');
+	expect(handoff.handoff.prompt).toContain('Detected archetype: `api-cell`');
+	expect(handoff.handoff.prompt).toContain('x07.service.genpack.schema_v1');
+	expect(handoff.handoff.prompt).toContain('api-cell ::= service operations policy');
 });

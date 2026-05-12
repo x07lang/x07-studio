@@ -504,10 +504,22 @@ async fn run_intent_clarify(
     State(state): State<ApiState>,
     Json(request): Json<IntentClarifyRequest>,
 ) -> Result<Json<IntentClarifyResponse>, (StatusCode, String)> {
+    let genpack_seed = {
+        let kernel = state.kernel.lock().await;
+        kernel
+            .genpack_context_seed(session_id)
+            .map_err(conflict_error)?
+    };
+    let genpack = WorkspaceKernel::resolve_genpack_context(genpack_seed).await;
     let prepared = {
         let mut kernel = state.kernel.lock().await;
         kernel
-            .start_intent_clarify(session_id, &request.agent_id, request.timeout_seconds)
+            .start_intent_clarify_with_genpack(
+                session_id,
+                &request.agent_id,
+                request.timeout_seconds,
+                genpack.as_ref(),
+            )
             .map_err(conflict_error)?
     };
     let handoff = prepared.handoff.clone();
@@ -1001,9 +1013,16 @@ async fn create_agent_handoff(
     Path((session_id, agent_id)): Path<(Uuid, String)>,
     State(state): State<ApiState>,
 ) -> Result<Json<AgentHandoffResponse>, (StatusCode, String)> {
+    let genpack_seed = {
+        let kernel = state.kernel.lock().await;
+        kernel
+            .genpack_context_seed(session_id)
+            .map_err(internal_error)?
+    };
+    let genpack = WorkspaceKernel::resolve_genpack_context(genpack_seed).await;
     let mut kernel = state.kernel.lock().await;
     let (handoff, session) = kernel
-        .create_agent_handoff(session_id, &agent_id)
+        .create_agent_handoff_with_genpack(session_id, &agent_id, genpack.as_ref())
         .map_err(internal_error)?;
     Ok(Json(AgentHandoffResponse { handoff, session }))
 }
@@ -1013,10 +1032,23 @@ async fn run_agent_handoff(
     State(state): State<ApiState>,
     Json(request): Json<AgentRunRequest>,
 ) -> Result<Json<AgentRunResponse>, (StatusCode, String)> {
+    let genpack_seed = {
+        let kernel = state.kernel.lock().await;
+        kernel
+            .genpack_context_seed(session_id)
+            .map_err(internal_error)?
+    };
+    let genpack = WorkspaceKernel::resolve_genpack_context(genpack_seed).await;
     let prepared = {
         let mut kernel = state.kernel.lock().await;
         kernel
-            .start_agent_handoff(session_id, &agent_id, request.mode, request.timeout_seconds)
+            .start_agent_handoff_with_genpack(
+                session_id,
+                &agent_id,
+                request.mode,
+                request.timeout_seconds,
+                genpack.as_ref(),
+            )
             .map_err(internal_error)?
     };
     let (op, session) = if let Some(command) = prepared.command {

@@ -36,6 +36,7 @@
 - approval preview intent review that surfaces polished ambiguities and assumptions before human approval
 - session doctrine surfacing for canonical x07 docs, MCP tools, allowed verbs, and handoff prompt context
 - reviewable Codex/Claude handoff contract panel showing command, prompt path, approval gate, execution boundaries, automation runbook, allowed verbs, MCP tools, write roots, prompt excerpt, and agent event protocol
+- genpack-aware handoff prompts that embed local service archetype schema and grammar for API cells, event consumers, scheduled jobs, policy services, and workflow services when the approved intent matches one
 - handoff environment contract preview for the `X07_STUDIO_*` variables passed to supervised Codex/Claude commands
 - browser agent flight recorder that summarizes the selected Codex/Claude handoff, launch plan, human checkpoint, supervised run, agent events, and write-root audit in one clickable timeline
 - browser agent approval ledger that keeps the selected Codex/Claude human checkpoint visible after approval or rejection

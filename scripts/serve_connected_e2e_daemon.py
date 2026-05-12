@@ -52,6 +52,29 @@ def write_json(path: Path, payload: object) -> None:
 
 def run_x07(args: list[str]) -> None:
     cwd = Path.cwd()
+    if args[:3] == ["service", "genpack", "schema"]:
+        archetype = option(args, "--archetype", "api-cell")
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07.service.genpack.schema_v1",
+                    "archetype": archetype,
+                    "type": "object",
+                    "required": ["service", "operations"],
+                    "properties": {
+                        "service": {"type": "string"},
+                        "operations": {"type": "array"},
+                    },
+                }
+            )
+        )
+        return
+
+    if args[:3] == ["service", "genpack", "grammar"]:
+        archetype = option(args, "--archetype", "api-cell")
+        print(f"{archetype} ::= service operations policy")
+        return
+
     if args[:3] == ["init", "--template", "xtal-pure"]:
         write_json(cwd / "x07.json", {"schema_version": "x07.project@0.1.0", "name": "connected-e2e"})
         write_json(cwd / "x07.lock.json", {"schema_version": "x07.lock@0.1.0", "packages": []})
@@ -133,7 +156,7 @@ def run_agent(command: str, args: list[str]) -> None:
     if "-clarify" in prompt_path:
         # Connected-E2E clarify mode: emit two structured clarify_question
         # events that mirror what a real Claude Code / Codex run would emit
-        # for an unfamiliar intent. The Simple-Mode UI ingests these into
+        # for an unfamiliar intent. The Timeline UI ingests these into
         # the intent packet's clarification_history.
         print(
             json.dumps(
@@ -277,6 +300,17 @@ def write_connected_examples(examples_root: Path) -> None:
     )
 
 
+def write_connected_incident(workspace: Path) -> None:
+    write_json(
+        workspace / ".x07-wasm/incidents/demo-incident/run.report.json",
+        {
+            "kind": "runtime_violation",
+            "summary": "connected-e2e incident should re-enter the repair loop",
+            "at": "2026-05-12T12:00:00Z",
+        },
+    )
+
+
 def reset_target_path(repo_root: Path, path: Path) -> None:
     target_root = (repo_root / "target").resolve()
     if path != target_root and target_root not in path.parents:
@@ -296,6 +330,7 @@ def main() -> int:
     reset_target_path(repo_root, bin_dir)
     reset_target_path(repo_root, examples_root)
     write_connected_examples(examples_root)
+    write_connected_incident(workspace)
 
     x07 = write_fake_tool(bin_dir, "x07")
     x07_wasm = write_fake_tool(bin_dir, "x07-wasm")

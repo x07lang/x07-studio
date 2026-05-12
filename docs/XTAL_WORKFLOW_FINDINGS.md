@@ -934,3 +934,14 @@ This document records friction found while implementing the Studio web surface.
    append-only JSONL under `~/.x07-studio`. That is enough for local continuity
    and device handoff experiments without introducing identity, hosted storage,
    or account semantics before the product needs them.
+
+85. Service-shaped handoffs need the released genpack contract inline.
+
+   Studio could detect API gateway, event-consumer, scheduled-job, policy, and
+   workflow intent, but external agents still received only broad lifecycle
+   rules. That left them to infer the service manifest shape from memory or
+   docs lookup. Studio now detects the service archetype from the intent and
+   embeds local `x07 service genpack schema` plus `x07 service genpack grammar`
+   output directly in normal and clarify handoff prompts. If the local x07 CLI
+   cannot provide either block, the prompt says so explicitly instead of
+   fabricating a contract.

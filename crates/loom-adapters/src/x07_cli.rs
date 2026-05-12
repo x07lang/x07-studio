@@ -273,6 +273,56 @@ impl CliAdapter {
             report_path: Some(report_path),
         })
     }
+
+    pub async fn service_genpack_schema(&self, archetype: &str) -> anyhow::Result<Value> {
+        let execution = self.run_service_genpack("schema", archetype).await?;
+        if execution.exit_code != Some(0) {
+            bail!(
+                "x07 service genpack schema failed for `{archetype}`: {}",
+                execution.stderr
+            );
+        }
+        execution
+            .stdout_json
+            .or_else(|| parse_first_json_value(&execution.stdout))
+            .with_context(|| {
+                format!("x07 service genpack schema returned non-JSON for `{archetype}`")
+            })
+    }
+
+    pub async fn service_genpack_grammar(&self, archetype: &str) -> anyhow::Result<String> {
+        let execution = self.run_service_genpack("grammar", archetype).await?;
+        if execution.exit_code != Some(0) {
+            bail!(
+                "x07 service genpack grammar failed for `{archetype}`: {}",
+                execution.stderr
+            );
+        }
+        let grammar = strip_json_report_lines(&execution.stdout);
+        if grammar.is_empty() {
+            bail!("x07 service genpack grammar returned empty output for `{archetype}`");
+        }
+        Ok(grammar)
+    }
+
+    async fn run_service_genpack(
+        &self,
+        subcommand: &str,
+        archetype: &str,
+    ) -> anyhow::Result<CommandExecution> {
+        let args = vec![
+            "service".to_string(),
+            "genpack".to_string(),
+            subcommand.to_string(),
+            "--archetype".to_string(),
+            archetype.to_string(),
+        ];
+        let program = resolve_program(ProgramKey::X07, self.root.as_path());
+        self.runner
+            .run_with_timeout(&self.root, &program, &args, &BTreeMap::new(), Some(10))
+            .await
+            .with_context(|| format!("x07 service genpack {subcommand} failed to spawn"))
+    }
 }
 
 fn framed_bytes(bytes: &[u8]) -> Vec<u8> {
@@ -280,6 +330,29 @@ fn framed_bytes(bytes: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
     out.extend_from_slice(bytes);
     out
+}
+
+fn parse_first_json_value(raw: &str) -> Option<Value> {
+    if let Some(Ok(value)) = serde_json::Deserializer::from_str(raw.trim_start())
+        .into_iter::<Value>()
+        .next()
+    {
+        return Some(value);
+    }
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
+}
+
+fn strip_json_report_lines(raw: &str) -> String {
+    raw.lines()
+        .map(str::trim_end)
+        .filter(|line| serde_json::from_str::<Value>(line).is_err())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 fn interpolate(template: &str, vars: &BTreeMap<String, String>) -> String {
@@ -1760,8 +1833,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        binding_by_id, find_nearby_x07lp_driver, xtal_certify_args_from_vars,
-        xtal_repair_args_from_vars, xtal_verify_args_from_vars, CliAdapter, MachineJsonMode,
+        binding_by_id, find_nearby_x07lp_driver, parse_first_json_value, strip_json_report_lines,
+        xtal_certify_args_from_vars, xtal_repair_args_from_vars, xtal_verify_args_from_vars,
+        CliAdapter, MachineJsonMode,
     };
 
     #[test]
@@ -1806,6 +1880,37 @@ mod tests {
         assert_eq!(rendered.args, vec!["init", "--template", "xtal-pure"]);
         assert!(rendered.artifacts.contains(&"x07.json".to_string()));
         assert_eq!(binding.machine_json, MachineJsonMode::ReportFile);
+    }
+
+    #[test]
+    fn genpack_stdout_helpers_tolerate_trailing_runner_reports() {
+        let stdout = r#"{"schema_version":"x07.service.genpack.schema_v1","type":"object"}
+{"schema_version":"x07.connected_e2e.report@0.1.0","ok":true}"#;
+        let schema = parse_first_json_value(stdout).expect("parse schema");
+        assert_eq!(
+            schema
+                .get("schema_version")
+                .and_then(serde_json::Value::as_str),
+            Some("x07.service.genpack.schema_v1")
+        );
+
+        let pretty_stdout = r#"{
+  "schema_version": "x07.service.genpack.schema_v1",
+  "type": "object"
+}
+{"schema_version":"x07.connected_e2e.report@0.1.0","ok":true}"#;
+        let pretty_schema = parse_first_json_value(pretty_stdout).expect("parse pretty schema");
+        assert_eq!(
+            pretty_schema
+                .get("schema_version")
+                .and_then(serde_json::Value::as_str),
+            Some("x07.service.genpack.schema_v1")
+        );
+
+        let grammar = strip_json_report_lines(
+            "api-cell ::= service operations\n{\"schema_version\":\"x07.connected_e2e.report@0.1.0\"}",
+        );
+        assert_eq!(grammar, "api-cell ::= service operations");
     }
 
     #[test]
