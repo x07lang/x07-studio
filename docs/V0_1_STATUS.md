@@ -69,6 +69,11 @@
 - Axum daemon routes for sessions, bindings, providers, and MCP connections
 - egui GUI shell and ratatui Forge shell over the daemon API
 - egui GUI shell starts an embedded local daemon by default for standalone desktop use and reports that runtime daemon address through health
+- conversational intent loop driven by Claude Code and OpenAI Codex through the new `intent.clarify` supervised verb; agents emit structured `clarify_question` / `clarify_done` events on the existing `x07.studio.agent_event@0.1.0` protocol; user answers become typed witnesses on the intent packet
+- per-session Server-Sent Events stream (`GET /v1/sessions/{id}/stream`) delivers `Op` and `Snapshot` events from the daemon broadcast hub so the browser updates within ~100 ms of a state transition without polling
+- orchestrated `POST /v1/sessions/{id}/build` pipeline composes the canonical XTAL chain through verify and runs up to three rounds of semantic-only `xtal.repair` on failure, emitting plain-English `build.stage.*` markers (`start`, `repair`, `done`, `needs_help`)
+- deterministic plain-English summarizer (`summary.plain_english` OpRecord) renders the approved spec + verify evidence into a headline, behavior promises, boundaries, and evidence bullets a non-engineer can review
+- Simple Mode browser surface (`SimpleStart`, `ClarifyQuestionCard`, `SimpleBuildProgress`, `SimpleResultPreview`, plus a Simple/Expert mode toggle persisted in `localStorage`) gives new users a single guided prompt-to-verified flow without exposing JSON, rooms, or evidence boards by default
 
 ## Still intentionally thin in v0.1
 

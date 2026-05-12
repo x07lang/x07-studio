@@ -68,12 +68,17 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `GET /sessions`
 - `POST /sessions`
 - `GET /sessions/{session_id}`
+- `GET /sessions/{session_id}/stream` *(SSE; see below)*
 - `POST /sessions/{session_id}/events`
 - `POST /sessions/{session_id}/intent/formalize`
+- `POST /sessions/{session_id}/intent/revision`
+- `POST /sessions/{session_id}/intent/clarify`
+- `POST /sessions/{session_id}/intent/answer`
 - `POST /sessions/{session_id}/bindings/run`
 - `POST /sessions/{session_id}/artifacts/preview`
 - `POST /sessions/{session_id}/docs/preview`
 - `POST /sessions/{session_id}/xtal/run`
+- `POST /sessions/{session_id}/build`
 
 Create session request:
 
@@ -433,6 +438,98 @@ the checkpoint with:
   "notes": "Human reviewed the session contract and write roots."
 }
 ```
+
+Intent clarify request:
+
+```json
+{
+  "agent_id": "claude-code",
+  "timeout_seconds": 90
+}
+```
+
+`POST /v1/sessions/{session_id}/intent/clarify` spawns the supervised
+coding-agent runner identified by `agent_id` in a clarify-only mode. The
+agent is restricted to the `intent.clarify` verb with no write roots; its
+handoff prompt is saved under
+`.x07/studio/handoffs/{session}-{agent}-clarify.{md,json}` and asks the
+agent to emit 1-3 structured `clarify_question` events or one
+`clarify_done` event on the existing
+`x07.studio.agent_event@0.1.0` JSONL protocol. The daemon streams
+stdout/stderr through the same supervised channel used by `agent.run.*`,
+parses the new event kinds, and (on completion) ingests the resulting
+questions into a `clarification_history: Vec<ClarificationTurn>` field on
+the session's intent packet. Browser clients then render each turn as a
+Q&A card directly off `session.intent.clarification_history`.
+
+Intent answer request:
+
+```json
+{
+  "answers": [
+    {
+      "question_id": "q1",
+      "text": "Reject empty input with an error.",
+      "witness_kind": "forbidden_behavior"
+    }
+  ]
+}
+```
+
+`POST /v1/sessions/{session_id}/intent/answer` pairs each answer with its
+question by `question_id`, fills in the matching `ClarificationTurn`,
+appends a typed witness to the intent packet, re-emits the intent through
+the reducer (the session stays in `IntentReady`), and records a visible
+`intent.clarify.answers` operation.
+
+Build pipeline request:
+
+```http
+POST /v1/sessions/{session_id}/build
+```
+
+Optional request body:
+
+```json
+{
+  "vars": { "proof_policy": "balanced" },
+  "max_repair_rounds": 3
+}
+```
+
+`POST /v1/sessions/{session_id}/build` is the simple-mode wrapper around
+the XTAL workflow. It emits a plain-English `build.stage.start` marker,
+runs `run_xtal_workflow_with_vars` (scaffold → spec.check →
+tests.gen.write → impl.sync.write → impl.check → xtal.verify), and — on
+verification failure — runs up to `max_repair_rounds` rounds of
+`xtal.repair --semantic-only --write` followed by another `xtal.verify`.
+Stops at `trust_review` (verified) or `human_intervention_required`. On
+success, emits `build.stage.done` followed by a deterministic
+`summary.plain_english` OpRecord whose `report_json` carries
+`x07.studio.plain_english_summary@0.1.0`
+(`headline`, `behavior_promises`, `boundaries`, `evidence`).
+
+## Session stream (Server-Sent Events)
+
+`GET /v1/sessions/{session_id}/stream` is a `text/event-stream` endpoint
+backed by a per-session `tokio::sync::broadcast` hub
+(`loom-core::SessionEventBus`). Each frame's `data:` payload is a JSON
+object tagged with `kind`:
+
+```text
+event: message
+data: {"kind":"snapshot","session":{ ... full SessionSnapshot ... }}
+
+event: message
+data: {"kind":"op","op":{ ... single OpRecord ... }}
+```
+
+`Op` events are emitted on every `AppendOp` / `UpdateOp` dispatch and let
+the browser dedupe by `op.id`. `Snapshot` events are emitted on every
+other state-machine transition (`FormalizeIntent`, `ApproveSpec`,
+`VerificationPassed`, etc.) so phase, room, intent, and contract changes
+land in one consistent payload. Axum's `KeepAlive::default()` keeps the
+connection warm; idle clients receive a `: keepalive` comment.
 
 ## MCP
 

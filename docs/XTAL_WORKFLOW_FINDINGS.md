@@ -815,3 +815,76 @@ This document records friction found while implementing the Studio web surface.
    lists every ambiguity and assumption as review items, and adds the review
    step to the approval checklist so the human decision is grounded in the
    polished packet rather than only the target module.
+
+76. Intent polish was one-shot; new users could not converse to alignment.
+
+   The original `intent/formalize` flow ran a deterministic baseline plus an
+   optional provider polish, and the only way to ask for changes was a
+   user-authored revision note. That left no canonical "agent asks until
+   aligned" surface — exactly the loop a non-engineer needs. Cycle 1 adds
+   `POST /v1/sessions/{id}/intent/clarify` (a supervised `intent.clarify`
+   verb on the existing Codex / Claude Code agent profiles) and
+   `POST /v1/sessions/{id}/intent/answer`. Agents emit structured
+   `clarify_question` and `clarify_done` events on the existing
+   `x07.studio.agent_event@0.1.0` JSONL protocol; the kernel ingests the
+   resulting OpRecords into a new `clarification_history` field on the intent
+   packet so the UI can render Q&A cards directly off
+   `session.intent.clarification_history` without parsing op_log JSON.
+
+   Recommendation for x07 itself: mirror the agent_event protocol (now six
+   kinds: `artifact`, `diagnostic`, `write`, `approval`, `clarify_question`,
+   `clarify_done`) in `x07/docs/getting-started/agent-quickstart.md`. The
+   protocol is canonical for any Studio-hosted agent run but currently lives
+   only in x07-studio's own docs.
+
+77. Long-running supervised work needed a push channel, not just polling.
+
+   `agent.run.*` records already streamed stdout/stderr chunks inside the
+   same OpRecord, but the browser had to poll `GET /v1/sessions/{id}` to see
+   them. At 500 ms cadence that's noticeably laggy when a Claude Code run is
+   emitting `clarify_question` lines or `xtal.verify` is reporting per-entry
+   evidence. Cycle 1 adds a per-session `tokio::sync::broadcast` hub
+   (`loom-core::SessionEventBus`) and a `GET /v1/sessions/{id}/stream` SSE
+   handler. Every kernel dispatch publishes either a granular `Op` event
+   (browser dedupes by `op.id`) or a full `Snapshot` event (phase / room /
+   intent / contract changes); the browser merges with upsert-by-id logic.
+
+   Recommendation for x07 itself: the same pattern is missing from
+   `x07-mcp`. Long-running MCP tool calls (e.g. `x07.app.exec_v1` building a
+   WASM bundle) currently rely on the agent re-invoking the tool to poll
+   status. A canonical "session stream" pattern documented in
+   `x07/docs/guides/` would let MCP gateways unify their progress surfaces.
+
+78. The build pipeline needed plain-English markers, not just binding ids.
+
+   `POST /v1/sessions/{id}/xtal/run` already composes the XTAL chain, but
+   each step is recorded as a low-level binding op (`spec.scaffold`,
+   `impl.sync.write`, …). A non-engineer cannot map those to "Designing the
+   structure" or "Writing the code" without a vocabulary table. Cycle 1
+   adds `POST /v1/sessions/{id}/build`, which wraps `run_xtal_workflow_with_vars`
+   with two new conveniences: `build.stage.*` plain-English markers
+   (`start`, `repair`, `done`, `needs_help`) and bounded auto-repair (up to
+   three rounds of semantic-only `xtal.repair` on verify failure). The browser
+   maps both `build.stage.*` and the canonical binding ids to plain-English
+   labels in one place (`web/src/lib/plainEnglish.ts`).
+
+   Recommendation for x07 itself: the canonical binding catalog
+   (`x07-wasm app build` / `x07 xtal verify` / etc.) would benefit from a
+   small `display_name` field per binding in the descriptor returned by
+   `GET /v1/bindings` so downstream tools don't have to maintain their own
+   plain-English table. Studio's local table is the second one written;
+   x07-platform's web UI probably has a third.
+
+79. SvelteKit static-adapter hydration races click handlers.
+
+   The Simple Mode E2E added in Cycle 1 reliably fails its first
+   `click()` on the Open Expert button if it runs before the SvelteKit
+   prerender shell finishes hydrating. The symptom is silent: no error, no
+   page event — just a no-op click. Wrapping the click in
+   `await page.waitForLoadState('networkidle').catch(() => undefined);
+   await page.waitForTimeout(200);` reliably gates the test until the
+   hydrated handlers attach. The same hazard exists for any test driven
+   against `/?mode=simple` in the connected-E2E daemon. Documenting this in
+   the Studio testing docs and (probably) baking a dedicated
+   `whenHydrated()` helper into the Playwright fixtures would save future
+   contributors a debugging hour.
