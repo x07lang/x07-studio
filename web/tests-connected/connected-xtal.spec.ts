@@ -98,6 +98,30 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeEnabled();
 
 	await page.getByRole('tab', { name: 'Agents' }).click();
+	await page.getByLabel('Active coding agent').selectOption({ label: 'OpenAI Codex' });
+	await expect(page.getByLabel('Active coding agent')).toHaveValue('openai-codex');
+	await page.getByRole('button', { name: 'Generate OpenAI Codex Handoff' }).click();
+	await expect(page.locator('footer').getByText('OpenAI Codex handoff saved to')).toBeVisible();
+	await expect(page.getByLabel('Agent handoff contract')).toContainText('OpenAI Codex');
+	await expect(page.getByLabel('Agent handoff contract')).toContainText('Execution Boundary');
+	await expect(page.getByLabel('Agent handoff contract')).toContainText('x07 run');
+	await expect(page.getByLabel('Agent handoff contract')).toContainText('x07.studio.agent_event@0.1.0');
+	await page.getByRole('button', { name: 'Plan OpenAI Codex Run' }).click();
+	await expect(page.locator('footer').getByText('OpenAI Codex supervised launch plan recorded')).toBeVisible();
+	await page.getByRole('button', { name: 'Run OpenAI Codex Command' }).click();
+	await expect(page.locator('footer').getByText('OpenAI Codex approval required before supervised command')).toBeVisible();
+	await page.getByRole('button', { name: 'Approve agent.approval.openai-codex' }).click();
+	await expect(page.locator('footer').getByText('Agent checkpoint approved')).toBeVisible();
+	await page.getByRole('button', { name: 'Run OpenAI Codex Command' }).click();
+	await expect(page.locator('footer').getByText('OpenAI Codex supervised command succeeded')).toBeVisible();
+	await expect(inspectOperation(page, 'agent.event.openai-codex.artifact')).toBeVisible();
+	await page.getByLabel('Worklog filter').selectOption('codex');
+	await expect(inspectOperation(page, 'agent.run.openai-codex')).toBeVisible();
+	await expect(inspectOperation(page, 'agent.event.openai-codex.artifact')).toBeVisible();
+	await page.getByLabel('Worklog filter').selectOption('all');
+
+	await page.getByLabel('Active coding agent').selectOption({ label: 'Claude Code' });
+	await expect(page.getByLabel('Active coding agent')).toHaveValue('claude-code');
 	await page.getByRole('button', { name: 'Generate Claude Code Handoff' }).click();
 	await expect(page.locator('footer').getByText('Claude Code handoff saved to')).toBeVisible();
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('Claude Code');

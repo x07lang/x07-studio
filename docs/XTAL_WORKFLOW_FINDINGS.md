@@ -508,3 +508,13 @@ This document records friction found while implementing the Studio web surface.
    Verify rooms compact first-class panels. The connected browser test now
    proves the same focused/detail controls work against a real Loom daemon and
    the simple-to-Atlas XTAL workflow.
+
+48. Codex and Claude Code must both be proven as supervised execution lanes.
+
+   Studio already rendered readiness cards for OpenAI Codex and Claude Code,
+   but the connected browser test only executed the Claude path. That left a
+   coverage gap in the requirement that both coding agents integrate with the
+   same handoff, approval, supervised command, worklog, and structured
+   `x07.studio.agent_event@0.1.0` protocol. The connected test now drives an
+   OpenAI Codex handoff through plan, approval, execute, artifact event, and
+   Codex worklog filtering before repeating the Claude Code flow.
