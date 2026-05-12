@@ -581,3 +581,16 @@ This document records friction found while implementing the Studio web surface.
    inspector. The demo workflow test now proves an implementation sync patch
    exposes that semantic review surface before the user continues reviewing
    trust evidence.
+
+55. Spoken intent needs confidence review before approval.
+
+   Voice capture already entered the same approval-gated intent path as written
+   input, but the browser treated every final transcript as equally reliable.
+   That is too weak for non-expert users because a speech recognizer can turn a
+   requirement or forbidden behavior into the wrong witness. Studio now records
+   Web Speech confidence for final segments when the browser provides it,
+   exposes language and confidence-gate controls, and marks low-confidence or
+   unavailable-confidence transcripts for review in the captured witness list.
+   The browser voice test now proves a low-confidence spoken workflow witness
+   remains visible before spec approval instead of silently becoming trusted
+   input.

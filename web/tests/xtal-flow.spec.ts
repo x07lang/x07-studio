@@ -92,7 +92,7 @@ async function installFakeSpeechRecognition(page: Page) {
 			onstart: (() => void) | null = null;
 			onend: (() => void) | null = null;
 			onerror: ((event: { error?: string }) => void) | null = null;
-			onresult: ((event: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null = null;
+			onresult: ((event: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string; confidence: number } }> }) => void) | null = null;
 
 			start() {
 				const fakeWindow = window as Window & {
@@ -110,8 +110,8 @@ async function installFakeSpeechRecognition(page: Page) {
 				this.onend?.();
 			}
 
-			emitFinal(transcript: string) {
-				const result = { 0: { transcript }, isFinal: true };
+			emitFinal(transcript: string, confidence = 0.94) {
+				const result = { 0: { transcript, confidence }, isFinal: true };
 				this.onresult?.({ resultIndex: 0, results: { 0: result, length: 1 } });
 			}
 		}
@@ -139,10 +139,11 @@ test('voice transcript capture appends a spoken witness before spec approval', a
 
 	await page.evaluate(() => {
 		const fakeWindow = window as Window & {
-			__x07SpeechRecognitionInstance?: { emitFinal: (transcript: string) => void };
+			__x07SpeechRecognitionInstance?: { emitFinal: (transcript: string, confidence?: number) => void };
 		};
 		fakeWindow.__x07SpeechRecognitionInstance?.emitFinal(
-			'Build a workflow graph optimizer that rejects cycles and records makespan evidence'
+			'Build a workflow graph optimizer that rejects cycles and records makespan evidence',
+			0.62
 		);
 	});
 
@@ -152,6 +153,11 @@ test('voice transcript capture appends a spoken witness before spec approval', a
 	await expect(page.getByLabel('Captured voice witnesses')).toContainText(
 		'Build a workflow graph optimizer'
 	);
+	await expect(page.getByLabel('Captured voice witnesses')).toContainText('62% confidence');
+	await expect(page.getByLabel('Captured voice witnesses')).toContainText('review transcript');
+	await expect(page.getByLabel('Speech review settings')).toContainText('70%');
+	await page.getByLabel('Speech language').selectOption('en-GB');
+	await expect(page.getByLabel('Speech language')).toHaveValue('en-GB');
 	await expect(page.getByLabel('Draft witness preview')).toContainText('desired behavior');
 	await expect(page.getByLabel('Draft witness preview')).toContainText('forbidden behavior');
 	await page.getByRole('button', { name: 'Stop voice capture' }).click();

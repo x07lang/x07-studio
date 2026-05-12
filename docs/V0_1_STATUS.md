@@ -28,6 +28,7 @@
 - MCP stdio transport with newline-delimited JSON-RPC
 - daemon-owned `intent.formalize` endpoint for written plans, voice transcripts, existing specs, incident notes, revision notes, and visible intent operation records
 - browser voice transcript capture that appends spoken witnesses into the same approval-gated intent path, with paste-transcript fallback when Web Speech is unavailable
+- browser transcript confidence review for Web Speech witnesses, including language selection, confidence gate, and low-confidence review badges
 - draft witness preview that classifies raw written/spoken/spec/incident input before polish as desired behavior, forbidden behavior, policy requirement, or incident evidence
 - opt-in provider-backed intent polish that records model suggestions as review evidence while keeping deterministic intent generation as the fallback
 - daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs
@@ -54,9 +55,9 @@
 - GUI exposes HTTP MCP first; stdio MCP is available through the daemon API already
 - provider probing is bounded and capability-oriented, not a full benchmark suite
 - session execution policy is enforced by the reducer, canonical binding catalog, approval gates, supervised agent contract environment, and post-run write-root audits; this is still not an OS-level path sandbox
-- the v0.1 shells expose lifecycle controls, graph overlays, artifact logs, a compact trust review queue, artifact-backed patchset previews, semantic patch review rows, path-level before/after visual patch review, and browser speech transcript capture; richer STT/provider configuration remains a later UI layer
+- the v0.1 shells expose lifecycle controls, graph overlays, artifact logs, a compact trust review queue, artifact-backed patchset previews, semantic patch review rows, path-level before/after visual patch review, and browser speech transcript capture with confidence review; richer provider and STT backend configuration remains a later UI layer
 - no compile-time proof cache yet
-- no persisted audio capture, local STT model selection, or transcript confidence review yet
+- no persisted audio capture or local STT model selection yet
 
 ## Validation done here
 

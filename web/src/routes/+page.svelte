@@ -101,12 +101,20 @@
 	let speechListening = false;
 	let speechStatus = 'Speech capture will append a transcript witness.';
 	let speechInterim = '';
-	let speechTranscriptHistory: string[] = [];
+	let speechTranscriptHistory: SpeechTranscriptReview[] = [];
+	let speechLanguage = 'en-US';
+	let speechConfidenceGate = 0.7;
 	let speechRecognition: SpeechRecognitionLike | null = null;
+
+	type SpeechTranscriptReview = {
+		text: string;
+		confidence: number | null;
+		state: 'accepted' | 'review';
+	};
 
 	type SpeechRecognitionResultLike = {
 		isFinal: boolean;
-		[index: number]: { transcript: string } | undefined;
+		[index: number]: { transcript: string; confidence?: number } | undefined;
 	};
 
 	type SpeechRecognitionEventLike = {
@@ -574,31 +582,39 @@
 		const recognition = new Recognition();
 		recognition.continuous = true;
 		recognition.interimResults = true;
-		recognition.lang = 'en-US';
+		recognition.lang = speechLanguage;
 		recognition.onstart = () => {
 			speechListening = true;
 			speechStatus = 'Listening for a spoken intent witness.';
 		};
 		recognition.onresult = (event) => {
-			let finalText = '';
+			const finalSegments: Array<{ transcript: string; confidence: number | null }> = [];
 			let interimText = '';
 			const startIndex = event.resultIndex ?? 0;
 			for (let index = startIndex; index < event.results.length; index += 1) {
 				const result = event.results[index];
-				const transcript = result?.[0]?.transcript?.replace(/\s+/g, ' ').trim() ?? '';
+				const alternative = result?.[0];
+				const transcript = alternative?.transcript?.replace(/\s+/g, ' ').trim() ?? '';
 				if (!transcript) continue;
 				if (result.isFinal) {
-					finalText = `${finalText} ${transcript}`.trim();
+					finalSegments.push({
+						transcript,
+						confidence: normalizeConfidence(alternative?.confidence)
+					});
 				} else {
 					interimText = `${interimText} ${transcript}`.trim();
 				}
 			}
-			if (finalText) appendSpeechTranscript(finalText);
+			const finalText = finalSegments.map((segment) => segment.transcript).join(' ').trim();
+			const finalConfidence = averageConfidence(finalSegments.map((segment) => segment.confidence));
+			if (finalText) appendSpeechTranscript(finalText, finalConfidence);
 			speechInterim = interimText;
 			speechStatus = interimText
 				? 'Capturing interim transcript.'
 				: finalText
-					? 'Voice witness appended; polish before approval.'
+					? speechConfidenceState(finalConfidence) === 'review'
+						? 'Voice witness appended; review transcript confidence before approval.'
+						: 'Voice witness appended; polish before approval.'
 					: speechStatus;
 		};
 		recognition.onerror = (event) => {
@@ -607,7 +623,7 @@
 		};
 		recognition.onend = () => {
 			if (speechInterim) {
-				appendSpeechTranscript(speechInterim);
+				appendSpeechTranscript(speechInterim, null);
 				speechInterim = '';
 			}
 			speechListening = false;
@@ -633,12 +649,39 @@
 		speechRecognition?.stop();
 	}
 
-	function appendSpeechTranscript(rawText: string) {
+	function appendSpeechTranscript(rawText: string, confidence: number | null) {
 		const transcript = rawText.replace(/\s+/g, ' ').trim();
 		if (!transcript) return;
 		const line = promptText.trim() ? `Voice witness: ${transcript}` : `Transcript: ${transcript}`;
 		promptText = promptText.trim() ? `${promptText.trimEnd()}\n${line}` : line;
-		speechTranscriptHistory = [transcript, ...speechTranscriptHistory].slice(0, 4);
+		speechTranscriptHistory = [
+			{
+				text: transcript,
+				confidence,
+				state: speechConfidenceState(confidence)
+			},
+			...speechTranscriptHistory
+		].slice(0, 4);
+	}
+
+	function normalizeConfidence(value: number | undefined): number | null {
+		return typeof value === 'number' && Number.isFinite(value)
+			? Math.max(0, Math.min(1, value))
+			: null;
+	}
+
+	function averageConfidence(values: Array<number | null>): number | null {
+		const available = values.filter((value): value is number => value !== null);
+		if (!available.length) return null;
+		return available.reduce((total, value) => total + value, 0) / available.length;
+	}
+
+	function speechConfidenceState(confidence: number | null): 'accepted' | 'review' {
+		return confidence !== null && confidence >= speechConfidenceGate ? 'accepted' : 'review';
+	}
+
+	function speechConfidenceLabel(confidence: number | null): string {
+		return confidence === null ? 'confidence unavailable' : `${Math.round(confidence * 100)}% confidence`;
 	}
 
 	function speechErrorStatus(error: string | undefined) {
@@ -1529,13 +1572,40 @@
 							>
 								{speechListening ? 'Stop Capture' : 'Start Voice Capture'}
 							</button>
+							<div class="speech-config" aria-label="Speech review settings">
+								<label>
+									<span>Language</span>
+									<select bind:value={speechLanguage} aria-label="Speech language">
+										<option value="en-US">en-US</option>
+										<option value="en-GB">en-GB</option>
+										<option value="de-DE">de-DE</option>
+										<option value="fr-FR">fr-FR</option>
+									</select>
+								</label>
+								<label>
+									<span>Confidence</span>
+									<input
+										type="range"
+										min="0.5"
+										max="0.95"
+										step="0.05"
+										bind:value={speechConfidenceGate}
+										aria-label="Transcript confidence gate"
+									/>
+									<em>{Math.round(speechConfidenceGate * 100)}%</em>
+								</label>
+							</div>
 							{#if speechInterim}
 								<p>{speechInterim}</p>
 							{/if}
 							{#if speechTranscriptHistory.length}
 								<div class="speech-history" aria-label="Captured voice witnesses">
 									{#each speechTranscriptHistory as transcript}
-										<code>{transcript}</code>
+										<div class={`speech-review ${transcript.state}`}>
+											<strong>{transcript.text}</strong>
+											<span>{speechConfidenceLabel(transcript.confidence)}</span>
+											<em>{transcript.state === 'accepted' ? 'accepted' : 'review transcript'}</em>
+										</div>
 									{/each}
 								</div>
 							{/if}
