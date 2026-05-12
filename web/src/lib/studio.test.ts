@@ -325,9 +325,31 @@ describe('x07 Studio XTAL web model', () => {
 		session = appendDemoOp(session, 'xtal.verify', 'succeeded');
 
 		const runPlan = buildAutomationPlan(session, projectTemplates[0], 'approved');
+		const scaffoldOp = session.op_log.find((op) => op.op === 'project.init.xtal-pure');
+		const verifyOp = session.op_log.find((op) => op.op === 'xtal.verify');
 		expect(runPlan.find((step) => step.label === 'Human approval')?.state).toBe('done');
 		expect(runPlan.find((step) => step.label === 'Project scaffold')?.state).toBe('done');
+		expect(runPlan.find((step) => step.label === 'Project scaffold')?.opId).toBe(scaffoldOp?.id);
 		expect(runPlan.find((step) => step.command.includes('x07 xtal verify'))?.state).toBe('done');
+		expect(runPlan.find((step) => step.command.includes('x07 xtal verify'))?.opId).toBe(
+			verifyOp?.id
+		);
+	});
+
+	it('maps seeded example projects to their project.seed operation evidence', () => {
+		const atlas = projectTemplates.find((template) => template.id === 'atlas') ?? projectTemplates[0];
+		let session = demoSession();
+		session = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, atlas.prompt));
+		session = reduceDemoEvent(session, 'approve_spec');
+		session = appendDemoOp(session, 'project.seed.x07_atlas', 'succeeded');
+
+		const plan = buildAutomationPlan(session, atlas, 'approved');
+		const scaffold = plan.find((step) => step.label === 'Project scaffold');
+		const seedOp = session.op_log.find((op) => op.op === 'project.seed.x07_atlas');
+
+		expect(scaffold?.command).toBe('project.seed.x07_atlas');
+		expect(scaffold?.state).toBe('done');
+		expect(scaffold?.opId).toBe(seedOp?.id);
 	});
 
 	it('maps prompt-to-artifact coverage from approval gates and operation evidence', () => {
@@ -1096,6 +1118,18 @@ describe('x07 Studio XTAL web model', () => {
 			module_id: 'atlas.app',
 			entry: 'atlas_dev'
 		});
+	});
+
+	it('records seeded project setup in the demo Atlas workflow', async () => {
+		const api = new StudioApi();
+		let session = demoSession();
+		session = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, projectTemplates[5].prompt));
+		session = reduceDemoEvent(session, 'approve_spec');
+
+		const run = await api.runXtalWorkflow(session);
+
+		expect(run.op_log.some((op) => op.op === 'project.seed.x07_atlas')).toBe(true);
+		expect(run.op_log.some((op) => op.op === 'project.init.xtal-pure')).toBe(false);
 	});
 
 	it('derives world, capability, and budget gates from complex project briefs', () => {

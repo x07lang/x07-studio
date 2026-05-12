@@ -593,6 +593,7 @@ export interface AutomationPlanStep {
 	artifact: string;
 	gate: string;
 	state: AutomationPlanState;
+	opId?: string | null;
 }
 
 export type EvidenceCoverageState = 'done' | 'active' | 'blocked' | 'failed';
@@ -1547,13 +1548,17 @@ export function buildAutomationPlan(
 	const approved = Boolean(session?.contract) || (session ? phaseIndex(session.phase) >= phaseIndex('spec_approved') : false);
 	const intentReady = Boolean(session?.intent) || latestOpState(ops, ['intent.formalize']) === 'done';
 	const taskType = session?.task_type ?? template.taskType;
+	const polishOp = latestOpForOps(ops, ['intent.formalize']);
+	const projectScaffoldCommand = projectScaffoldBindingId(template);
+	const scaffoldOp = latestOpForOps(ops, [projectScaffoldCommand]);
 	const setupSteps: AutomationPlanStep[] = [
 		{
 			label: 'Plan polish',
 			command: 'intent.formalize',
 			artifact: '.x07/studio/sessions/intent.json',
 			gate: 'Human reviews the polished intent before spec approval',
-			state: intentReady ? 'done' : session ? 'ready' : 'blocked'
+			state: intentReady ? 'done' : session ? 'ready' : 'blocked',
+			opId: polishOp?.id ?? null
 		},
 		{
 			label: 'Human approval',
@@ -1563,76 +1568,94 @@ export function buildAutomationPlan(
 				approvalState === 'changes'
 					? 'Blocked until the agent repolishes requested changes'
 					: 'Locks write roots, docs, MCP tools, worlds, and budgets',
-			state: approved ? 'done' : approvalState === 'changes' ? 'blocked' : intentReady ? 'ready' : 'blocked'
+			state: approved ? 'done' : approvalState === 'changes' ? 'blocked' : intentReady ? 'ready' : 'blocked',
+			opId: null
 		},
 		{
 			label: 'Project scaffold',
-			command: 'project.init.xtal-pure',
+			command: projectScaffoldCommand,
 			artifact: 'x07.json',
 			gate: 'Creates the x07 project only after approval',
-			state: stateForOps(ops, ['project.init.xtal-pure'], approved)
+			state: stateForOps(ops, [projectScaffoldCommand], approved),
+			opId: scaffoldOp?.id ?? null
 		}
 	];
 
 	if (taskType === 'brownfield_extract') {
+		const op = latestOpForOps(ops, ['spec.extract']);
 		setupSteps.push({
 			label: 'Brownfield extraction',
 			command: 'spec.extract',
 			artifact: 'target/xtal/spec.extract.report.json',
 			gate: 'Extract current behavior before implementation writes',
-			state: stateForOps(ops, ['spec.extract'], approved)
+			state: stateForOps(ops, ['spec.extract'], approved),
+			opId: op?.id ?? null
 		});
 	} else if (taskType === 'incident_repair') {
+		const ingestOp = latestOpForOps(ops, ['xtal.ingest']);
+		const improveOp = latestOpForOps(ops, ['xtal.improve']);
 		setupSteps.push(
 			{
 				label: 'Incident normalization',
 				command: 'xtal.ingest --normalize-only',
 				artifact: 'target/xtal/ingest/summary.json',
 				gate: 'Converts incident notes into canonical XTAL evidence',
-				state: stateForOps(ops, ['xtal.ingest'], approved)
+				state: stateForOps(ops, ['xtal.ingest'], approved),
+				opId: ingestOp?.id ?? null
 			},
 			{
 				label: 'Improve from incident',
 				command: 'xtal.improve',
 				artifact: 'target/xtal/improve/summary.json',
 				gate: 'Creates regression evidence before repair trust',
-				state: stateForOps(ops, ['xtal.improve'], approved)
+				state: stateForOps(ops, ['xtal.improve'], approved),
+				opId: improveOp?.id ?? null
 			}
 		);
 	} else {
+		const specOp = latestOpForOps(ops, ['spec.scaffold']);
+		const testsOp = latestOpForOps(ops, ['tests.gen.write']);
 		setupSteps.push(
 			{
 				label: 'Spec scaffold',
 				command: 'spec.scaffold',
 				artifact: template.artifacts[0] ?? 'spec/',
 				gate: 'Creates spec artifacts before implementation',
-				state: stateForOps(ops, ['spec.scaffold'], approved)
+				state: stateForOps(ops, ['spec.scaffold'], approved),
+				opId: specOp?.id ?? null
 			},
 			{
 				label: 'Generated tests',
 				command: 'tests.gen.write',
 				artifact: template.artifacts[1] ?? 'gen/xtal/tests.json',
 				gate: 'Examples become executable tests',
-				state: stateForOps(ops, ['tests.gen.write'], approved)
+				state: stateForOps(ops, ['tests.gen.write'], approved),
+				opId: testsOp?.id ?? null
 			}
 		);
 	}
 
+	const implOp = latestOpForOps(ops, ['impl.sync.write', 'wasm.app.build.atlas_dev']);
 	setupSteps.push({
 		label: 'Implementation sync',
 		command: 'impl.sync.write',
 		artifact: 'target/xtal/impl-sync.patchset.json',
 		gate: 'Implementation writes stay inside approved roots',
-		state: stateForOps(ops, ['impl.sync.write', 'wasm.app.build.atlas_dev'], approved)
+		state: stateForOps(ops, ['impl.sync.write', 'wasm.app.build.atlas_dev'], approved),
+		opId: implOp?.id ?? null
 	});
 
-	const templateSteps = template.canonicalCommands.map((command, index) => ({
-		label: `${template.label} evidence ${index + 1}`,
-		command,
-		artifact: template.artifacts[index] ?? template.artifacts.at(-1) ?? 'target/xtal/',
-		gate: template.riskProfile,
-		state: stateForCommand(ops, command, approved)
-	}));
+	const templateSteps = template.canonicalCommands.map((command, index) => {
+		const op = latestOpForCommand(ops, command);
+		return {
+			label: `${template.label} evidence ${index + 1}`,
+			command,
+			artifact: template.artifacts[index] ?? template.artifacts.at(-1) ?? 'target/xtal/',
+			gate: template.riskProfile,
+			state: stateForCommand(ops, command, approved),
+			opId: op?.id ?? null
+		};
+	});
 
 	return [...setupSteps, ...templateSteps].slice(0, 9);
 }
@@ -2918,15 +2941,19 @@ function stateForOps(
 	bindingIds: string[],
 	approved: boolean
 ): AutomationPlanState {
-	const state = latestOpState(ops, bindingIds);
-	if (state) return state;
+	const op = latestOpForOps(ops, bindingIds);
+	if (op) return opStatusToPlanState(op.status);
 	return approved ? 'ready' : 'blocked';
 }
 
 function latestOpState(ops: OpRecord[], bindingIds: string[]): AutomationPlanState | null {
-	const matched = [...ops].reverse().find((op) => bindingIds.includes(op.op));
+	const matched = latestOpForOps(ops, bindingIds);
 	if (!matched) return null;
 	return opStatusToPlanState(matched.status);
+}
+
+function latestOpForOps(ops: OpRecord[], bindingIds: string[]): OpRecord | null {
+	return [...ops].reverse().find((op) => bindingIds.includes(op.op)) ?? null;
 }
 
 function stateForCommand(
@@ -2934,12 +2961,26 @@ function stateForCommand(
 	command: string,
 	approved: boolean
 ): AutomationPlanState {
-	const normalizedCommand = normalizeCommand(command);
-	const matched = [...ops]
-		.reverse()
-		.find((op) => normalizedCommand.includes(normalizeCommand(op.op)) || normalizeCommand(op.command.join(' ')).includes(normalizedCommand.split(' ').slice(0, 5).join(' ')));
+	const matched = latestOpForCommand(ops, command);
 	if (matched) return opStatusToPlanState(matched.status);
 	return approved ? 'ready' : 'blocked';
+}
+
+function latestOpForCommand(ops: OpRecord[], command: string): OpRecord | null {
+	const normalizedCommand = normalizeCommand(command);
+	return [...ops]
+		.reverse()
+		.find((op) => normalizedCommand.includes(normalizeCommand(op.op)) || normalizeCommand(op.command.join(' ')).includes(normalizedCommand.split(' ').slice(0, 5).join(' '))) ?? null;
+}
+
+function projectScaffoldBindingId(template: ProjectTemplate): string {
+	if (template.sourcePath.includes('agent-gate/xtal/workflow-graph')) return 'project.seed.workflow-graph';
+	if (template.sourcePath.includes('readiness-checks/x07-sm-arch-contracts-smoke')) return 'project.seed.state-machine-arch';
+	if (template.sourcePath.includes('apps/x07-api-gateway')) return 'project.seed.x07-api-gateway';
+	if (template.sourcePath.includes('apps/x07crawl')) return 'project.seed.x07crawl';
+	if (template.sourcePath.includes('apps/x07dbguard')) return 'project.seed.x07dbguard';
+	if (template.sourcePath.includes('wasm_showcases/x07_atlas')) return 'project.seed.x07_atlas';
+	return 'project.init.xtal-pure';
 }
 
 function opStatusToPlanState(status: OperationStatus): AutomationPlanState {

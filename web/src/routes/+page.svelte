@@ -47,6 +47,7 @@
 		rooms,
 		workflowChecklist,
 		type ApprovalLoopState,
+		type AutomationPlanStep,
 		type AgentHandoff,
 		type AgentProfile,
 		type ArtifactPreviewResponse,
@@ -987,6 +988,21 @@
 		if (op.op.includes('agent.')) selectedRoom = 'providers';
 	}
 
+	function selectAutomationStep(step: AutomationPlanStep) {
+		if (!step.opId) {
+			statusLine = `${step.label}: ${step.state}`;
+			return;
+		}
+		const op = allOps.find((candidate) => candidate.id === step.opId);
+		if (!op) {
+			statusLine = `${step.label}: ${step.state}`;
+			return;
+		}
+		selectOperation(op);
+		selectedRoom = roomForBinding(op.op, selectedRoom);
+		statusLine = `Inspecting automation evidence: ${op.op}`;
+	}
+
 	function selectPlatformItem(item: PlatformBridgeItem) {
 		if (!item.opId) {
 			selectedRoom = 'ops';
@@ -1905,13 +1921,19 @@
 						<em>{selected?.contract ? 'contract locked' : 'approval gated'}</em>
 					</div>
 					{#each automationPlan as step}
-						<div class={`automation-step ${step.state}`}>
+						<button
+							type="button"
+							class={`automation-step ${step.state}`}
+							aria-label={`${step.opId ? 'Inspect automation' : 'Automation step'} ${step.label} ${step.state}`}
+							disabled={!step.opId}
+							on:click={() => selectAutomationStep(step)}
+						>
 							<span>{step.state}</span>
 							<strong>{step.label}</strong>
 							<code>{step.command}</code>
 							<small>{step.artifact}</small>
 							<em>{step.gate}</em>
-						</div>
+						</button>
 					{/each}
 				</div>
 			</section>
@@ -1991,13 +2013,19 @@
 						<em>{selected?.contract ? 'contract locked' : 'approval gated'}</em>
 					</div>
 					{#each automationPlan as step}
-						<div class={`automation-step ${step.state}`}>
+						<button
+							type="button"
+							class={`automation-step ${step.state}`}
+							aria-label={`${step.opId ? 'Inspect automation' : 'Automation step'} ${step.label} ${step.state}`}
+							disabled={!step.opId}
+							on:click={() => selectAutomationStep(step)}
+						>
 							<span>{step.state}</span>
 							<strong>{step.label}</strong>
 							<code>{step.command}</code>
 							<small>{step.artifact}</small>
 							<em>{step.gate}</em>
-						</div>
+						</button>
 					{/each}
 				</div>
 				<div class="button-row">

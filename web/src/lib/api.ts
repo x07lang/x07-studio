@@ -318,7 +318,7 @@ export class StudioApi {
 			return current;
 		}
 		for (const bindingId of [
-			'project.init.xtal-pure',
+			demoProjectScaffoldBinding(current),
 			'spec.scaffold',
 			'spec.check',
 			'tests.gen.write'
@@ -920,6 +920,22 @@ const atlasDemoWorkflowBindings = [
 ];
 
 function isAtlasSession(session: SessionSnapshot): boolean {
+	const haystack = demoSessionHaystack(session);
+	return haystack.includes('atlas.app') || haystack.includes('x07_atlas') || haystack.includes('x07 atlas');
+}
+
+function demoProjectScaffoldBinding(session: SessionSnapshot): string {
+	const haystack = demoSessionHaystack(session);
+	if (haystack.includes('workflow-graph') || haystack.includes('workflow.graph')) return 'project.seed.workflow-graph';
+	if (haystack.includes('x07-sm-arch-contracts-smoke') || haystack.includes('workflow.lifecycle')) return 'project.seed.state-machine-arch';
+	if (haystack.includes('x07-api-gateway') || haystack.includes('api.gateway')) return 'project.seed.x07-api-gateway';
+	if (haystack.includes('x07crawl') || haystack.includes('crawl.')) return 'project.seed.x07crawl';
+	if (haystack.includes('x07dbguard') || haystack.includes('dbguard')) return 'project.seed.x07dbguard';
+	if (haystack.includes('x07_atlas') || haystack.includes('atlas.app') || haystack.includes('x07 atlas')) return 'project.seed.x07_atlas';
+	return 'project.init.xtal-pure';
+}
+
+function demoSessionHaystack(session: SessionSnapshot): string {
 	const target = session.intent?.targets[0];
 	let raw = '';
 	if (session.intent?.source.kind === 'text' || session.intent?.source.kind === 'spec') {
@@ -927,8 +943,7 @@ function isAtlasSession(session: SessionSnapshot): boolean {
 	} else if (session.intent?.source.kind === 'voice') {
 		raw = session.intent.source.transcript;
 	}
-	const haystack = `${target?.module_id ?? ''} ${target?.entry ?? ''} ${raw}`.toLowerCase();
-	return haystack.includes('atlas.app') || haystack.includes('x07_atlas') || haystack.includes('x07 atlas');
+	return `${target?.module_id ?? ''} ${target?.entry ?? ''} ${raw}`.toLowerCase();
 }
 
 function agentRunApproved(session: SessionSnapshot, agentId: string): boolean {

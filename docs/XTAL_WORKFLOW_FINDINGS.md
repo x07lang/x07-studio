@@ -699,3 +699,14 @@ This document records friction found while implementing the Studio web surface.
    clickable timeline for the active coding agent. The same pass fixed a
    focused-mode room reset where generating a handoff refreshed the session
    snapshot and hid the remaining agent action buttons.
+
+65. The automation plan must point at the exact scaffold evidence.
+
+   The end-to-end automation plan made the approval-to-artifact runbook visible,
+   but its project setup row was still hard-coded to `project.init.xtal-pure`.
+   Seeded examples such as workflow graph, API gateway, x07dbguard, and x07
+   Atlas actually enter through `project.seed.*` operations. That mismatch made
+   the plan weaker than the worklog for complex projects. Studio now derives
+   the scaffold command from the selected docs-backed template and attaches
+   completed automation-plan rows to the matching operation id, so users can
+   click from the runbook directly into the recorded evidence.

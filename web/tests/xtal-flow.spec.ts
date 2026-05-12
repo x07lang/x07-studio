@@ -483,7 +483,10 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByRole('button', { name: 'Approve and Run' }).click();
 	await expect(page.getByText(/Verify produced a repair session|Verify passed and trust review opened/)).toBeVisible();
 	await expect(page.getByLabel('XTAL automation plan')).toContainText('done');
+	await expect(page.getByLabel('XTAL automation plan')).toContainText('project.seed.x07_atlas');
 	await expect(page.getByLabel('XTAL automation plan')).toContainText('x07-wasm app build');
+	await page.getByLabel('XTAL automation plan').getByRole('button', { name: /Project scaffold/ }).click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('project.seed.x07_atlas');
 	await expect(page.getByLabel('Trust review signals')).toContainText('Local platform delivery');
 	await expect(page.getByLabel('Trust review signals')).toContainText('SLO evidence');
 	await expect(page.getByLabel('Trust review signals')).toContainText('Release evidence');

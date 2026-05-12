@@ -1656,6 +1656,23 @@ textarea {
 	border-radius: var(--radius);
 	padding: 7px 8px;
 	background: rgba(255, 255, 255, 0.033);
+	color: var(--text);
+	font: inherit;
+	text-align: left;
+}
+
+.automation-step:not(:disabled) {
+	cursor: pointer;
+}
+
+.automation-step:disabled {
+	cursor: default;
+	opacity: 1;
+}
+
+.automation-step:not(:disabled):hover {
+	border-color: rgba(255, 255, 255, 0.28);
+	background: rgba(255, 255, 255, 0.055);
 }
 
 .automation-step.done {
