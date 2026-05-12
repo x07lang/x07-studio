@@ -732,3 +732,13 @@ This document records friction found while implementing the Studio web surface.
    revision notes on the session snapshot, and keeps that operation in the
    worklog so reviewers can see why approval is blocked before the repolish
    happens.
+
+68. Approve-and-run must not bypass intent review.
+
+   The Intent room still enabled `Approve and Run` during `intent_drafting`.
+   That path could formalize the natural-language input and approve it in the
+   same action, which weakens the requirement that a coding agent polish the
+   plan and ask the human for approval or changes before realization. Studio
+   now keeps approval/run disabled until an `intent.formalize` result is visible
+   for review, so the human sees the polished packet before the end-to-end XTAL
+   run can begin.

@@ -84,6 +84,9 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 		).toBeVisible();
 	}
 
+	await expect(
+		page.getByLabel('Spec approval preview').getByRole('button', { name: 'Approve and Run' })
+	).toBeDisabled();
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await expect(page.getByLabel('Spec approval preview')).toContainText('atlas.app');

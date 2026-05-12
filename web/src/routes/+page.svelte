@@ -445,7 +445,6 @@
 		Boolean(selected) &&
 		approvalState !== 'changes' &&
 		(canApproveSpec ||
-			selected?.phase === 'intent_drafting' ||
 			selected?.phase === 'spec_approved' ||
 			selected?.phase === 'realization_proposed');
 	$: currentRoomStatus = roomStatus[selectedRoom];
@@ -1443,7 +1442,7 @@
 
 	async function approveSpecSnapshot(session: SessionSnapshot): Promise<SessionSnapshot> {
 		let current = session;
-		if (!current.intent || approvalState === 'changes') {
+		if (approvalState === 'changes') {
 			const response = await api.formalizeIntent(
 				current,
 				promptText,

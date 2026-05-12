@@ -426,6 +426,9 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 		).toBeVisible();
 	}
 
+	await expect(
+		page.getByLabel('Spec approval preview').getByRole('button', { name: 'Approve and Run' })
+	).toBeDisabled();
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
 	await expect(page.getByLabel('Spec approval preview')).toContainText('atlas.app');
