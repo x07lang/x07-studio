@@ -51,7 +51,7 @@ const DOCTRINE_FRAGMENTS: &[&str] = &[
     "generated outputs, arch contracts, and budget profiles require drift evidence",
 ];
 
-fn is_doctrine(text: &str) -> bool {
+pub(crate) fn is_doctrine(text: &str) -> bool {
     let lowered = text.trim().to_ascii_lowercase();
     DOCTRINE_FRAGMENTS
         .iter()

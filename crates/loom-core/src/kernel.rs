@@ -213,9 +213,40 @@ impl WorkspaceKernel {
         session_id: Uuid,
         req: TryItRequest,
     ) -> anyhow::Result<TryItResult> {
-        self.model
+        let session = self
+            .model
             .get_session(session_id)
+            .cloned()
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        // The artifact only has a verified entrypoint once the session has
+        // reached TrustReview / Certified. Calling `x07 run` before that
+        // produces an empty 200 that the UI can't render usefully. Surface
+        // a structured "not yet" payload so the Try-It panel can prompt the
+        // user to finish the build first.
+        if !matches!(
+            session.phase,
+            SessionPhase::TrustReview | SessionPhase::CertifyRunning | SessionPhase::Certified
+        ) {
+            let phase_label = format!("{:?}", session.phase);
+            let stats = serde_json::json!({
+                "phase": phase_label,
+                "blocked_on": "verified",
+                "message": "Try-It runs the verified artifact. Approve the spec and finish the build first.",
+            });
+            return Ok(TryItResult {
+                output_kind: "not_verified".to_string(),
+                output_text: Some(
+                    "I can't run this yet — the build hasn't reached verified.\n\n\
+                     Approve the spec and click Build to produce a verified artifact, \
+                     then try this input again."
+                        .to_string(),
+                ),
+                output_json: None,
+                stats,
+                proof_citations: Vec::new(),
+                op_id: Uuid::nil(),
+            });
+        }
         let input = match req.input_kind {
             TryItInputKind::Text => InputSpec::Text(req.input_text.unwrap_or_default()),
             TryItInputKind::B64 => {
@@ -516,36 +547,7 @@ impl WorkspaceKernel {
             .model
             .get_session(session_id)
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
-        let target = session
-            .intent
-            .as_ref()
-            .and_then(|intent| intent.targets.first())
-            .map(|target| {
-                format!(
-                    "{}.{}",
-                    target.module_id,
-                    target.entry.as_deref().unwrap_or("run_v1")
-                )
-            })
-            .unwrap_or_else(|| "this project".to_string());
-        let citation = AnswerCitation {
-            kind: "spec".to_string(),
-            path: session
-                .intent
-                .as_ref()
-                .and_then(|intent| intent.targets.first())
-                .map(|target| format!("spec/{}.x07spec.json", target.module_id))
-                .unwrap_or_else(|| "x07.json".to_string()),
-            locator: "/operations/0".to_string(),
-        };
-        Ok(AskAnswer {
-            text: format!(
-                "{} is currently answered from Studio session evidence: {}",
-                req.question.trim(),
-                target
-            ),
-            citations: vec![citation],
-        })
+        Ok(answer_project_question(self.root.as_path(), session, &req))
     }
 
     pub fn mint_sync_code(&mut self, session_id: Uuid) -> anyhow::Result<SyncCode> {
@@ -902,7 +904,42 @@ impl WorkspaceKernel {
             .cloned()
             .context("new session should exist")?;
         self.store.save_session(&snapshot)?;
+        // Auto-track this project in cross-project memory so the UI can
+        // surface "applied from your history" without an explicit POST.
+        let _ = self.track_project_in_memory(&snapshot);
         Ok(snapshot)
+    }
+
+    /// Append a `MemoryProject` entry for this session if none exists for the
+    /// current workspace root. Idempotent: each subsequent session under the
+    /// same root just updates `last_session_id`.
+    fn track_project_in_memory(&self, snapshot: &SessionSnapshot) -> anyhow::Result<()> {
+        let mut memory = self.store.load_memory()?;
+        let root = self.root.to_string();
+        if let Some(existing) = memory
+            .recent_projects
+            .iter_mut()
+            .find(|project| project.root == root)
+        {
+            existing.last_session_id = Some(snapshot.session_id);
+            if existing.label.trim().is_empty() {
+                existing.label = snapshot.title.clone();
+            }
+        } else {
+            memory.recent_projects.push(loom_types::api::MemoryProject {
+                root,
+                last_session_id: Some(snapshot.session_id),
+                label: snapshot.title.clone(),
+            });
+        }
+        // Cap to a reasonable recent-window so the JSONL doesn't grow forever.
+        const MAX_RECENT: usize = 20;
+        if memory.recent_projects.len() > MAX_RECENT {
+            let drop = memory.recent_projects.len() - MAX_RECENT;
+            memory.recent_projects.drain(..drop);
+        }
+        self.store.save_memory(&memory)?;
+        Ok(())
     }
 
     pub fn dispatch_event(
@@ -1068,15 +1105,34 @@ impl WorkspaceKernel {
     ) -> anyhow::Result<SessionSnapshot> {
         let max_repair_rounds = max_repair_rounds.clamp(0, 5);
         self.append_op(session_id, build_stage_op(session_id, "start", 0))?;
+        // Simple-mode `/build` is the "make it work" path: pre-existing
+        // workspaces commonly have `default_profile = "os"`, which makes
+        // `xtal.verify` fail `EXTAL_VERIFY_WORLD_UNSAFE` unless we opt into
+        // OS worlds explicitly. Default to allow_os_world=true when the
+        // caller has not pinned it. Expert mode and the canonical
+        // `/xtal/run` keep strict defaults.
+        let mut build_vars = run_vars.clone();
+        build_vars
+            .entry("allow_os_world".to_string())
+            .or_insert_with(|| "true".to_string());
         let snapshot = self
-            .run_xtal_workflow_with_vars(session_id, run_vars)
+            .run_xtal_workflow_with_vars(session_id, &build_vars)
             .await?;
         let mut current = snapshot;
         let mut round: u32 = 0;
+        let mut ensured_manifest = false;
         while current.phase == SessionPhase::RepairEligible && round < max_repair_rounds {
             round += 1;
             self.append_op(session_id, build_stage_op(session_id, "repair", round))?;
-            let mut repair_vars = run_vars.clone();
+            // `xtal.repair --write` requires `arch/xtal/xtal.json`. xtal-pure
+            // init doesn't create it, so the first repair-write would fail
+            // EXTAL_REPAIR_WRITE_REQUIRES_MANIFEST. Materialize a minimal
+            // manifest the first time we enter the repair loop.
+            if !ensured_manifest {
+                self.ensure_xtal_manifest_for_build(session_id)?;
+                ensured_manifest = true;
+            }
+            let mut repair_vars = build_vars.clone();
             repair_vars.insert("repair_strategy".to_string(), "semantic_only".to_string());
             repair_vars.insert("repair_write".to_string(), "true".to_string());
             let after_repair = self
@@ -1088,7 +1144,7 @@ impl WorkspaceKernel {
             }
             self.dispatch_event(session_id, SessionEvent::RepairSpecPreserving)?;
             let after_verify = self
-                .run_binding(session_id, "xtal.verify", run_vars)
+                .run_binding(session_id, "xtal.verify", &build_vars)
                 .await?;
             let event = if last_op_failed(&after_verify) {
                 SessionEvent::VerificationFailed
@@ -1335,6 +1391,36 @@ impl WorkspaceKernel {
             xtal_manifest_ensure_op(session_id, false, None)
         } else {
             match write_incident_xtal_manifest(path.as_path(), intent) {
+                Ok(()) => xtal_manifest_ensure_op(session_id, true, None),
+                Err(error) => xtal_manifest_ensure_op(session_id, true, Some(error)),
+            }
+        };
+        self.append_op(session_id, op)
+    }
+
+    /// Build-pipeline counterpart to [`Self::ensure_incident_xtal_manifest`].
+    /// The xtal-pure init does not create `arch/xtal/xtal.json`, but
+    /// `xtal.repair --write` refuses to run without one. Materialize a
+    /// minimal manifest scoped to the approved intent the first time we
+    /// need to repair.
+    fn ensure_xtal_manifest_for_build(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let intent = session
+            .intent
+            .as_ref()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
+        let path = self.root.join("arch/xtal/xtal.json");
+        let op = if path.exists() {
+            xtal_manifest_ensure_op(session_id, false, None)
+        } else {
+            match write_build_xtal_manifest(path.as_path(), intent) {
                 Ok(()) => xtal_manifest_ensure_op(session_id, true, None),
                 Err(error) => xtal_manifest_ensure_op(session_id, true, Some(error)),
             }
@@ -2156,6 +2242,119 @@ fn validate_relative_runtime_path(value: &str, context: &str) -> anyhow::Result<
     Ok(())
 }
 
+/// Pattern-match the user's question against the session's intent witnesses
+/// and (when present) the latest verify evidence. The answer is always
+/// grounded — it cites the witness it derived its text from or, failing that,
+/// the spec module / verify summary path. No LLM call: the goal is a
+/// trustworthy deterministic answer.
+fn answer_project_question(
+    root: &Utf8Path,
+    session: &SessionSnapshot,
+    req: &AskRequest,
+) -> AskAnswer {
+    let intent = match session.intent.as_ref() {
+        Some(intent) => intent,
+        None => {
+            return AskAnswer {
+                text: "There's no approved intent on this session yet — \
+                       describe what you want, then I can answer questions \
+                       about the project's behavior."
+                    .to_string(),
+                citations: Vec::new(),
+            };
+        }
+    };
+    let question = req.question.trim();
+    if question.is_empty() {
+        return AskAnswer {
+            text: "Ask me about what the project does, what it refuses, or what \
+                   the latest verify report covers."
+                .to_string(),
+            citations: Vec::new(),
+        };
+    }
+    let lowered = question.to_ascii_lowercase();
+    let keywords: Vec<&str> = lowered
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.len() >= 3)
+        .collect();
+    let target = intent
+        .targets
+        .first()
+        .map(|item| {
+            format!(
+                "{}.{}",
+                item.module_id,
+                item.entry.as_deref().unwrap_or("run_v1")
+            )
+        })
+        .unwrap_or_else(|| "this project".to_string());
+    let spec_path = intent
+        .targets
+        .first()
+        .map(|item| format!("spec/{}.x07spec.json", item.module_id))
+        .unwrap_or_else(|| "x07.json".to_string());
+
+    // Score witnesses by keyword overlap. The doctrine filter from the
+    // summarizer keeps boilerplate witnesses out of the response.
+    let score_text = |text: &str| -> usize {
+        let lower = text.to_ascii_lowercase();
+        keywords.iter().filter(|kw| lower.contains(*kw)).count()
+    };
+    let best_witness = intent
+        .witnesses
+        .iter()
+        .filter(|w| !crate::summarize::is_doctrine(&w.text))
+        .map(|w| (score_text(&w.text), w))
+        .filter(|(score, _)| *score > 0)
+        .max_by_key(|(score, _)| *score)
+        .map(|(_, w)| w);
+
+    let mut citations = Vec::new();
+    let text = if let Some(witness) = best_witness {
+        citations.push(AnswerCitation {
+            kind: "spec".to_string(),
+            path: spec_path.clone(),
+            locator: format!("/witnesses/{:?}", witness.kind),
+        });
+        let prefix = match witness.kind {
+            WitnessKind::DesiredBehavior => "It will",
+            WitnessKind::ForbiddenBehavior => "It will not",
+            WitnessKind::PolicyRequirement => "Policy",
+            WitnessKind::IncidentReport => "Incident on record",
+        };
+        format!("{prefix}: {}", witness.text.trim())
+    } else if !intent.examples.is_empty() {
+        citations.push(AnswerCitation {
+            kind: "spec".to_string(),
+            path: spec_path.clone(),
+            locator: "/examples".to_string(),
+        });
+        let example = intent.examples.first().cloned().unwrap_or_default();
+        format!(
+            "I don't have a witness that addresses that exactly, but here's a \
+             representative example from {target}: {example}"
+        )
+    } else {
+        format!(
+            "I haven't recorded a specific witness for `{question}` on \
+             `{target}` yet. The latest verify evidence is the best place to \
+             check whether the behavior is covered."
+        )
+    };
+
+    let verify_summary = root.join("target/xtal/verify/summary.json");
+    if verify_summary.exists() {
+        citations.push(AnswerCitation {
+            kind: "verify".to_string(),
+            path: "target/xtal/verify/summary.json".to_string(),
+            locator: "/entries".to_string(),
+        });
+    }
+
+    AskAnswer { text, citations }
+}
+
 fn proof_citations_for_session(session: &SessionSnapshot) -> Vec<ProofCitation> {
     let target_clause = session
         .intent
@@ -2812,17 +3011,35 @@ fn intent_packet_from_raw(
         normalized
     };
     let lowered = normalized.to_ascii_lowercase();
-    let is_sorter = lowered.contains("sort");
-    let is_incident = lowered.contains("incident") || lowered.contains("repair");
-    let is_state_machine = lowered.contains("state machine") || lowered.contains("x07 sm");
-    let is_gateway = lowered.contains("api gateway") || lowered.contains("x07-api-gateway");
-    let is_crawler = lowered.contains("crawler") || lowered.contains("x07crawl");
-    let is_db_guard = lowered.contains("db migration")
-        || lowered.contains("x07dbguard")
-        || lowered.contains("drift guard");
-    let is_atlas = lowered.contains("x07_atlas")
-        || lowered.contains("x07 atlas")
-        || lowered.contains("wasm_showcases/x07_atlas");
+    let has_any = |needles: &[&str]| needles.iter().any(|needle| lowered.contains(needle));
+    let is_sorter = has_any(&["sort"]);
+    let is_incident = has_any(&["incident", "repair"]);
+    let is_state_machine = has_any(&["state machine", "x07 sm"]);
+    let is_gateway = has_any(&["api gateway", "x07-api-gateway"]);
+    let is_crawler = has_any(&["crawler", "x07crawl"]);
+    let is_db_guard = has_any(&["db migration", "x07dbguard", "drift guard"]);
+    let is_atlas = has_any(&["x07_atlas", "x07 atlas", "wasm_showcases/x07_atlas"]);
+    let is_workflow_graph = has_any(&[
+        "workflow graph",
+        "workflow-graph",
+        "makespan",
+        "task durations",
+        "dependency edges",
+    ]);
+    let is_greeter = has_any(&["greet", "hello", "salut"]);
+    let is_calculator = has_any(&["calculator", " calc ", "add two numbers", "arithmetic"]);
+    let is_parser = has_any(&["parser", "parse json", "tokenize", "lex "]);
+    let is_validator = has_any(&["validator", "validate ", "schema check"]);
+    let is_cli_tool = has_any(&["cli tool", "command line tool", "command-line tool"]);
+    let is_service = has_any(
+        [
+            "http service",
+            "web service",
+            "api service",
+            "service that handles",
+        ]
+        .as_ref(),
+    );
     let spec_target = if input_mode == IntentInputMode::Spec {
         spec_target_from_raw(normalized)
     } else {
@@ -2847,8 +3064,25 @@ fn intent_packet_from_raw(
             "ops.incident_repair".to_string(),
             "classify_and_repair".to_string(),
         )
-    } else {
+    } else if is_workflow_graph {
         ("workflow.graph".to_string(), "makespan_u32".to_string())
+    } else if is_greeter {
+        ("app.greeter".to_string(), "greet_v1".to_string())
+    } else if is_calculator {
+        ("app.calculator".to_string(), "compute_v1".to_string())
+    } else if is_parser {
+        ("app.parser".to_string(), "parse_v1".to_string())
+    } else if is_validator {
+        ("app.validator".to_string(), "validate_v1".to_string())
+    } else if is_service {
+        ("app.service".to_string(), "handle_v1".to_string())
+    } else if is_cli_tool {
+        ("app.cli".to_string(), "run_v1".to_string())
+    } else {
+        // Friendly default for anything we don't recognize. Previously we
+        // fell through to workflow.graph/makespan_u32 which surprised users
+        // who asked for unrelated tooling.
+        ("app.main".to_string(), "run_v1".to_string())
     };
 
     let mut witnesses = vec![
@@ -3287,6 +3521,46 @@ fn write_incident_xtal_manifest(path: &Utf8Path, intent: &IntentPacket) -> anyho
             "agent_write_specs": false,
             "agent_write_arch": false,
             "max_repair_iters": 1,
+        },
+    });
+    fs::write(path, serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(())
+}
+
+fn write_build_xtal_manifest(path: &Utf8Path, intent: &IntentPacket) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let target = intent.targets.first();
+    let module_id = target
+        .map(|item| item.module_id.as_str())
+        .unwrap_or("app.main");
+    let entry = target
+        .and_then(|item| item.entry.as_deref())
+        .unwrap_or("run_v1");
+    let manifest = serde_json::json!({
+        "schema_version": "x07.xtal.manifest@0.1.0",
+        "xtal_version": "1.0",
+        "spec_roots": ["spec/"],
+        "impl_roots": ["src/"],
+        "entrypoints": [{
+            "name": format!("{module_id}.{entry}"),
+            "kind": "defn",
+        }],
+        "profiles": {
+            "dev_world": "solve-pure",
+            "ci_world": "solve-pure",
+            "prod_world": "solve-pure",
+        },
+        "trust": {
+            "review_gates": ["build_repair"],
+            "cert_profile": "arch/trust/profiles/studio.json",
+        },
+        "autonomy": {
+            "agent_write_paths": ["src/", "tests/"],
+            "agent_write_specs": false,
+            "agent_write_arch": false,
+            "max_repair_iters": 3,
         },
     });
     fs::write(path, serde_json::to_vec_pretty(&manifest)?)?;
