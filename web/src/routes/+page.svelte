@@ -50,6 +50,8 @@
 		type WorkspaceRadarResponse
 	} from '$lib/studio';
 
+	type GraphMode = 'lineage' | 'world' | 'trust' | 'budget';
+
 	const api = new StudioApi();
 	const initialProject = projectTemplates[0];
 
@@ -82,6 +84,7 @@
 	let autoScroll = true;
 	let detailMode = false;
 	let lineageZoom = 1;
+	let graphMode: GraphMode = 'lineage';
 	let commandLaneText = 'x07 run --workspace x07-project --from intent --to trust';
 	let commandLaneMode: 'plan' | 'execute' = 'execute';
 	let commandLaneEnv = 'dev';
@@ -193,6 +196,12 @@
 			owner: 'x07'
 		}
 	} satisfies Record<Room, { state: string; summary: string; owner: string }>;
+	const graphModes: Array<{ id: GraphMode; label: string }> = [
+		{ id: 'lineage', label: 'Lineage' },
+		{ id: 'world', label: 'World' },
+		{ id: 'trust', label: 'Trust' },
+		{ id: 'budget', label: 'Budget' }
+	];
 
 	const flowCommands = [
 		'x07 flow init',
@@ -255,6 +264,68 @@
 	$: evidenceCoverage = buildEvidenceCoverage(selected, selectedProjectTemplate, approvalState);
 	$: worldBudgetGuard = buildWorldBudgetGuard(selected, selectedProjectTemplate, allOps);
 	$: platformBridge = buildPlatformBridge(selected, selectedProjectTemplate);
+	$: graphOverlayTitle =
+		graphMode === 'world'
+			? 'World Map'
+			: graphMode === 'trust'
+				? 'Trust Border'
+				: graphMode === 'budget'
+					? 'Budget Heatmap'
+					: 'Lineage';
+	$: graphOverlaySummary =
+		graphMode === 'world'
+			? worldBudgetGuard.posture
+			: graphMode === 'trust'
+				? reviewSignals.length
+					? `${reviewSignals.length} review signals`
+					: 'No trust signals yet'
+				: graphMode === 'budget'
+					? `${consumedCredits.toFixed(1)} of 42.0 credits`
+					: `${currentLifecycle.label} through ${currentLifecycle.binding ?? 'intent.formalize'}`;
+	$: graphOverlayItems =
+		graphMode === 'world'
+			? worldBudgetGuard.worlds.slice(0, 4).map((item) => ({
+					label: item.label,
+					value: item.value,
+					detail: item.detail
+				}))
+			: graphMode === 'trust'
+				? (reviewSignals.length
+						? reviewSignals
+						: [{ label: 'No signals', detail: 'Run verify or agent workflow', op: 'trust.pending' }]
+					)
+						.slice(0, 4)
+						.map((item) => ({
+							label: item.label,
+							value: item.op,
+							detail: item.detail
+						}))
+				: graphMode === 'budget'
+					? [
+							{
+								label: 'Consumed',
+								value: `${budgetPercent}%`,
+								detail: `${consumedCredits.toFixed(1)} credits used`
+							},
+							...worldBudgetGuard.budgets.slice(0, 3).map((item) => ({
+								label: item.label,
+								value: item.value,
+								detail: item.detail
+							}))
+						]
+					: [
+							{ label: 'Intent', value: inputMode, detail: projectTaskType },
+							{
+								label: 'Spec',
+								value: approvalState,
+								detail: selected?.contract ? 'contract locked' : 'approval gated'
+							},
+							{
+								label: 'Verify',
+								value: currentLifecycle.binding ?? 'pending',
+								detail: selected?.phase ?? 'no session selected'
+							}
+						];
 	$: agentHandoffReview = buildAgentHandoffReview(selected, selectedAgentId, latestAgentHandoff);
 	$: draftWitnessPreview = previewIntentWitnesses(promptText, inputMode);
 	$: canApproveSpec =
@@ -680,6 +751,12 @@
 	function fitLineage() {
 		lineageZoom = 1;
 		statusLine = 'Lineage graph fit to panel';
+	}
+
+	function selectGraphMode(mode: GraphMode) {
+		graphMode = mode;
+		const label = graphModes.find((item) => item.id === mode)?.label ?? mode;
+		statusLine = `${label} graph overlay selected`;
 	}
 
 	function selectSession(sessionId: string) {
@@ -1587,13 +1664,25 @@
 						<h2>Intent to evidence</h2>
 					</div>
 					<div class="graph-tools" aria-label="Lineage tools">
+						<div class="graph-modes" aria-label="Graph overlay mode">
+							{#each graphModes as mode}
+								<button
+									type="button"
+									class:active={graphMode === mode.id}
+									aria-pressed={graphMode === mode.id}
+									on:click={() => selectGraphMode(mode.id)}
+								>
+									{mode.label}
+								</button>
+							{/each}
+						</div>
 						<button type="button" class="icon-button" aria-label="Zoom in" on:click={() => adjustLineageZoom(0.1)}>+</button>
 						<button type="button" class="icon-button" aria-label="Zoom out" on:click={() => adjustLineageZoom(-0.1)}>-</button>
 						<button type="button" class="icon-button" aria-label="Fit graph" on:click={fitLineage}>Fit</button>
 						<span>{lineageZoomLabel}</span>
 					</div>
 				</div>
-				<div class="lineage-map" aria-label="XTAL lineage graph" style={`--lineage-zoom: ${lineageZoom}`}>
+				<div class={`lineage-map mode-${graphMode}`} aria-label="XTAL lineage graph" style={`--lineage-zoom: ${lineageZoom}`}>
 					<div class="map-node incident">INTENT<br /><small>{inputMode}</small></div>
 					<div class="map-node spec">SPEC<br /><small>{approvalState}</small></div>
 					<div class="map-node arch">ARCH<br /><small>{selected?.contract ? 'locked' : 'draft'}</small></div>
@@ -1601,6 +1690,19 @@
 					<div class="map-node verify">VERIFY<br /><small>{currentLifecycle.binding ?? 'pending'}</small></div>
 					<div class="map-node repair">REPAIR<br /><small>conditional</small></div>
 					<div class="map-node trust">TRUST<br /><small>{selected?.phase === 'certified' ? 'certified' : 'review'}</small></div>
+					<div class="graph-overlay" aria-label="Graph overlay details">
+						<span>{graphOverlayTitle}</span>
+						<strong>{graphOverlaySummary}</strong>
+						<div>
+							{#each graphOverlayItems as item}
+								<section>
+									<em>{item.label}</em>
+									<code>{item.value}</code>
+									<small>{item.detail}</small>
+								</section>
+							{/each}
+						</div>
+					</div>
 				</div>
 				<div class="spec-grid">
 					{#each specOps.length ? specOps : [{ name: 'operation', module: 'awaiting intent', status: 'pending' }] as op}

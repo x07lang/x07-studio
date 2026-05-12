@@ -177,6 +177,15 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Trust and canonical flow')).toBeHidden();
 	await page.getByRole('tab', { name: 'Spec' }).click();
 	await expect(page.getByLabel('XTAL lineage graph')).toBeVisible();
+	await expect(page.getByLabel('Graph overlay details')).toContainText('Lineage');
+	await page.getByLabel('Graph overlay mode').getByRole('button', { name: 'World' }).click();
+	await expect(page.locator('footer')).toContainText('World graph overlay selected');
+	await expect(page.getByLabel('Graph overlay details')).toContainText('World Map');
+	await expect(page.getByLabel('Graph overlay details')).toContainText('solve-pure');
+	await page.getByLabel('Graph overlay mode').getByRole('button', { name: 'Trust' }).click();
+	await expect(page.getByLabel('Graph overlay details')).toContainText('Trust Border');
+	await page.getByLabel('Graph overlay mode').getByRole('button', { name: 'Budget' }).click();
+	await expect(page.getByLabel('Graph overlay details')).toContainText('Budget Heatmap');
 	await page.getByRole('button', { name: 'Zoom in' }).click();
 	await expect(page.locator('footer')).toContainText('Lineage graph zoom');
 	await page.getByRole('button', { name: 'Fit graph' }).click();

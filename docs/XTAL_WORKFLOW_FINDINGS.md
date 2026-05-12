@@ -561,3 +561,13 @@ This document records friction found while implementing the Studio web surface.
    Loom now merges saved profiles with the built-in profiles, letting saved
    profiles override by id while preserving Codex and Claude Code when
    additional local runners are configured.
+
+53. Graph overlays need first-class modes, not hidden right-rail panels.
+
+   The browser already derived world, trust, and budget evidence, but the XTAL
+   graph still looked like a static lineage diagram. That hid the phase-plan
+   overlays from the place where users inspect the whole workflow. Studio now
+   adds Lineage, World Map, Trust Border, and Budget Heatmap modes directly to
+   the graph panel. Each mode highlights the relevant lifecycle nodes and shows
+   a compact evidence summary beside the graph, while the browser workflow test
+   proves the overlay controls and status feedback.

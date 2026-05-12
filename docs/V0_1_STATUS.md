@@ -10,6 +10,7 @@
 - browser trust review queue derived from artifacts, diagnostics, writes, patchsets, verify evidence, and certify evidence
 - prompt-to-artifact audit that maps user input, approval, scaffold, specs/tests, implementation, verification, visible agent work, and trust/platform evidence to concrete operations and artifacts
 - browser focused/detail modes that keep the current XTAL room, visible agent worklog, and canonical command lane in the first workflow view while preserving the full audit surface behind an explicit Details toggle
+- browser graph overlay modes for Lineage, World Map, Trust Border, and Budget Heatmap on the XTAL graph panel
 - x07 Platform bridge that traces app packaging, provenance, deploy planning, local x07lp delivery, SLO/budget checks, and runtime feedback to canonical operation evidence
 - visual patch review in the operation inspector for x07 patchset payloads, patchset artifacts, write roots, review gates, path risk, and before/after JSON previews
 - world/budget guard for solve-rr, sandbox/run-os, WASM app, release/provenance, and budget widening surfaces
@@ -52,7 +53,7 @@
 - GUI exposes HTTP MCP first; stdio MCP is available through the daemon API already
 - provider probing is bounded and capability-oriented, not a full benchmark suite
 - session execution policy is enforced by the reducer, canonical binding catalog, approval gates, supervised agent contract environment, and post-run write-root audits; this is still not an OS-level path sandbox
-- the v0.1 shells expose lifecycle controls, basic lineage graph projection, artifact logs, a compact trust review queue, artifact-backed patchset previews, path-level before/after visual patch review, and browser speech transcript capture; richer STT/provider configuration, graph overlays, and semantic side-by-side diff tooling remain later UI layers
+- the v0.1 shells expose lifecycle controls, graph overlays, artifact logs, a compact trust review queue, artifact-backed patchset previews, path-level before/after visual patch review, and browser speech transcript capture; richer STT/provider configuration and semantic side-by-side diff tooling remain later UI layers
 - no compile-time proof cache yet
 - no persisted audio capture, local STT model selection, or transcript confidence review yet
 
