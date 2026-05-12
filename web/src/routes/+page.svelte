@@ -1900,6 +1900,21 @@
 								<dd>Human-reviewed witnesses, tests, verify evidence.</dd>
 							</div>
 						</dl>
+						{#if revisionHistory.length}
+							<div class="revision-review" aria-label="Revision review ledger">
+								<div class="revision-review-head">
+									<strong>Revision Review</strong>
+									<span>{approvalState === 'changes' ? 'repolish required' : 'included in intent packet'}</span>
+								</div>
+								{#each revisionHistory as revision, index}
+									<div class={`revision-note ${approvalState === 'changes' ? 'pending' : 'resolved'}`}>
+										<span>Revision {index + 1}</span>
+										<strong>{revision}</strong>
+										<em>{approvalState === 'changes' ? 'pending agent repolish' : 'visible in polished intent'}</em>
+									</div>
+								{/each}
+							</div>
+						{/if}
 						<div class="button-row">
 							<button class="command-button" type="button" on:click={polishIntent} disabled={busy || !selected}>
 								Polish Intent

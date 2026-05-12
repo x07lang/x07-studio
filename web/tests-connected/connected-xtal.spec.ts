@@ -97,8 +97,13 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await page.getByRole('button', { name: 'Request Changes' }).click();
 	await expect(page.getByText('Revision routed back to intent review')).toBeVisible();
 	await expect(inspectOperation(page, 'intent.revision.request')).toBeVisible();
+	await expect(page.getByLabel('Revision review ledger')).toContainText(
+		'Require explicit local platform delivery evidence before trust review.'
+	);
+	await expect(page.getByLabel('Revision review ledger')).toContainText('pending agent repolish');
 	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeDisabled();
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
+	await expect(page.getByLabel('Revision review ledger')).toContainText('visible in polished intent');
 	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeEnabled();
 
 	await page.getByRole('tab', { name: 'Agents' }).click();

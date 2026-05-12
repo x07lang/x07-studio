@@ -742,3 +742,13 @@ This document records friction found while implementing the Studio web surface.
    now keeps approval/run disabled until an `intent.formalize` result is visible
    for review, so the human sees the polished packet before the end-to-end XTAL
    run can begin.
+
+69. Revision review needs to live inside the approval card.
+
+   Revision requests were visible in the worklog and approval ledger, but the
+   main approval preview still did not show whether the requested change was
+   waiting for agent repolish or had been incorporated into the polished intent
+   packet. That makes the human review loop harder to trust because the user has
+   to correlate two separate surfaces before approving. Studio now shows a
+   revision review ledger directly inside the approval preview, with each note
+   marked as pending agent repolish or visible in the polished intent.

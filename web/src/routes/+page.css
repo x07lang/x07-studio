@@ -1513,6 +1513,65 @@ textarea {
 	overflow-wrap: anywhere;
 }
 
+.revision-review {
+	display: grid;
+	gap: 7px;
+	margin: 10px 0;
+	border: 1px solid rgba(255, 195, 91, 0.28);
+	border-radius: var(--radius);
+	padding: 9px;
+	background: rgba(255, 195, 91, 0.055);
+}
+
+.revision-review-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.revision-review-head strong,
+.revision-note strong {
+	color: var(--text);
+	font-size: 12px;
+}
+
+.revision-review-head span,
+.revision-note span,
+.revision-note em {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.revision-note {
+	display: grid;
+	gap: 4px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 8px;
+	background: rgba(255, 255, 255, 0.035);
+	min-width: 0;
+}
+
+.revision-note.pending {
+	border-color: rgba(255, 195, 91, 0.38);
+}
+
+.revision-note.resolved {
+	border-color: rgba(114, 228, 180, 0.28);
+	background: rgba(114, 228, 180, 0.055);
+}
+
+.revision-note strong {
+	overflow-wrap: anywhere;
+	line-height: 1.35;
+}
+
+.revision-note em {
+	font-style: normal;
+	font-family: var(--font-mono);
+}
+
 .witnesses {
 	display: flex;
 	flex-wrap: wrap;
