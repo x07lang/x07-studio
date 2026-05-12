@@ -185,6 +185,26 @@
 		}
 	}
 
+	async function realize() {
+		if (!selected) return;
+		busy = true;
+		try {
+			status = 'Asking Claude Code to fill in the implementation…';
+			const response = await api.realize(selected, { timeoutSeconds: 240 });
+			replaceSelected(response.session);
+			await refreshDerived();
+			status = response.ok
+				? `Implementation filled in (${response.wrote_files.length} file${
+						response.wrote_files.length === 1 ? '' : 's'
+				  } written) and verified.`
+				: 'Implementation attempt completed but verify still failed — see the timeline.';
+		} catch (error) {
+			status = `Realize failed: ${(error as Error).message ?? error}`;
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function climb(rung: string) {
 		if (!selected) return;
 		busy = true;
@@ -348,6 +368,7 @@
 			on:followup={(event) => followup(event.detail)}
 			on:repair={(event) => repairIncident(event.detail)}
 			on:invoke={(event) => invoke(event.detail)}
+			on:realize={realize}
 		/>
 		<NowPanel
 			session={selected}

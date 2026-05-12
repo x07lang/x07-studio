@@ -131,6 +131,8 @@ export interface PlainEnglishSummary {
 	evidence: string[];
 	run_invocation?: string | null;
 	followups: string[];
+	scaffold_only?: boolean;
+	stub_paths?: string[];
 }
 
 export type SessionTurn =
@@ -142,7 +144,28 @@ export type SessionTurn =
 	| { kind: 'build_stage'; id: string; at: string; stage: string; op_ids: string[] }
 	| { kind: 'verified'; id: string; at: string; summary: PlainEnglishSummary; op_ids: string[] }
 	| { kind: 'incident'; id: string; at: string; incident_id: string; summary: string; repair_available: boolean }
-	| { kind: 'repair'; id: string; at: string; incident_id: string; op_ids: string[] };
+	| { kind: 'repair'; id: string; at: string; incident_id: string; op_ids: string[] }
+	| {
+			kind: 'agent_realize';
+			id: string;
+			at: string;
+			agent_id: string;
+			ok: boolean;
+			wrote_files: string[];
+			op_ids: string[];
+	  };
+
+export interface RealizeRequest {
+	agent_id?: string;
+	timeout_seconds?: number;
+}
+
+export interface RealizeResponse {
+	agent_id: string;
+	ok: boolean;
+	wrote_files: string[];
+	session: SessionSnapshot;
+}
 
 export interface TurnQuestion {
 	id: string;

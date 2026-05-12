@@ -233,6 +233,18 @@ pub struct PlainEnglishSummary {
     pub evidence: Vec<String>,
     pub run_invocation: Option<String>,
     pub followups: Vec<String>,
+    /// `true` when the implementation under `src/` is still a placeholder
+    /// produced by `xtal impl sync` — the spec compiles and the stub passes
+    /// verify trivially, but the project doesn't *do* anything useful yet.
+    /// The UI uses this to render a "needs implementation" hint and surface
+    /// the realize-with-agent CTA.
+    #[serde(default)]
+    pub scaffold_only: bool,
+    /// Per-module paths Studio considers stubs (used by the UI to tell the
+    /// user exactly which files need real code). Empty when `scaffold_only`
+    /// is false.
+    #[serde(default)]
+    pub stub_paths: Vec<String>,
 }
 
 impl AgentProfile {

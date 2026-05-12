@@ -104,7 +104,29 @@ def run_x07(args: list[str]) -> None:
         return
 
     if args[:3] == ["xtal", "impl", "sync"]:
-        write_json(cwd / "src/main.x07.json", {"schema_version": "x07.ast@0.1.0", "decls": []})
+        # Emit a stubby module (single defn with `bytes.empty` body) so
+        # Studio's stub-scanner flags scaffold_only=true. The connected
+        # realize test then asks the fake claude to overwrite this with
+        # a non-trivial body.
+        write_json(
+            cwd / "src/main.x07.json",
+            {
+                "kind": "module",
+                "module_id": "app.main",
+                "schema_version": "x07.x07ast@0.8.0",
+                "imports": [],
+                "decls": [
+                    {"kind": "export", "names": ["app.main.run_v1"]},
+                    {
+                        "kind": "defn",
+                        "name": "app.main.run_v1",
+                        "params": [{"name": "payload", "ty": "bytes"}],
+                        "result": "bytes",
+                        "body": ["bytes.empty"],
+                    },
+                ],
+            },
+        )
         return
 
     if args[:3] == ["xtal", "impl", "check"]:
@@ -153,6 +175,53 @@ def run_x07_wasm(args: list[str]) -> None:
 
 def run_agent(command: str, args: list[str]) -> None:
     prompt_path = args[-1] if args else ".x07/studio/handoffs/unknown.md"
+    if "-realize" in prompt_path:
+        # Connected-E2E realize mode: write a non-stub `src/main.x07.json`
+        # body so Studio's stub-scanner stops flagging it. The body is
+        # arbitrary — what matters is that body_is_stub() returns false.
+        cwd = Path.cwd()
+        target = cwd / "src" / "main.x07.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json(
+            target,
+            {
+                "kind": "module",
+                "module_id": "app.main",
+                "schema_version": "x07.x07ast@0.8.0",
+                "imports": [],
+                "decls": [
+                    {"kind": "export", "names": ["app.main.run_v1"]},
+                    {
+                        "kind": "defn",
+                        "name": "app.main.run_v1",
+                        "params": [{"name": "payload", "ty": "bytes"}],
+                        "result": "bytes",
+                        "body": [
+                            "begin",
+                            ["let", "n", ["bytes.len", "payload"]],
+                            ["let", "out", ["view.to_bytes", ["bytes.view", "payload"]]],
+                            ["for", "i", 0, "n",
+                                ["set", "out",
+                                    ["bytes.set_u8", "out", "i",
+                                        ["+", ["bytes.get_u8", "out", "i"], 0]]]],
+                            "out",
+                        ],
+                    },
+                ],
+            },
+        )
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07.studio.agent_event@0.1.0",
+                    "kind": "write",
+                    "summary": f"{command} filled in app.main.run_v1",
+                    "artifact": "src/main.x07.json",
+                }
+            )
+        )
+        print(f"write: src/main.x07.json")
+        return
     if "-clarify" in prompt_path:
         # Connected-E2E clarify mode: emit two structured clarify_question
         # events that mirror what a real Claude Code / Codex run would emit

@@ -23,6 +23,7 @@
 		followup: string;
 		repair: string;
 		invoke: TryItRequest;
+		realize: void;
 	}>();
 
 	$: opsById = new Map((session?.op_log ?? []).map((op) => [op.id, op]));
@@ -147,6 +148,22 @@
 							<span class={op.status}>{plainOpLabel(op)}</span>
 						{/each}
 					</div>
+				{:else if turn.kind === 'agent_realize'}
+					<header>
+						<span>{turn.agent_id}</span>
+						<time>{turn.at}</time>
+					</header>
+					<h2>{turn.ok ? `${turn.agent_id} filled in the implementation` : `${turn.agent_id} ran but reported issues`}</h2>
+					{#if turn.wrote_files.length}
+						<p class="hint">Wrote / edited:</p>
+						<ul class="evidence-list">
+							{#each turn.wrote_files as path}
+								<li><code>{path}</code></li>
+							{/each}
+						</ul>
+					{:else}
+						<p class="hint">No file changes recorded by the write audit.</p>
+					{/if}
 				{/if}
 
 				{#if detailsOpen}

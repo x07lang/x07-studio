@@ -8,17 +8,41 @@
 //! operations, witness list, and a bounded read of
 //! `target/xtal/verify/summary.json`.
 
+use camino::Utf8Path;
 use loom_types::artifacts::{IntentPacket, PlainEnglishSummary, TaskType, WitnessKind};
 use loom_types::session::{SessionPhase, SessionSnapshot};
 
 pub fn plain_english_summary_from_session(
     session: &SessionSnapshot,
 ) -> Option<PlainEnglishSummary> {
+    plain_english_summary_with_root(session, None)
+}
+
+/// Variant that also inspects the on-disk `src/` tree under `root` so the
+/// summary can flag scaffold-only implementations. Used by the kernel
+/// which already knows the workspace path; the no-arg form keeps the old
+/// signature for tests and projection-only consumers.
+pub fn plain_english_summary_with_root(
+    session: &SessionSnapshot,
+    root: Option<&Utf8Path>,
+) -> Option<PlainEnglishSummary> {
     let intent = session.intent.as_ref()?;
-    let headline = headline_for(session, intent);
+    let stub_paths = root.map(scan_stub_modules).unwrap_or_default();
+    let scaffold_only = !stub_paths.is_empty();
+    let headline = headline_for(session, intent, scaffold_only);
     let behavior_promises = behavior_promises_for(intent);
     let boundaries = boundaries_for(intent);
-    let evidence = evidence_for(session);
+    let mut evidence = evidence_for(session);
+    if scaffold_only {
+        evidence.insert(
+            0,
+            format!(
+                "Heads up: the implementation under `src/` is still a scaffold ({} module{}). Ask Claude Code to fill it in.",
+                stub_paths.len(),
+                if stub_paths.len() == 1 { "" } else { "s" }
+            ),
+        );
+    }
     let run_invocation = run_invocation_for(intent);
     let followups = derive_followups(intent, session);
     Some(PlainEnglishSummary {
@@ -29,7 +53,148 @@ pub fn plain_english_summary_from_session(
         evidence,
         run_invocation,
         followups,
+        scaffold_only,
+        stub_paths,
     })
+}
+
+/// Walk the workspace's `src/` directory and flag every `*.x07.json`
+/// whose `defn` bodies look like xtal-impl-sync stubs (single-literal
+/// bodies, a `begin` block with one statement, etc.). Returns the
+/// workspace-relative paths.
+pub fn scan_stub_modules(root: &Utf8Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    let src = root.join("src");
+    if !src.exists() {
+        return paths;
+    }
+    walk_x07_modules(src.as_std_path(), &src, &mut paths);
+    paths.sort();
+    paths
+}
+
+fn walk_x07_modules(dir: &std::path::Path, src_root: &Utf8Path, out: &mut Vec<String>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_x07_modules(&path, src_root, out);
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        if !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.ends_with(".x07.json"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if !module_is_stub(&path) {
+            continue;
+        }
+        let base = src_root
+            .parent()
+            .map(|p| p.as_std_path())
+            .unwrap_or(src_root.as_std_path());
+        let rel = path
+            .strip_prefix(base)
+            .ok()
+            .and_then(|rel| rel.to_str())
+            .map(|rel| rel.to_string())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        out.push(rel);
+    }
+}
+
+fn module_is_stub(path: &std::path::Path) -> bool {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let decls = match value.get("decls").and_then(|v| v.as_array()) {
+        Some(decls) => decls,
+        None => return false,
+    };
+    let mut any_defn = false;
+    let mut all_stubs = true;
+    for decl in decls {
+        if decl.get("kind").and_then(|v| v.as_str()) != Some("defn") {
+            continue;
+        }
+        any_defn = true;
+        let body = match decl.get("body") {
+            Some(body) => body,
+            None => continue,
+        };
+        if !body_is_stub(body) {
+            all_stubs = false;
+        }
+    }
+    any_defn && all_stubs
+}
+
+fn body_is_stub(body: &serde_json::Value) -> bool {
+    // A `defn` body in x07AST is a single expression. The xtal-impl-sync
+    // stubs emit shapes like ["bytes.empty"], ["i32.lit", 0],
+    // ["bytes.lit", "todo"], or single-line begin blocks. Real impls
+    // contain multiple nested begin/let/for/if operations.
+    let arr = match body.as_array() {
+        Some(arr) => arr,
+        None => return true,
+    };
+    if arr.is_empty() {
+        return true;
+    }
+    let head = arr.first().and_then(|v| v.as_str()).unwrap_or("");
+    if matches!(
+        head,
+        "bytes.empty" | "bytes.lit" | "i32.lit" | "u32.lit" | "i64.lit" | "u64.lit" | "f64.lit"
+    ) && arr.len() <= 3
+    {
+        return true;
+    }
+    if head == "begin" {
+        // A "begin" with fewer than 4 children (begin + 0..2 statements +
+        // tail) is still a stub. Real impls have several statements.
+        let statement_count = arr.len().saturating_sub(1);
+        if statement_count <= 2 {
+            return true;
+        }
+        // Even with several statements, if every nested element is a
+        // trivial literal we treat it as a stub.
+        if arr.iter().skip(1).all(value_is_trivial_literal) {
+            return true;
+        }
+    }
+    // Heuristic floor on overall complexity: real impls usually serialize
+    // to more than ~150 bytes of compact JSON. Skeletons sit well below.
+    let serialized = serde_json::to_string(body).unwrap_or_default();
+    serialized.len() < 80
+}
+
+fn value_is_trivial_literal(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Array(arr) => match arr.first().and_then(|v| v.as_str()) {
+            Some("bytes.empty" | "bytes.lit" | "i32.lit" | "u32.lit" | "i64.lit" | "u64.lit") => {
+                arr.len() <= 3
+            }
+            _ => false,
+        },
+        serde_json::Value::Number(_)
+        | serde_json::Value::String(_)
+        | serde_json::Value::Bool(_) => true,
+        _ => false,
+    }
 }
 
 /// Doctrine strings that `intent_packet_from_raw` seeds on every intent so
@@ -66,7 +231,7 @@ pub(crate) fn is_doctrine(text: &str) -> bool {
         .any(|fragment| lowered.contains(fragment))
 }
 
-fn headline_for(session: &SessionSnapshot, intent: &IntentPacket) -> String {
+fn headline_for(session: &SessionSnapshot, intent: &IntentPacket, scaffold_only: bool) -> String {
     let user_intent = first_desired_witness(intent)
         .map(short_summary)
         .or_else(|| short_summary_option(intent_source_text(intent)));
@@ -78,14 +243,21 @@ fn headline_for(session: &SessionSnapshot, intent: &IntentPacket) -> String {
         TaskType::BrownfieldExtract => "Extracted",
         TaskType::Explanation => "Explained",
     };
-    let outcome = match session.phase {
-        SessionPhase::TrustReview | SessionPhase::CertifyRunning | SessionPhase::Certified => {
-            "and verified."
+    // When the on-disk impl is still a stub we explicitly say so. Saying
+    // "verified" for a scaffold misled users who tried to Try-It and got
+    // empty output.
+    let outcome = if scaffold_only {
+        "— scaffolded; needs implementation."
+    } else {
+        match session.phase {
+            SessionPhase::TrustReview | SessionPhase::CertifyRunning | SessionPhase::Certified => {
+                "and verified."
+            }
+            SessionPhase::RepairEligible | SessionPhase::HumanInterventionRequired => {
+                "— but it still needs your help."
+            }
+            _ => "and reviewed.",
         }
-        SessionPhase::RepairEligible | SessionPhase::HumanInterventionRequired => {
-            "— but it still needs your help."
-        }
-        _ => "and reviewed.",
     };
     match user_intent {
         Some(text) => format!("{verb}: {text} {outcome}"),

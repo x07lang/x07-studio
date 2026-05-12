@@ -28,9 +28,13 @@ test('connected timeline formalizes, clarifies, builds, tries, and scans inciden
 	await expect(page.getByTestId('run-invocation')).toContainText('x07 run');
 	await expect(page.getByTestId('shipping-ladder')).toContainText('Local preview');
 
+	// Build emits a stub impl (xtal impl sync), so Try-It now refuses
+	// politely with the stub_impl message. The "Latest verify evidence"
+	// proof citation is gated behind the realize step (covered by the
+	// dedicated realize test below).
 	await page.getByTestId('try-it-panel').getByRole('textbox').first().fill('[2,1]');
 	await page.getByTestId('try-it-panel').getByRole('button', { name: 'Run it' }).click();
-	await expect(page.getByTestId('try-it-panel')).toContainText('Latest verify evidence', {
+	await expect(page.getByTestId('try-it-panel')).toContainText('stub', {
 		timeout: 15_000
 	});
 
@@ -40,6 +44,35 @@ test('connected timeline formalizes, clarifies, builds, tries, and scans inciden
 	});
 	await page.getByRole('button', { name: 'Repair this' }).click();
 	await expect(page.getByTestId('turn-repair')).toContainText('latest', { timeout: 15_000 });
+});
+
+test('connected verify produces a scaffold flag + realize CTA', async ({ page }) => {
+	// The fake-toolchain `xtal impl sync` emits a stub body, so Studio's
+	// stub-scanner should tag the Verified turn as scaffolded and surface
+	// the Implement-with-Claude CTA. The full realize HTTP round-trip is
+	// covered by a focused Rust kernel test plus the manual live-drive in
+	// scripts/realize-live-test.sh; the connected E2E here verifies the
+	// scaffold-detection projection wires through to the UI.
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto('/');
+	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+
+	await page
+		.getByTestId('composer-input')
+		.fill('Build a small CLI greeting tool that prints hello for a name and refuses empty input.');
+	await page.getByTestId('composer-submit').click();
+	await expect(page.getByTestId('turn-user_intent')).toBeVisible({ timeout: 15_000 });
+
+	const card = page.locator('[data-testid="clarify-card"]').first();
+	await expect(card).toBeVisible({ timeout: 20_000 });
+	await card.getByRole('button').nth(0).click();
+	await card.getByTestId('clarify-answer-submit').click();
+
+	await page.getByTestId('approve-build').click();
+	await expect(page.getByTestId('turn-verified')).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByTestId('summary-headline')).toContainText('scaffolded');
+	await expect(page.getByTestId('realize-cta')).toBeVisible();
+	await expect(page.getByTestId('realize-cta-button')).toBeEnabled();
 });
 
 test('connected timeline runs the Atlas workflow lane', async ({ page }) => {

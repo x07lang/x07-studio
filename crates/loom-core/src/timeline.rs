@@ -138,6 +138,44 @@ fn op_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
                 incident_id: incident_id_from_op(op).unwrap_or_else(|| "latest".to_string()),
                 op_ids: vec![op.id],
             });
+        } else if op.op.starts_with("agent.realize.") {
+            let agent_id = op
+                .op
+                .strip_prefix("agent.realize.")
+                .unwrap_or("agent")
+                .to_string();
+            let wrote_files: Vec<String> = op
+                .report_json
+                .as_ref()
+                .and_then(|value| value.get("write_audit"))
+                .map(|audit| {
+                    let mut files: Vec<String> = audit
+                        .get("created")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|item| item.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if let Some(modified) = audit.get("modified").and_then(|v| v.as_array()) {
+                        for item in modified {
+                            if let Some(text) = item.as_str() {
+                                files.push(text.to_string());
+                            }
+                        }
+                    }
+                    files
+                })
+                .unwrap_or_default();
+            turns.push(SessionTurn::AgentRealize {
+                id: stable_turn_id(session.session_id, &format!("agent-realize:{}", op.id)),
+                at: op.started_at.clone(),
+                agent_id,
+                ok: matches!(op.status, loom_types::artifacts::OperationStatus::Succeeded),
+                wrote_files,
+                op_ids: vec![op.id],
+            });
         } else if op.op.starts_with("agent.handoff.") || op.op.starts_with("agent.run.") {
             let agent_id = op.op.rsplit('.').next().unwrap_or("agent").to_string();
             turns.push(SessionTurn::AgentDraft {
@@ -221,7 +259,8 @@ fn turn_at(turn: &SessionTurn) -> &str {
         | SessionTurn::BuildStage { at, .. }
         | SessionTurn::Verified { at, .. }
         | SessionTurn::Incident { at, .. }
-        | SessionTurn::Repair { at, .. } => at,
+        | SessionTurn::Repair { at, .. }
+        | SessionTurn::AgentRealize { at, .. } => at,
     }
 }
 

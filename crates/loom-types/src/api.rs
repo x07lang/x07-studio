@@ -122,6 +122,19 @@ pub enum SessionTurn {
         incident_id: String,
         op_ids: Vec<Uuid>,
     },
+    /// A supervised agent run that filled in the implementation under
+    /// `src/` after a scaffolded build. Carries the agent id, the write
+    /// audit summary, and the follow-up impl.check / xtal.verify op ids
+    /// so the timeline can render proof that the realize step actually
+    /// changed something and stayed within the approved write roots.
+    AgentRealize {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        ok: bool,
+        wrote_files: Vec<String>,
+        op_ids: Vec<Uuid>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +241,25 @@ pub struct RunBuildRequest {
     pub vars: BTreeMap<String, String>,
     #[serde(default)]
     pub max_repair_rounds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealizeRequest {
+    /// Agent to delegate the realization to (defaults to `claude-code`
+    /// when omitted). Must have `impl.sync.write` in its allowed_verbs
+    /// and `src/` in its write_roots.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealizeResponse {
+    pub agent_id: String,
+    pub ok: bool,
+    pub wrote_files: Vec<String>,
+    pub session: SessionSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

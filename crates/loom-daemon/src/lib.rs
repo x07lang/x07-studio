@@ -29,12 +29,12 @@ use loom_types::api::{
     DocPreviewResponse, FormalizeIntentRequest, FormalizeIntentResponse, HealthResponse,
     IntentAnswerRequest, IntentAnswerResponse, IntentClarifyRequest, IntentClarifyResponse,
     IntentImageUploadResponse, LadderState, McpCallResponse, ProbeProviderRequest,
-    ProviderProbeResponse, QuorumRequest, QuorumRound, RequestIntentRevisionRequest,
-    RequestIntentRevisionResponse, ResolveApprovalRequest, RunBindingRequest, RunBuildRequest,
-    RunXtalWorkflowRequest, RuntimeComponentState, RuntimeComponentStatus, SaveAgentProfileRequest,
-    SaveProviderProfileRequest, SessionTurn, StudioDefaults, StudioMemory, SyncClaimResponse,
-    SyncCode, TryItRequest, TryItResult, VisualEmitRequest, VisualParseRequest, VisualResponse,
-    WorkspaceRadarResponse,
+    ProviderProbeResponse, QuorumRequest, QuorumRound, RealizeRequest, RealizeResponse,
+    RequestIntentRevisionRequest, RequestIntentRevisionResponse, ResolveApprovalRequest,
+    RunBindingRequest, RunBuildRequest, RunXtalWorkflowRequest, RuntimeComponentState,
+    RuntimeComponentStatus, SaveAgentProfileRequest, SaveProviderProfileRequest, SessionTurn,
+    StudioDefaults, StudioMemory, SyncClaimResponse, SyncCode, TryItRequest, TryItResult,
+    VisualEmitRequest, VisualParseRequest, VisualResponse, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -81,6 +81,10 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/v1/sessions/{session_id}/bindings/run", post(run_binding))
         .route("/v1/sessions/{session_id}/invoke", post(invoke_artifact))
+        .route(
+            "/v1/sessions/{session_id}/realize",
+            post(realize_with_agent),
+        )
         .route("/v1/sessions/{session_id}/ladder", get(ladder_state))
         .route("/v1/sessions/{session_id}/ladder/climb", post(climb_ladder))
         .route("/v1/sessions/{session_id}/cassette", get(cassette_entries))
@@ -765,6 +769,64 @@ async fn invoke_artifact(
         .await
         .map_err(internal_error)?;
     Ok(Json(result))
+}
+
+async fn realize_with_agent(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    request: Option<Json<RealizeRequest>>,
+) -> Result<Json<RealizeResponse>, (StatusCode, String)> {
+    let body = request.map(|Json(body)| body).unwrap_or(RealizeRequest {
+        agent_id: None,
+        timeout_seconds: None,
+    });
+    let agent_id = body
+        .agent_id
+        .clone()
+        .unwrap_or_else(|| "claude-code".to_string());
+    let prepared = {
+        let mut kernel = state.kernel.lock().await;
+        kernel
+            .start_intent_realize(session_id, &agent_id, body.timeout_seconds)
+            .await
+            .map_err(conflict_error)?
+    };
+    let run_op_id = prepared.op.id;
+    if let Some(command) = prepared.command {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let execution = loom_core::WorkspaceKernel::execute_agent_command_streaming(command, tx);
+        tokio::pin!(execution);
+        loop {
+            tokio::select! {
+                update = rx.recv() => {
+                    if let Some(update) = update {
+                        let mut kernel = state.kernel.lock().await;
+                        kernel
+                            .complete_agent_run(update)
+                            .map_err(internal_error)?;
+                    }
+                }
+                final_op = &mut execution => {
+                    let mut kernel = state.kernel.lock().await;
+                    kernel
+                        .complete_agent_run(final_op.clone())
+                        .map_err(internal_error)?;
+                    break;
+                }
+            }
+        }
+    }
+    let mut kernel = state.kernel.lock().await;
+    let (session, ok, wrote_files) = kernel
+        .finalize_realize(session_id, run_op_id)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(RealizeResponse {
+        agent_id,
+        ok,
+        wrote_files,
+        session,
+    }))
 }
 
 async fn ladder_state(

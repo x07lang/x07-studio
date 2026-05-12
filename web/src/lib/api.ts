@@ -515,6 +515,36 @@ export class StudioApi {
 		};
 	}
 
+	async realize(
+		session: SessionSnapshot,
+		options: { agentId?: string; timeoutSeconds?: number } = {}
+	): Promise<{ agent_id: string; ok: boolean; wrote_files: string[]; session: SessionSnapshot }> {
+		if (!this.demoMode) {
+			const body: Record<string, unknown> = {};
+			if (options.agentId) body.agent_id = options.agentId;
+			if (options.timeoutSeconds) body.timeout_seconds = options.timeoutSeconds;
+			const response = await request<{
+				agent_id: string;
+				ok: boolean;
+				wrote_files: string[];
+				session: SessionSnapshot;
+			}>(`/v1/sessions/${session.session_id}/realize`, {
+				method: 'POST',
+				body: JSON.stringify(body)
+			});
+			this.replaceDemo(response.session);
+			return response;
+		}
+		const next = appendDemoOp(session, `agent.realize.${options.agentId ?? 'claude-code'}`, 'succeeded');
+		this.replaceDemo(next);
+		return {
+			agent_id: options.agentId ?? 'claude-code',
+			ok: true,
+			wrote_files: ['src/main.x07.json'],
+			session: next
+		};
+	}
+
 	async climbRung(session: SessionSnapshot, toRung: string): Promise<SessionSnapshot> {
 		if (!this.demoMode) {
 			const next = await request<SessionSnapshot>(`/v1/sessions/${session.session_id}/ladder/climb`, {

@@ -13,6 +13,7 @@
 	const dispatch = createEventDispatcher<{
 		followup: string;
 		invoke: TryItRequest;
+		realize: void;
 	}>();
 
 	async function copyInvocation() {
@@ -46,10 +47,37 @@
 	}
 </script>
 
-<section class="result-preview" data-testid="result-preview">
+<section class="result-preview" data-testid="result-preview" data-scaffold-only={summary.scaffold_only ? 'true' : 'false'}>
 	<header>
 		<h2 data-testid="summary-headline">{summary.headline}</h2>
 	</header>
+
+	{#if summary.scaffold_only}
+		<section class="realize-cta" data-testid="realize-cta">
+			<p class="hint">
+				The spec compiled and verify passed against a placeholder body, but the
+				implementation under <code>src/</code> is still a stub. Have Claude Code
+				fill it in — Studio will rerun <code>impl.check</code> + <code>xtal.verify</code>
+				after the agent finishes and surface a fresh Verified turn.
+			</p>
+			{#if summary.stub_paths && summary.stub_paths.length}
+				<ul class="stub-list">
+					{#each summary.stub_paths as path}
+						<li><code>{path}</code></li>
+					{/each}
+				</ul>
+			{/if}
+			<button
+				type="button"
+				class="command-button primary"
+				on:click={() => dispatch('realize')}
+				disabled={busy}
+				data-testid="realize-cta-button"
+			>
+				{busy ? 'Claude Code is implementing…' : 'Implement with Claude Code'}
+			</button>
+		</section>
+	{/if}
 
 	{#if summary.behavior_promises.length}
 		<div class="result-block">
@@ -169,6 +197,38 @@
 </section>
 
 <style>
+	.realize-cta {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.75rem 0.9rem;
+		border-radius: 0.6rem;
+		border: 1px solid rgba(245, 166, 35, 0.4);
+		background: rgba(245, 166, 35, 0.08);
+	}
+	.realize-cta .hint {
+		margin: 0;
+		font-size: 0.9rem;
+		line-height: 1.4;
+		color: var(--text, #eef1f6);
+	}
+	.realize-cta .stub-list {
+		margin: 0;
+		padding-left: 1.1rem;
+		font-size: 0.85rem;
+		color: var(--muted, #aab1c0);
+	}
+	.realize-cta .stub-list code {
+		font-family: var(--font-mono, ui-monospace, monospace);
+	}
+	@media (prefers-color-scheme: light) {
+		.realize-cta {
+			background: rgba(245, 166, 35, 0.14);
+		}
+		.realize-cta .hint {
+			color: #1b1f2a;
+		}
+	}
 	.try-inline {
 		display: flex;
 		flex-direction: column;

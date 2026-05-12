@@ -247,6 +247,33 @@ impl WorkspaceKernel {
                 op_id: Uuid::nil(),
             });
         }
+        // Verified, but the on-disk implementation is still a stub. Running
+        // `x07 run` would succeed but produce no useful output. Refuse with
+        // a clear hint pointing the user at the realize CTA.
+        let stub_paths = crate::summarize::scan_stub_modules(self.root.as_path());
+        if !stub_paths.is_empty() {
+            let stats = serde_json::json!({
+                "phase": format!("{:?}", session.phase),
+                "blocked_on": "implementation",
+                "stub_paths": stub_paths,
+                "message": "The build only scaffolded an empty implementation. Ask Claude Code to fill it in before running.",
+            });
+            return Ok(TryItResult {
+                output_kind: "stub_impl".to_string(),
+                output_text: Some(format!(
+                    "This project is scaffolded but the implementation is still a stub.\n\
+                     {} module{} need real code:\n  {}\n\nClick \"Implement with Claude Code\" \
+                     on the Verified turn, then come back and try again.",
+                    stub_paths.len(),
+                    if stub_paths.len() == 1 { "" } else { "s" },
+                    stub_paths.join("\n  ")
+                )),
+                output_json: None,
+                stats,
+                proof_citations: Vec::new(),
+                op_id: Uuid::nil(),
+            });
+        }
         let input = match req.input_kind {
             TryItInputKind::Text => InputSpec::Text(req.input_text.unwrap_or_default()),
             TryItInputKind::B64 => {
@@ -1161,10 +1188,11 @@ impl WorkspaceKernel {
         };
         self.append_op(session_id, build_stage_op(session_id, final_stage, round))?;
         if final_stage == "done" {
-            let summary_op = match build_plain_english_summary(&current) {
-                Some(op) => op,
-                None => return Ok(current),
-            };
+            let summary_op =
+                match build_plain_english_summary_with_root(&current, Some(self.root.as_path())) {
+                    Some(op) => op,
+                    None => return Ok(current),
+                };
             current = self.append_op(session_id, summary_op)?;
         }
         Ok(current)
@@ -1763,6 +1791,147 @@ impl WorkspaceKernel {
             command: Some(command),
             clarify_round: Some(round),
         })
+    }
+
+    /// Prepares a supervised realize run that asks the agent to fill in the
+    /// scaffolded `src/` modules. Mirrors the clarify pipeline: returns a
+    /// `PreparedAgentRun` whose `command` the caller pumps through
+    /// `execute_agent_command_streaming`. The realize handoff is scoped to
+    /// `src/`+`tests/` write roots and the `impl.sync.write` verb.
+    pub async fn start_intent_realize(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let seed = self.genpack_context_seed(session_id)?;
+        let genpack = Self::resolve_genpack_context(seed).await;
+        self.start_intent_realize_with_genpack(
+            session_id,
+            agent_id,
+            timeout_seconds,
+            genpack.as_ref(),
+        )
+    }
+
+    pub fn start_intent_realize_with_genpack(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        timeout_seconds: Option<u64>,
+        genpack: Option<&GenpackHandoffContext>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let _intent = session.intent.as_ref().ok_or_else(|| {
+            anyhow!("session `{session_id}` must have an approved intent before realize")
+        })?;
+        let stub_paths = crate::summarize::scan_stub_modules(self.root.as_path());
+        let agent = self
+            .list_agent_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        ensure_agent_enabled(&agent, "running an implementation realize round")?;
+        ensure_agent_command_available(&agent)?;
+        let handoff = agent_realize_handoff_from_session(&session, &agent, &stub_paths, genpack);
+        let prompt_path = self
+            .store
+            .save_agent_handoff_with_suffix(&handoff, "realize")?;
+        let op = agent_realize_running_op(session_id, &agent, &handoff, &prompt_path);
+        let mut realize_agent = agent.clone();
+        realize_agent.allowed_verbs = handoff.allowed_verbs.clone();
+        realize_agent.write_roots = handoff.write_roots.clone();
+        let command = AgentCommandPlan {
+            session_id,
+            op_id: op.id,
+            agent: realize_agent,
+            handoff: handoff.clone(),
+            prompt_path: prompt_path.clone(),
+            cwd: self.root.clone(),
+            program: agent.command.clone(),
+            args: handoff.command.iter().skip(1).cloned().collect(),
+            timeout_seconds: timeout_seconds.unwrap_or(180).clamp(20, 600),
+            op_kind: "realize".to_string(),
+        };
+        let snapshot = self.append_op(session_id, op.clone())?;
+        Ok(PreparedAgentRun {
+            handoff,
+            op,
+            session: snapshot,
+            command: Some(command),
+            clarify_round: None,
+        })
+    }
+
+    /// Runs after the realize agent exits. Re-runs `impl.check` and
+    /// `xtal.verify` (with the same world override the build pipeline
+    /// uses) so the timeline gains a fresh Verified turn with a non-stub
+    /// summary. Returns the final session snapshot and the workspace-
+    /// relative files the agent wrote.
+    pub async fn finalize_realize(
+        &mut self,
+        session_id: Uuid,
+        run_op_id: Uuid,
+    ) -> anyhow::Result<(SessionSnapshot, bool, Vec<String>)> {
+        let mut current = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let wrote_files: Vec<String> = current
+            .op_log
+            .iter()
+            .find(|op| op.id == run_op_id)
+            .and_then(|op| op.report_json.as_ref())
+            .and_then(|value| value.get("write_audit"))
+            .and_then(|audit| audit.get("created").or_else(|| audit.get("modified")))
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut vars: BTreeMap<String, String> = BTreeMap::new();
+        vars.insert("allow_os_world".to_string(), "true".to_string());
+        let after_check = self
+            .run_binding(session_id, "impl.check", &BTreeMap::new())
+            .await?;
+        if last_op_failed(&after_check) {
+            current = after_check;
+            return Ok((current, false, wrote_files));
+        }
+        let after_verify = self.run_binding(session_id, "xtal.verify", &vars).await?;
+        let verified_ok = !last_op_failed(&after_verify);
+        // The session is usually at `TrustReview` after the initial build —
+        // the lifecycle reducer rejects `verification_passed` from there.
+        // Only fire a transition event when we actually came back through
+        // `VerifyRunning` (e.g. after a repair). Otherwise leave the phase
+        // alone and just re-emit the summary so the timeline picks up the
+        // now-non-stub state.
+        if matches!(after_verify.phase, SessionPhase::VerifyRunning) {
+            let event = if verified_ok {
+                SessionEvent::VerificationPassed
+            } else {
+                SessionEvent::VerificationFailed
+            };
+            current = self.dispatch_event(session_id, event)?;
+        } else {
+            current = after_verify;
+        }
+        if verified_ok {
+            if let Some(summary_op) =
+                build_plain_english_summary_with_root(&current, Some(self.root.as_path()))
+            {
+                current = self.append_op(session_id, summary_op)?;
+            }
+        }
+        Ok((current, verified_ok, wrote_files))
     }
 
     pub fn genpack_context_seed(
@@ -3791,8 +3960,16 @@ fn build_stage_op(session_id: Uuid, stage: &str, round: u32) -> OpRecord {
     }
 }
 
+#[allow(dead_code)]
 fn build_plain_english_summary(session: &SessionSnapshot) -> Option<OpRecord> {
-    let summary = crate::summarize::plain_english_summary_from_session(session)?;
+    build_plain_english_summary_with_root(session, None)
+}
+
+fn build_plain_english_summary_with_root(
+    session: &SessionSnapshot,
+    root: Option<&Utf8Path>,
+) -> Option<OpRecord> {
+    let summary = crate::summarize::plain_english_summary_with_root(session, root)?;
     let now = now_string();
     let session_id = session.session_id;
     let stdout = std::iter::once(summary.headline.clone())
@@ -4837,6 +5014,145 @@ fn agent_clarify_handoff_from_session(
     }
 }
 
+fn agent_realize_handoff_from_session(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    stub_paths: &[String],
+    genpack: Option<&GenpackHandoffContext>,
+) -> AgentHandoff {
+    let mut realize_agent = agent.clone();
+    realize_agent.allowed_verbs = vec![
+        "impl.sync.write".to_string(),
+        "spec.check".to_string(),
+        "xtal.verify".to_string(),
+    ];
+    realize_agent.write_roots = vec!["src/".to_string(), "tests/".to_string()];
+    let prompt_path = format!(
+        ".x07/studio/handoffs/{}-{}-realize.md",
+        session.session_id, agent.id
+    );
+    let command = std::iter::once(agent.command.clone())
+        .chain(agent.args.clone())
+        .chain(std::iter::once(prompt_path.clone()))
+        .collect::<Vec<_>>();
+    let artifacts = vec![
+        prompt_path.clone(),
+        format!(".x07/studio/sessions/{}.json", session.session_id),
+    ];
+    let prompt =
+        render_agent_realize_prompt(session, &realize_agent, &command, stub_paths, genpack);
+    AgentHandoff {
+        schema_version: "x07.studio.agent_handoff@0.1.0".to_string(),
+        session_id: session.session_id,
+        agent_id: agent.id.clone(),
+        agent_label: agent.label.clone(),
+        command,
+        prompt_path,
+        prompt,
+        allowed_verbs: realize_agent.allowed_verbs.clone(),
+        mcp_tools: realize_agent.mcp_tools.clone(),
+        write_roots: realize_agent.write_roots.clone(),
+        approval_required: false,
+        artifacts,
+        created_at: now_string(),
+    }
+}
+
+fn render_agent_realize_prompt(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    command: &[String],
+    stub_paths: &[String],
+    _genpack: Option<&GenpackHandoffContext>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("# x07 Studio — Realize Implementation\n\n");
+    out.push_str(&format!("- Agent: {} (`{}`)\n", agent.label, agent.id));
+    out.push_str(&format!(
+        "- Session: {} (`{}`)\n",
+        session.title, session.session_id
+    ));
+    out.push_str(&format!("- Workspace: `{}`\n", session.root));
+    out.push_str(&format!("- Command: `{}`\n", command.join(" ")));
+    out.push_str(
+        "\nThe scaffold step produced **stub** function bodies under `src/`. \
+Your job: replace them with **real implementations** that satisfy the approved spec, \
+keep `xtal.verify` green, and stay inside the write roots below.\n\n",
+    );
+    out.push_str("## Stubs to replace\n\n");
+    if stub_paths.is_empty() {
+        out.push_str("- (Studio could not locate the stub modules. Walk `src/` and find any `defn` with an empty or trivial body — typically a single `bytes.empty` or `i32.lit` expression.)\n");
+    } else {
+        for path in stub_paths {
+            out.push_str(&format!("- `{path}`\n"));
+        }
+    }
+    out.push_str("\n## Write Roots\n\n");
+    for root in &agent.write_roots {
+        out.push_str(&format!("- `{root}`\n"));
+    }
+    out.push_str(
+        "\nStudio's write-root audit runs after you exit. Any files written outside these roots will fail the run.\n",
+    );
+    out.push_str("\n## Required Loop\n\n");
+    out.push_str(
+        "1. Read the approved intent + spec below. Note the operation signatures, examples, and witnesses.\n\
+2. Open each stub module and replace the `defn` body with a real implementation in x07AST.\n\
+3. After every meaningful change, run `x07 xtal impl check --project x07.json` and \
+`x07 xtal verify --project x07.json --allow-os-world` to confirm the impl matches the spec.\n\
+4. Do NOT widen the spec, the architecture manifest, the trust profile, or any policy file. \
+If a spec change is needed, emit an `approval` agent_event and STOP.\n\
+5. When verify is clean, exit. Studio will re-run impl.check + xtal.verify and surface a fresh \
+Verified turn with the summary.\n\n",
+    );
+    if let Some(intent) = &session.intent {
+        out.push_str("## Approved Intent\n\n");
+        for target in &intent.targets {
+            out.push_str(&format!(
+                "- Target: `{}` / `{}`\n",
+                target.module_id,
+                target.entry.as_deref().unwrap_or("run_v1")
+            ));
+        }
+        if !intent.witnesses.is_empty() {
+            out.push_str("\n### Witnesses\n");
+            for witness in &intent.witnesses {
+                if witness.text.trim().is_empty() {
+                    continue;
+                }
+                out.push_str(&format!("- `{:?}`: {}\n", witness.kind, witness.text));
+            }
+        }
+        if !intent.examples.is_empty() {
+            out.push_str("\n### Examples\n");
+            for example in &intent.examples {
+                let text = example.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                out.push_str(&format!("- {text}\n"));
+            }
+        }
+        if !intent.constraints.is_empty() {
+            out.push_str("\n### Constraints\n");
+            for constraint in &intent.constraints {
+                let text = constraint.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                out.push_str(&format!("- {text}\n"));
+            }
+        }
+    }
+    out.push_str("\n## Agent Event Protocol\n\n");
+    out.push_str(
+        "Emit one JSON object per line for machine-visible milestones. Use `kind` = \
+`write` (file you edited), `artifact` (report you produced), `diagnostic` (problem you \
+saw), or `approval` (you need a spec/arch/policy widen).\n",
+    );
+    out
+}
+
 fn render_agent_clarify_prompt(
     session: &SessionSnapshot,
     agent: &AgentProfile,
@@ -5278,6 +5594,45 @@ fn agent_clarify_running_op(
         report_json: Some(serde_json::json!({
             "mode": "clarify",
             "round": round,
+            "handoff": handoff,
+        })),
+        report_path: None,
+    }
+}
+
+fn agent_realize_running_op(
+    session_id: Uuid,
+    agent: &AgentProfile,
+    handoff: &AgentHandoff,
+    prompt_path: &Utf8Path,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("agent.realize.{}", agent.id),
+        backend: "agent-supervisor".to_string(),
+        command: handoff.command.clone(),
+        started_at: now,
+        finished_at: None,
+        status: OperationStatus::Running,
+        exit_code: None,
+        artifacts: vec![prompt_path.to_string()],
+        notes: Some(format!(
+            "{} is filling in the implementation under src/.",
+            agent.label
+        )),
+        stdout: Some(format!(
+            "Supervised realize started.\nCommand: {}\nPrompt: {}\n",
+            handoff.command.join(" "),
+            handoff.prompt_path
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "mode": "realize",
             "handoff": handoff,
         })),
         report_path: None,
