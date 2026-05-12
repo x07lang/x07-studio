@@ -10,6 +10,7 @@ import {
 	demoBindings,
 	demoHealth,
 	demoSession,
+	normalizeCertifyRunOptions,
 	normalizeVerifyRunOptions,
 	reduceDemoEvent,
 	repairRunVars,
@@ -246,7 +247,11 @@ export class StudioApi {
 			failed ? 'failed' : 'succeeded',
 			bindingCommandPreview(binding_id, options),
 			undefined,
-			binding_id === 'xtal.verify' ? demoVerifySummary(session, options as Partial<VerifyRunOptions>) : undefined
+			binding_id === 'xtal.verify'
+				? demoVerifySummary(session, options as Partial<VerifyRunOptions>)
+				: binding_id === 'xtal.certify'
+					? demoCertifySummary(session, options as Partial<CertifyRunOptions>)
+					: undefined
 		);
 		this.replaceDemo(next);
 		return next;
@@ -663,6 +668,53 @@ function demoVerifySummary(session: SessionSnapshot, verifyOptions?: Partial<Ver
 				}
 			}
 		]
+	};
+}
+
+function demoCertifySummary(session: SessionSnapshot, certifyOptions?: Partial<CertifyRunOptions>) {
+	const normalized = normalizeCertifyRunOptions(certifyOptions);
+	const target = session.intent?.targets[0];
+	const moduleId = target?.module_id || 'toy.sorter';
+	const entry = normalized.entry || target?.entry || 'sort_u8_asc';
+	const fullEntry = entry.includes('.') ? entry : `${moduleId}.${entry}`;
+	const entryPath = fullEntry.replaceAll('.', '/');
+	const outDir = 'target/xtal/cert';
+	const entryOutDir = `${outDir}/${entryPath}`;
+	return {
+		schema_version: 'x07.xtal.certify_summary@0.1.0',
+		project: {
+			root: '.',
+			manifest_path: 'x07.json',
+			manifest_sha256: demoSha('manifest'),
+			xtal_manifest_path: 'arch/xtal/xtal.json',
+			xtal_manifest_sha256: demoSha('xtal-manifest'),
+			trust_profile_path: 'arch/trust/profiles/verified_core_pure_v1.json',
+			trust_profile_sha256: demoSha('trust-profile'),
+			baseline_path: 'target/xtal/cert/baseline.json',
+			baseline_sha256: demoSha('baseline')
+		},
+		settings: {
+			out_dir: outDir,
+			entries: [fullEntry],
+			all_entries: normalized.allEntries,
+			run_prechecks: !normalized.noPrechecks,
+			review_gates: ['proof_coverage', 'trust_profile', 'spec_examples']
+		},
+		results: [
+			{
+				entry: fullEntry,
+				out_dir: entryOutDir,
+				ok: true,
+				certificate_path: `${entryOutDir}/certificate.json`,
+				certificate_sha256: demoSha('certificate'),
+				trust_report_path: `${entryOutDir}/trust.report.json`,
+				trust_report_sha256: demoSha('trust-report'),
+				review_diff_json_path: `${entryOutDir}/review.diff.json`,
+				review_diff_txt_path: `${entryOutDir}/review.diff.txt`
+			}
+		],
+		ok: true,
+		generated_at: new Date(0).toISOString()
 	};
 }
 

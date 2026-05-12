@@ -666,3 +666,14 @@ This document records friction found while implementing the Studio web surface.
    renders those choices in the Trust room, carries them through the web API,
    validates the scope, and ensures all-entry certification suppresses the
    entry flag instead of sending conflicting CLI arguments.
+
+62. Certify summaries need a first-class evidence projection.
+
+   `x07 xtal certify` writes `target/xtal/cert/summary.json` with project
+   digests, run settings, per-entry certificate paths, trust reports, review
+   diffs, and the bundle location, but the Trust room previously left those
+   details buried in operation artifacts. Studio now projects
+   `x07.xtal.certify_summary@0.1.0` into a Certify evidence board, so release
+   reviewers can see project inputs, precheck policy, review gates, entry
+   certificates, trust-report digests, review diffs, and bundle evidence
+   without opening raw JSON first.

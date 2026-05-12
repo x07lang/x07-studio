@@ -1023,6 +1023,98 @@ button:focus-visible {
 	gap: 8px;
 }
 
+.cert-evidence-board {
+	display: grid;
+	gap: 10px;
+	margin: 10px 0;
+	border: 1px solid rgba(114, 228, 180, 0.2);
+	border-radius: var(--radius);
+	background: rgba(114, 228, 180, 0.035);
+	padding: 10px;
+}
+
+.cert-evidence-head {
+	display: grid;
+	gap: 6px;
+}
+
+.cert-evidence-head > div,
+.cert-entry-main {
+	display: flex;
+	align-items: start;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.cert-evidence-head span,
+.cert-evidence-head small,
+.cert-evidence-summary span,
+.cert-evidence-summary small,
+.cert-project-ref span,
+.cert-project-ref small,
+.cert-entry-row span,
+.cert-entry-row small,
+.cert-artifact-strip span,
+.cert-artifact-strip small {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.cert-evidence-head code,
+.cert-project-ref code,
+.cert-entry-row code,
+.cert-artifact-strip code {
+	overflow-wrap: anywhere;
+	color: var(--cyan);
+	font-size: 11px;
+}
+
+.cert-evidence-summary,
+.cert-project-grid,
+.cert-entry-grid,
+.cert-artifact-strip {
+	display: grid;
+	gap: 8px;
+}
+
+.cert-evidence-summary {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cert-evidence-summary > div,
+.cert-project-ref,
+.cert-entry-row,
+.cert-artifact-strip > div {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.16);
+	padding: 8px;
+}
+
+.cert-project-ref {
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+}
+
+.cert-entry-paths,
+.cert-artifact-strip {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cert-entry-paths {
+	display: grid;
+	gap: 8px;
+}
+
+.cert-entry-paths > div {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
 .proof-cache-ledger {
 	display: grid;
 	gap: 9px;
@@ -3610,8 +3702,17 @@ textarea {
 
 	.verify-evidence-summary,
 	.verify-entry-row,
-	.verify-artifact-strip {
+	.verify-artifact-strip,
+	.cert-evidence-summary,
+	.cert-project-ref,
+	.cert-entry-paths,
+	.cert-artifact-strip {
 		grid-template-columns: 1fr;
+	}
+
+	.cert-entry-main {
+		align-items: stretch;
+		flex-direction: column;
 	}
 
 	.proof-cache-grid {

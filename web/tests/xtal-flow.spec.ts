@@ -233,6 +233,11 @@ test('semantic patch review explains implementation sync changes', async ({ page
 	await expect(page.getByLabel('XTAL certify controls')).toContainText('--entry toy.sorter.sort_u8_asc');
 	await page.getByRole('button', { name: 'Run xtal.certify' }).click();
 	await expect(page.getByText('Ran xtal.certify')).toBeVisible();
+	await expect(page.getByLabel('Certify evidence board')).toContainText('Certification evidence');
+	await expect(page.getByLabel('Certify evidence board')).toContainText('toy.sorter.sort_u8_asc');
+	await expect(page.getByLabel('Certify evidence board')).toContainText('certificate.json');
+	await expect(page.getByLabel('Certify evidence board')).toContainText('trust.report.json');
+	await expect(page.getByLabel('Certify evidence board')).toContainText('proof_coverage');
 	await expect(page.getByLabel('Operation log')).toContainText('--no-prechecks');
 	await expect(page.getByLabel('Operation log')).toContainText('--entry toy.sorter.sort_u8_asc');
 	await page.getByRole('tab', { name: 'Verify' }).click();

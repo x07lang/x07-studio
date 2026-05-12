@@ -14,6 +14,7 @@ import {
 	buildApprovalLedger,
 	buildAutomationPlan,
 	buildCertifyCommandPreview,
+	buildCertEvidenceBoard,
 	buildEvidenceCoverage,
 	buildOnboardingPlan,
 	buildPlatformBridge,
@@ -480,6 +481,67 @@ describe('x07 Studio XTAL web model', () => {
 				allEntries: true
 			})
 		).toBe('x07 xtal certify --no-prechecks --spec-dir spec --all');
+	});
+
+	it('builds certify evidence from xtal certify summary reports', () => {
+		let session = demoSession();
+		session = appendDemoOp(session, 'xtal.certify', 'succeeded', undefined, undefined, {
+			schema_version: 'x07.xtal.certify_summary@0.1.0',
+			project: {
+				root: '.',
+				manifest_path: 'x07.json',
+				manifest_sha256: 'a'.repeat(64),
+				xtal_manifest_path: 'arch/xtal/xtal.json',
+				xtal_manifest_sha256: 'b'.repeat(64),
+				trust_profile_path: 'arch/trust/profiles/verified_core_pure_v1.json',
+				trust_profile_sha256: 'c'.repeat(64),
+				baseline_path: 'target/xtal/cert/baseline.json',
+				baseline_sha256: 'd'.repeat(64)
+			},
+			settings: {
+				out_dir: 'target/xtal/cert',
+				entries: ['toy.sorter.sort_u8_asc'],
+				all_entries: false,
+				run_prechecks: true,
+				review_gates: ['proof_coverage', 'trust_profile']
+			},
+			results: [
+				{
+					entry: 'toy.sorter.sort_u8_asc',
+					out_dir: 'target/xtal/cert/toy/sorter/sort_u8_asc',
+					ok: true,
+					certificate_path: 'target/xtal/cert/toy/sorter/sort_u8_asc/certificate.json',
+					certificate_sha256: 'e'.repeat(64),
+					trust_report_path: 'target/xtal/cert/toy/sorter/sort_u8_asc/trust.report.json',
+					trust_report_sha256: 'f'.repeat(64),
+					review_diff_json_path: 'target/xtal/cert/toy/sorter/sort_u8_asc/review.diff.json',
+					review_diff_txt_path: 'target/xtal/cert/toy/sorter/sort_u8_asc/review.diff.txt'
+				}
+			],
+			ok: true,
+			generated_at: '2026-05-12T00:00:00Z'
+		});
+
+		const op = session.op_log[session.op_log.length - 1];
+		const board = buildCertEvidenceBoard(op, session, projectTemplates[0], {
+			specDir: 'spec',
+			entry: 'toy.sorter.sort_u8_asc'
+		});
+
+		expect(board.source).toBe('report');
+		expect(board.outcome).toBe('pass');
+		expect(board.prechecks).toBe('pass');
+		expect(board.reviewGates).toEqual(['proof_coverage', 'trust_profile']);
+		expect(board.projectRefs.find((ref) => ref.label === 'Baseline')?.path).toBe(
+			'target/xtal/cert/baseline.json'
+		);
+		expect(board.entries[0].certificatePath).toBe(
+			'target/xtal/cert/toy/sorter/sort_u8_asc/certificate.json'
+		);
+		expect(board.entries[0].trustReportPath).toBe(
+			'target/xtal/cert/toy/sorter/sort_u8_asc/trust.report.json'
+		);
+		expect(board.summary.map((item) => item.label)).toContain('Review gates');
 	});
 
 	it('builds verify evidence from xtal verify summary reports', () => {

@@ -345,6 +345,44 @@ export interface VerifyEvidenceBoard {
 	verifyDir: string;
 }
 
+export type CertEvidenceState = VerifyEvidenceState;
+
+export interface CertEvidenceProjectRef {
+	label: string;
+	path: string;
+	sha256: string;
+	state: CertEvidenceState;
+}
+
+export interface CertEvidenceEntry {
+	entry: string;
+	state: CertEvidenceState;
+	outDir: string;
+	certificatePath: string;
+	certificateSha256: string;
+	trustReportPath: string;
+	trustReportSha256: string;
+	reviewDiffJsonPath: string;
+	reviewDiffTxtPath: string;
+	digestStatus: CertEvidenceState;
+}
+
+export interface CertEvidenceBoard {
+	source: 'report' | 'operation' | 'pending';
+	outcome: CertEvidenceState;
+	scope: string;
+	specDir: string;
+	outDir: string;
+	prechecks: CertEvidenceState;
+	generatedAt: string;
+	reviewGates: string[];
+	entriesRequested: string[];
+	projectRefs: CertEvidenceProjectRef[];
+	summary: Array<{ label: string; value: string; detail: string }>;
+	entries: CertEvidenceEntry[];
+	artifacts: VerifyEvidenceArtifact[];
+}
+
 export type VerifyProofPolicy = 'balanced' | 'strict';
 
 export interface VerifyRunOptions {
@@ -1690,6 +1728,18 @@ export function buildCertifyCommandPreview(options?: Partial<CertifyRunOptions>)
 	return args.join(' ');
 }
 
+export function buildCertEvidenceBoard(
+	op: OpRecord | null | undefined,
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate,
+	options?: Partial<CertifyRunOptions>
+): CertEvidenceBoard {
+	const normalized = normalizeCertifyRunOptions(options);
+	const report = certSummaryFromValue(op?.report_json);
+	if (report) return certEvidenceBoardFromReport(report, normalized);
+	return certEvidenceBoardFromOperation(op ?? null, session, template, normalized);
+}
+
 export function buildRepairCommandPreview(options?: Partial<RepairRunOptions>): string {
 	const normalized = normalizeRepairRunOptions(options);
 	const args = ['x07', 'xtal', 'repair'];
@@ -1716,12 +1766,279 @@ export function buildVerifyEvidenceBoard(
 	return verifyEvidenceBoardFromOperation(op ?? null, session, template, options);
 }
 
+function certSummaryFromValue(value: unknown): Record<string, unknown> | null {
+	const report = asPlainRecord(value);
+	if (!report) return null;
+	if (report.schema_version === 'x07.xtal.certify_summary@0.1.0') return report;
+	const stdoutJson = asPlainRecord(report.stdout_json);
+	if (stdoutJson?.schema_version === 'x07.xtal.certify_summary@0.1.0') return stdoutJson;
+	const result = asPlainRecord(report.result);
+	const resultStdoutJson = asPlainRecord(result?.stdout_json);
+	if (resultStdoutJson?.schema_version === 'x07.xtal.certify_summary@0.1.0') {
+		return resultStdoutJson;
+	}
+	const artifactPreview = asPlainRecord(report.artifact_preview);
+	const previewJson = asPlainRecord(artifactPreview?.json);
+	return previewJson?.schema_version === 'x07.xtal.certify_summary@0.1.0' ? previewJson : null;
+}
+
+function certEvidenceBoardFromReport(
+	report: Record<string, unknown>,
+	options: CertifyRunOptions
+): CertEvidenceBoard {
+	const project = asPlainRecord(report.project);
+	const settings = asPlainRecord(report.settings);
+	const resultRows = Array.isArray(report.results)
+		? report.results
+				.map((entry) => certEntryFromReport(entry))
+				.filter((entry): entry is CertEvidenceEntry => Boolean(entry))
+		: [];
+	const outDir = stringValue(settings?.out_dir, 'target/xtal/cert');
+	const entriesRequested = stringList(settings?.entries);
+	const reviewGates = stringList(settings?.review_gates);
+	const allEntries = settings?.all_entries === true;
+	const runPrechecks = settings?.run_prechecks !== false;
+	const outcome = booleanOutcomeState(report.ok);
+	const totalEntries = resultRows.length;
+	const passedEntries = resultRows.filter((entry) => entry.state === 'pass').length;
+	const failedEntries = resultRows.filter((entry) => entry.state === 'fail').length;
+	const scope = certScopeLabel(allEntries, entriesRequested);
+	const generatedAt = stringValue(report.generated_at, 'not generated');
+	const fallbackEntry = entriesRequested[0] ?? scope;
+
+	return {
+		source: 'report',
+		outcome,
+		scope,
+		specDir: options.specDir,
+		outDir,
+		prechecks: runPrechecks ? outcome : 'skip',
+		generatedAt,
+		reviewGates,
+		entriesRequested,
+		projectRefs: [
+			certProjectRef('Manifest', project?.manifest_path, project?.manifest_sha256, 'x07.json'),
+			certProjectRef(
+				'XTAL manifest',
+				project?.xtal_manifest_path,
+				project?.xtal_manifest_sha256,
+				'arch/xtal/xtal.json'
+			),
+			certProjectRef(
+				'Trust profile',
+				project?.trust_profile_path,
+				project?.trust_profile_sha256,
+				'arch/trust/profile.json'
+			),
+			certProjectRef('Baseline', project?.baseline_path, project?.baseline_sha256, 'no baseline')
+		],
+		summary: [
+			{
+				label: 'Prechecks',
+				value: runPrechecks ? 'run' : 'skipped',
+				detail: runPrechecks ? 'x07 xtal dev prechecks' : '--no-prechecks'
+			},
+			{
+				label: 'Review gates',
+				value: String(reviewGates.length),
+				detail: reviewGates.join(', ') || 'no review gates reported'
+			},
+			{
+				label: 'Entries',
+				value: `${passedEntries}/${totalEntries || entriesRequested.length || 1} passed`,
+				detail: failedEntries ? `${failedEntries} failed` : entriesRequested.join(', ') || scope
+			},
+			{
+				label: 'Bundle',
+				value: outcome === 'pass' ? 'ready' : outcome,
+				detail: `${outDir}/bundle.json`
+			}
+		],
+		entries: resultRows.length ? resultRows : [pendingCertEntry(fallbackEntry, outDir, outcome)],
+		artifacts: [
+			{
+				label: 'Certify summary',
+				kind: 'x07.xtal.certify_summary',
+				path: `${outDir}/summary.json`,
+				schemaVersion: 'x07.xtal.certify_summary@0.1.0'
+			},
+			{
+				label: 'Certify bundle',
+				kind: 'x07.xtal.cert_bundle',
+				path: `${outDir}/bundle.json`,
+				schemaVersion: 'x07.xtal.cert_bundle@0.1.0'
+			}
+		]
+	};
+}
+
+function certEvidenceBoardFromOperation(
+	op: OpRecord | null,
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate,
+	options: CertifyRunOptions
+): CertEvidenceBoard {
+	const status = op ? opStatusToVerifyState(op.status) : 'pending';
+	const outDir = 'target/xtal/cert';
+	const entry = options.allEntries ? 'all entries' : options.entry || defaultCertEntry(session, template);
+	const scope = options.allEntries ? 'all entries' : entry;
+	const artifacts = op?.artifacts.length
+		? op.artifacts.map((path) => certArtifactFromPath(path))
+		: [certArtifactFromPath(`${outDir}/summary.json`), certArtifactFromPath(`${outDir}/bundle.json`)];
+
+	return {
+		source: op ? 'operation' : 'pending',
+		outcome: status,
+		scope,
+		specDir: options.specDir,
+		outDir,
+		prechecks: options.noPrechecks ? 'skip' : status,
+		generatedAt: op?.finished_at ?? 'not generated',
+		reviewGates: [],
+		entriesRequested: [scope],
+		projectRefs: [
+			certProjectRef('Manifest', 'x07.json', '', 'x07.json'),
+			certProjectRef('XTAL manifest', 'arch/xtal/xtal.json', '', 'arch/xtal/xtal.json'),
+			certProjectRef('Trust profile', 'arch/trust/profile.json', '', 'arch/trust/profile.json'),
+			certProjectRef('Baseline', '', '', 'no baseline')
+		],
+		summary: [
+			{
+				label: 'Prechecks',
+				value: options.noPrechecks ? 'skipped' : status,
+				detail: options.noPrechecks ? '--no-prechecks' : 'x07 xtal dev prechecks'
+			},
+			{ label: 'Review gates', value: 'pending', detail: 'reported by certify summary' },
+			{ label: 'Entries', value: scope, detail: options.allEntries ? '--all' : '--entry' },
+			{ label: 'Bundle', value: status, detail: `${outDir}/bundle.json` }
+		],
+		entries: [pendingCertEntry(entry, outDir, status)],
+		artifacts
+	};
+}
+
 function normalizePositiveIntegerText(value: string | number | undefined): string {
 	const trimmed = value === undefined ? '' : String(value).trim();
 	if (!trimmed) return '';
 	const parsed = Number.parseInt(trimmed, 10);
 	if (!Number.isFinite(parsed) || parsed <= 0) return '';
 	return String(parsed);
+}
+
+function certEntryFromReport(value: unknown): CertEvidenceEntry | null {
+	const entry = asPlainRecord(value);
+	if (!entry) return null;
+	const entryName = stringValue(entry.entry, 'entry');
+	const outDir = stringValue(entry.out_dir, `target/xtal/cert/${entryPathSegment(entryName)}`);
+	const certificatePath = stringValue(entry.certificate_path, `${outDir}/certificate.json`);
+	const trustReportPath = stringValue(entry.trust_report_path, `${outDir}/trust.report.json`);
+	const certificateSha256 = stringValue(entry.certificate_sha256, '');
+	const trustReportSha256 = stringValue(entry.trust_report_sha256, '');
+	const state = booleanOutcomeState(entry.ok);
+	return {
+		entry: entryName,
+		state,
+		outDir,
+		certificatePath,
+		certificateSha256,
+		trustReportPath,
+		trustReportSha256,
+		reviewDiffJsonPath: stringValue(entry.review_diff_json_path, `${outDir}/review.diff.json`),
+		reviewDiffTxtPath: stringValue(entry.review_diff_txt_path, `${outDir}/review.diff.txt`),
+		digestStatus: certificateSha256 && trustReportSha256 ? 'pass' : state === 'fail' ? 'fail' : 'warn'
+	};
+}
+
+function pendingCertEntry(entry: string, outDir: string, state: CertEvidenceState): CertEvidenceEntry {
+	const localPath = entryPathSegment(entry);
+	const entryOutDir = `${outDir}/${localPath}`;
+	return {
+		entry,
+		state,
+		outDir: entryOutDir,
+		certificatePath: `${entryOutDir}/certificate.json`,
+		certificateSha256: '',
+		trustReportPath: `${entryOutDir}/trust.report.json`,
+		trustReportSha256: '',
+		reviewDiffJsonPath: `${entryOutDir}/review.diff.json`,
+		reviewDiffTxtPath: `${entryOutDir}/review.diff.txt`,
+		digestStatus: state === 'pass' ? 'warn' : state
+	};
+}
+
+function certProjectRef(
+	label: string,
+	path: unknown,
+	sha256: unknown,
+	fallbackPath: string
+): CertEvidenceProjectRef {
+	const pathText = stringValue(path, fallbackPath);
+	const shaText = stringValue(sha256, label === 'Baseline' && !pathText ? 'not configured' : '');
+	return {
+		label,
+		path: pathText,
+		sha256: shaText || (label === 'Baseline' && pathText === 'no baseline' ? 'not configured' : 'missing digest'),
+		state: digestEvidenceState(path, sha256)
+	};
+}
+
+function certArtifactFromPath(path: string): VerifyEvidenceArtifact {
+	if (path.endsWith('bundle.json')) {
+		return {
+			label: 'Certify bundle',
+			kind: 'x07.xtal.cert_bundle',
+			path,
+			schemaVersion: 'x07.xtal.cert_bundle@0.1.0'
+		};
+	}
+	if (path.endsWith('summary.json')) {
+		return {
+			label: 'Certify summary',
+			kind: 'x07.xtal.certify_summary',
+			path,
+			schemaVersion: 'x07.xtal.certify_summary@0.1.0'
+		};
+	}
+	return { label: 'Certify artifact', kind: 'operation_artifact', path, schemaVersion: '' };
+}
+
+function certScopeLabel(allEntries: boolean, entries: string[]): string {
+	if (allEntries) return 'all entries';
+	if (entries.length) return entries.join(', ');
+	return 'manifest entry selection';
+}
+
+function defaultCertEntry(
+	session: SessionSnapshot | null | undefined,
+	template: ProjectTemplate
+): string {
+	const target = session?.intent?.targets[0];
+	if (target?.entry) return `${target.module_id}.${target.entry}`;
+	if (target?.module_id) return `${target.module_id}.run_v1`;
+	return template.id;
+}
+
+function stringList(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function entryPathSegment(entry: string): string {
+	return entry.replaceAll('.', '/').replaceAll(' ', '_');
+}
+
+function booleanOutcomeState(value: unknown): CertEvidenceState {
+	if (value === true) return 'pass';
+	if (value === false) return 'fail';
+	return 'pending';
+}
+
+function digestEvidenceState(path: unknown, sha256: unknown): CertEvidenceState {
+	const hasPath = typeof path === 'string' && path.trim().length > 0;
+	const hasSha = typeof sha256 === 'string' && sha256.trim().length > 0;
+	if (!hasPath && !hasSha) return 'skip';
+	if (hasPath && hasSha) return 'pass';
+	return 'warn';
 }
 
 function verifySummaryFromValue(value: unknown): Record<string, unknown> | null {

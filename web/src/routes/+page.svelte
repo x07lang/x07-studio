@@ -16,6 +16,7 @@
 		buildApprovalLedger,
 		buildAutomationPlan,
 		buildCertifyCommandPreview,
+		buildCertEvidenceBoard,
 		buildEvidenceCoverage,
 		buildOnboardingPlan,
 		buildPlatformBridge,
@@ -352,6 +353,12 @@
 		selected,
 		selectedProjectTemplate,
 		verifyRunOptions
+	);
+	$: certEvidenceBoard = buildCertEvidenceBoard(
+		latestCertifyOp,
+		selected,
+		selectedProjectTemplate,
+		certifyRunOptions
 	);
 	$: proofCacheLedger = buildProofCacheLedger(
 		selected,
@@ -2664,6 +2671,74 @@
 				<div class="repair-command-preview">
 					<small>{certifyGateLabel}</small>
 					<code>{certifyCommandPreview}</code>
+				</div>
+			</div>
+			<div class="cert-evidence-board" aria-label="Certify evidence board">
+				<div class="cert-evidence-head">
+					<div>
+						<span>Certification evidence</span>
+						<strong>{certEvidenceBoard.outcome}</strong>
+					</div>
+					<code>{certEvidenceBoard.scope} / {certEvidenceBoard.specDir} / {certEvidenceBoard.outDir}</code>
+					<small>{certEvidenceBoard.generatedAt}</small>
+				</div>
+				<div class="cert-evidence-summary">
+					{#each certEvidenceBoard.summary as item}
+						<div>
+							<span>{item.label}</span>
+							<strong>{item.value}</strong>
+							<small>{item.detail}</small>
+						</div>
+					{/each}
+				</div>
+				<div class="cert-project-grid" aria-label="Certification project inputs">
+					{#each certEvidenceBoard.projectRefs as ref}
+						<div class="cert-project-ref">
+							<div>
+								<span>{ref.label}</span>
+								<code>{ref.path}</code>
+								<small>{ref.sha256}</small>
+							</div>
+							<div class={`verify-pill ${ref.state}`}>{ref.state}</div>
+						</div>
+					{/each}
+				</div>
+				<div class="cert-entry-grid">
+					{#each certEvidenceBoard.entries as entry}
+						<div class="cert-entry-row" aria-label={`Certification evidence row ${entry.entry}`}>
+							<div class="cert-entry-main">
+								<div>
+									<span>Entry</span>
+									<strong>{entry.entry}</strong>
+									<code>{entry.outDir}</code>
+								</div>
+								<div class={`verify-pill ${entry.state}`}>cert {entry.state}</div>
+								<div class={`verify-pill ${entry.digestStatus}`}>digest {entry.digestStatus}</div>
+							</div>
+							<div class="cert-entry-paths">
+								<div>
+									<span>Certificate</span>
+									<code>{entry.certificatePath}</code>
+									<small>{entry.certificateSha256 || 'digest pending'}</small>
+								</div>
+								<div>
+									<span>Trust report</span>
+									<code>{entry.trustReportPath}</code>
+									<small>{entry.trustReportSha256 || 'digest pending'}</small>
+								</div>
+							</div>
+							<small>{entry.reviewDiffJsonPath} / {entry.reviewDiffTxtPath}</small>
+						</div>
+					{/each}
+				</div>
+				<div class="cert-artifact-strip" aria-label="Certify artifacts">
+					{#each certEvidenceBoard.artifacts as artifact}
+						<div>
+							<span>{artifact.label}</span>
+							<code>{artifact.path}</code>
+							<small>{artifact.schemaVersion || artifact.kind}</small>
+						</div>
+					{/each}
 				</div>
 			</div>
 			<div class="button-row">
