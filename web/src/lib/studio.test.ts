@@ -399,6 +399,17 @@ describe('x07 Studio XTAL web model', () => {
 		expect(coverage.find((item) => item.id === 'trust-platform')?.artifact).toBe(
 			'dist/showcase_fullstack/pack.atlas_release/app.pack.json'
 		);
+		expect(coverage.find((item) => item.id === 'agent-visible')?.state).toBe('active');
+		expect(coverage.find((item) => item.id === 'agent-visible')?.evidence).toBe(
+			'waiting for Codex/Claude handoff or supervised run evidence'
+		);
+
+		session = appendDemoOp(session, 'agent.supervise.openai-codex', 'succeeded');
+		coverage = buildEvidenceCoverage(session, projectTemplates[5], 'approved');
+		expect(coverage.find((item) => item.id === 'agent-visible')?.state).toBe('done');
+		expect(coverage.find((item) => item.id === 'agent-visible')?.evidence).toBe(
+			'agent.supervise.openai-codex'
+		);
 	});
 
 	it('maps x07 platform bridge gates from Atlas operations', () => {

@@ -328,6 +328,9 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Provider intent polish')).toContainText('Deterministic polish only');
 	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('Initial plan or spec');
 	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('Verification evidence');
+	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText(
+		'waiting for Codex/Claude handoff or supervised run evidence'
+	);
 	await expect(page.getByLabel('x07 platform bridge')).toContainText('Platform optional');
 	await page.getByLabel('Provider intent polish').getByRole('checkbox').check();
 	await expect(page.getByLabel('Provider profile')).toBeEnabled();
@@ -475,6 +478,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('Human checkpoint before execute');
 	await page.getByRole('button', { name: 'Plan Claude Code Run' }).click();
 	await expect(page.locator('footer').getByText('Claude Code supervised launch plan recorded')).toBeVisible();
+	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('agent.supervise.claude-code');
 	await page.getByRole('button', { name: 'Run Claude Code Command' }).click();
 	await expect(page.locator('footer').getByText('Claude Code approval required before supervised command')).toBeVisible();
 	await expect(page.getByLabel('Agent approval ledger')).toContainText('agent.approval.claude-code');

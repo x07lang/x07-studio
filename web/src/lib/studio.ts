@@ -1690,7 +1690,13 @@ export function buildEvidenceCoverage(
 		'wasm.app.verify.atlas_release',
 		'wasm.app.test.'
 	]);
-	const agentOp = latestMatchingOp(ops, ['agent.handoff.', 'agent.run.', 'agent.event.', 'agent.approval.']);
+	const agentOp = latestMatchingOp(ops, [
+		'agent.handoff.',
+		'agent.supervise.',
+		'agent.run.',
+		'agent.event.',
+		'agent.approval.'
+	]);
 	const trustOp = latestMatchingOp(ops, [
 		'xtal.certify',
 		'wasm.provenance.verify',
@@ -1698,7 +1704,6 @@ export function buildEvidenceCoverage(
 		'lp.deploy.status.local',
 		'lp.deploy.query.local'
 	]);
-	const visibleOp = ops.at(-1) ?? null;
 	const specArtifact = template.artifacts[0] ?? 'spec/';
 	const verifyArtifact =
 		template.artifacts.find((artifact) => artifact.includes('verify') || artifact.includes('pack')) ??
@@ -1777,10 +1782,10 @@ export function buildEvidenceCoverage(
 			id: 'agent-visible',
 			label: 'Visible agent work',
 			requirement: 'Codex, Claude Code, and x07 command activity stays inspectable in the worklog.',
-			evidence: agentOp?.op ?? visibleOp?.op ?? (session ? 'worklog ready for operations' : 'no session selected'),
-			artifact: agentOp?.artifacts[0] ?? visibleOp?.artifacts[0] ?? '.x07/studio/handoffs/',
-			state: agentOp || visibleOp ? 'done' : session ? 'active' : 'blocked',
-			op: agentOp ?? visibleOp
+			evidence: agentOp?.op ?? (session ? 'waiting for Codex/Claude handoff or supervised run evidence' : 'no session selected'),
+			artifact: agentOp?.artifacts[0] ?? '.x07/studio/handoffs/',
+			state: agentOp ? opStatusToCoverageState(agentOp.status) : session ? 'active' : 'blocked',
+			op: agentOp
 		}),
 		coverageItem({
 			id: 'trust-platform',

@@ -773,3 +773,13 @@ This document records friction found while implementing the Studio web surface.
    end user. Studio now keeps a selected-agent approval ledger in the Agents
    room that shows the latest checkpoint operation, status, notes, and command
    after it is resolved.
+
+72. The audit must not count generic operations as agent work.
+
+   The prompt-to-artifact audit marked `Visible agent work` as covered by the
+   latest operation even when that operation was only intent polish, scaffold, or
+   verify evidence. That overstates the Codex/Claude integration for non-expert
+   users who depend on the audit to know what is still missing. Studio now keeps
+   the agent-work row active until it sees a real `agent.handoff.*`,
+   `agent.supervise.*`, `agent.run.*`, `agent.event.*`, or
+   `agent.approval.*` operation.

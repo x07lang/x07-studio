@@ -117,6 +117,7 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await expect(page.getByLabel('Agent handoff contract')).toContainText('x07.studio.agent_event@0.1.0');
 	await page.getByRole('button', { name: 'Plan OpenAI Codex Run' }).click();
 	await expect(page.locator('footer').getByText('OpenAI Codex supervised launch plan recorded')).toBeVisible();
+	await expect(page.getByLabel('Prompt-to-artifact audit')).toContainText('agent.supervise.openai-codex');
 	await page.getByRole('button', { name: 'Run OpenAI Codex Command' }).click();
 	await expect(page.locator('footer').getByText('OpenAI Codex approval required before supervised command')).toBeVisible();
 	await expect(page.getByLabel('Agent approval ledger')).toContainText('agent.approval.openai-codex');

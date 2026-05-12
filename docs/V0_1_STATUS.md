@@ -9,6 +9,7 @@
 - semantic `agent.event.*` records derived from supervised-agent artifacts, diagnostics, writes, and approval/policy requests
 - browser trust review queue derived from artifacts, diagnostics, writes, patchsets, verify evidence, and certify evidence
 - prompt-to-artifact audit that maps user input, approval, scaffold, specs/tests, implementation, verification, visible agent work, and trust/platform evidence to concrete operations and artifacts
+- prompt-to-artifact agent-work row stays open until a real Codex/Claude handoff, supervision, run, event, or approval operation exists
 - browser proof-cache readiness ledger that previews cache keys and names the spec, implementation, proof-policy, verify artifact, and certification dependencies
 - browser XTAL verify controls for proof policy, OS-world override, and proof bounds that render into validated `x07 xtal verify` flags
 - browser Verify evidence board that projects `x07.xtal.verify_summary@0.1.0` into precheck, coverage, proof, generated-test, diagnostic, entry, and artifact rows
