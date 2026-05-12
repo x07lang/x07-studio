@@ -173,6 +173,21 @@ test('voice transcript capture appends a spoken witness before spec approval', a
 	await expect(page.getByLabel('Spec approval preview')).toContainText('workflow.graph');
 });
 
+test('agent handoff actions stay visible in focused mode', async ({ page }) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto('/');
+
+	await page.getByLabel('Project title').fill('Focused agent handoff');
+	await page.getByRole('button', { name: 'New Session', exact: true }).click();
+	await page.getByRole('button', { name: 'Polish Intent' }).click();
+	await expect(page.getByText('Awaiting Approval', { exact: true })).toBeVisible();
+	await page.getByRole('tab', { name: 'Agents' }).click();
+	await page.getByRole('button', { name: 'Generate OpenAI Codex Handoff' }).click();
+	await expect(page.getByLabel('Configured coding agents')).toContainText('Plan OpenAI Codex Run');
+	await page.getByRole('button', { name: 'Plan OpenAI Codex Run' }).click();
+	await expect(page.getByLabel('Agent execution timeline')).toContainText('Launch plan');
+});
+
 test('semantic patch review explains implementation sync changes', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto('/');

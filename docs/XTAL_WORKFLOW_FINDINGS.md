@@ -687,3 +687,15 @@ This document records friction found while implementing the Studio web surface.
    certify operation, so the operation inspector shows the bundle outcome,
    spec/output directories, entries, file counts, covered bytes, and digest
    inventory instead of forcing reviewers to leave the canonical command stream.
+
+64. Coding-agent process evidence needs one selected-agent timeline.
+
+   The Agents room already exposed handoff contracts, approval queues, worklog
+   filters, and write-audit inspector rows, but those surfaces were scattered
+   when a reviewer asked what the selected Codex or Claude process had actually
+   done. Studio now derives an agent flight recorder from the operation log:
+   handoff, supervised launch plan, human checkpoint, supervised run, emitted
+   `agent.event.*` records, and write-root audit evidence appear together as a
+   clickable timeline for the active coding agent. The same pass fixed a
+   focused-mode room reset where generating a handoff refreshed the session
+   snapshot and hid the remaining agent action buttons.

@@ -2309,6 +2309,104 @@ textarea {
 	overflow-wrap: anywhere;
 }
 
+.agent-execution-timeline {
+	display: grid;
+	gap: 9px;
+	margin-top: 10px;
+	border: 1px solid rgba(114, 228, 180, 0.2);
+	border-radius: var(--radius);
+	background: rgba(114, 228, 180, 0.04);
+	padding: 10px;
+	min-width: 0;
+}
+
+.agent-timeline-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.agent-timeline-head div {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
+.agent-timeline-head span,
+.agent-timeline-step span {
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 800;
+	text-transform: uppercase;
+	letter-spacing: 0;
+}
+
+.agent-timeline-head em,
+.agent-timeline-step em {
+	color: var(--muted);
+	font-style: normal;
+	font-size: 11px;
+}
+
+.agent-timeline-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.agent-timeline-step {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	min-height: 118px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.14);
+	padding: 8px;
+	color: var(--text);
+	text-align: left;
+}
+
+.agent-timeline-step:disabled {
+	cursor: default;
+	opacity: 0.84;
+}
+
+.agent-timeline-step.done {
+	border-color: rgba(114, 228, 180, 0.32);
+}
+
+.agent-timeline-step.active {
+	border-color: rgba(255, 195, 91, 0.35);
+}
+
+.agent-timeline-step.failed {
+	border-color: rgba(243, 111, 141, 0.38);
+	background: rgba(243, 111, 141, 0.055);
+}
+
+.agent-timeline-step strong,
+.agent-timeline-step small,
+.agent-timeline-step code,
+.agent-timeline-step em {
+	overflow-wrap: anywhere;
+}
+
+.agent-timeline-step strong {
+	font-size: 12px;
+}
+
+.agent-timeline-step small {
+	color: var(--text);
+	font-size: 11px;
+}
+
+.agent-timeline-step code {
+	color: var(--cyan);
+	font-size: 11px;
+}
+
 .handoff-contract {
 	display: grid;
 	gap: 9px;
@@ -3854,6 +3952,7 @@ textarea {
 	.op-inspector dl,
 	.artifact-list,
 	.handoff-contract-grid,
+	.agent-timeline-grid,
 	.patch-diff,
 	.semantic-pair,
 	.speech-config,

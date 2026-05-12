@@ -10,6 +10,7 @@ import {
 import {
 	appendDemoOp,
 	agentReadiness,
+	buildAgentExecutionTimeline,
 	buildAgentHandoffReview,
 	buildApprovalLedger,
 	buildAutomationPlan,
@@ -964,6 +965,40 @@ describe('x07 Studio XTAL web model', () => {
 		expect(session.op_log[0].status).toBe('pending');
 		expect(session.op_log[0].exit_code).toBeNull();
 		expect(session.op_log[0].command).toEqual(['approve-agent', 'openai-codex']);
+	});
+
+	it('builds an agent execution timeline from handoff, approval, run, events, and write audit evidence', () => {
+		let session = appendDemoOp(demoSession(), 'agent.handoff.openai-codex', 'succeeded');
+		session = appendDemoOp(session, 'agent.supervise.openai-codex', 'succeeded');
+		session = appendDemoOp(session, 'agent.approval.openai-codex', 'succeeded');
+		session = appendDemoOp(session, 'agent.run.openai-codex', 'succeeded', undefined, undefined, {
+			write_audit: {
+				schema_version: 'x07.studio.agent_write_audit@0.1.0',
+				allowed_roots: ['src/'],
+				created: ['src/main.x07.json'],
+				modified: [],
+				deleted: [],
+				violations: [],
+				truncated: false
+			}
+		});
+		session = appendDemoOp(session, 'agent.event.openai-codex.artifact', 'succeeded', [
+			'observe-agent',
+			'openai-codex'
+		]);
+
+		const timeline = buildAgentExecutionTimeline(
+			session,
+			'openai-codex',
+			defaultAgentProfiles.find((agent) => agent.id === 'openai-codex')
+		);
+
+		expect(timeline.find((step) => step.id === 'handoff')?.state).toBe('done');
+		expect(timeline.find((step) => step.id === 'approval')?.state).toBe('done');
+		expect(timeline.find((step) => step.id === 'events')?.evidence).toBe('1 events');
+		expect(timeline.find((step) => step.id === 'write-audit')?.detail).toBe(
+			'No out-of-contract writes'
+		);
 	});
 
 	it('consumes agent approval checkpoints after one supervised run', async () => {

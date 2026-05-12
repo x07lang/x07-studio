@@ -12,6 +12,7 @@
 	import {
 		agentLanes,
 		agentReadiness,
+		buildAgentExecutionTimeline,
 		buildAgentHandoffReview,
 		buildApprovalLedger,
 		buildAutomationPlan,
@@ -462,6 +463,7 @@
 	$: activeAgentProfile = agentProfiles.find((profile) => profile.id === selectedAgentId);
 	$: visibleAgent =
 		activeAgentProfile?.label ?? (selectedAgentId === 'claude-code' ? 'Claude Code' : 'OpenAI Codex');
+	$: agentExecutionTimeline = buildAgentExecutionTimeline(selected, selectedAgentId, activeAgentProfile);
 	$: providerSummary = api.isDemoMode ? 'demo projection' : 'Loom daemon';
 	$: defaultProviderProfileId = health.defaults.provider_profile_id || 'ollama-local';
 	$: if (!providerProfileId && defaultProviderProfileId) providerProfileId = defaultProviderProfileId;
@@ -1201,9 +1203,10 @@
 		selectedRoom = snapshot.room;
 	}
 
-	async function refreshSession(sessionId: string) {
+	async function refreshSession(sessionId: string, keepRoom?: Room) {
 		const snapshot = await api.getSession(sessionId);
 		await replaceSession(snapshot);
+		if (keepRoom) selectedRoom = keepRoom;
 	}
 
 	async function polishIntent() {
@@ -1286,6 +1289,7 @@
 		try {
 			const response = await api.createAgentHandoff(selected, agentId);
 			await replaceSession(response.session);
+			selectedRoom = 'providers';
 			latestAgentHandoff = response.handoff;
 			handoffStatus = `${response.handoff.agent_label} handoff saved to ${response.handoff.prompt_path}`;
 			statusLine = handoffStatus;
@@ -1310,11 +1314,12 @@
 				handoffStatus = `${agentLabel} supervised command running`;
 				statusLine = handoffStatus;
 				poll = setInterval(() => {
-					void refreshSession(sessionId);
+					void refreshSession(sessionId, 'providers');
 				}, 500);
 			}
 			const response = await pending;
 			await replaceSession(response.session);
+			selectedRoom = 'providers';
 			latestAgentHandoff = response.handoff;
 			const label = response.handoff.agent_label;
 			if (response.op.op.startsWith('agent.approval.') && response.op.status === 'pending') {
@@ -1346,6 +1351,7 @@
 				'Studio human checkpoint'
 			);
 			await replaceSession(response.session);
+			selectedRoom = 'providers';
 			handoffStatus =
 				decision === 'approve' ? 'Agent checkpoint approved' : 'Agent checkpoint rejected';
 			statusLine = handoffStatus;
@@ -2264,6 +2270,31 @@
 					{/each}
 				</div>
 				<p class="handoff-status">{handoffStatus}</p>
+				<div class="agent-execution-timeline" aria-label="Agent execution timeline">
+					<div class="agent-timeline-head">
+						<div>
+							<span>Agent flight recorder</span>
+							<strong>{visibleAgent}</strong>
+						</div>
+						<em>{agentExecutionTimeline.filter((step) => step.state === 'done').length}/{agentExecutionTimeline.length} done</em>
+					</div>
+					<div class="agent-timeline-grid">
+						{#each agentExecutionTimeline as step}
+							<button
+								type="button"
+								class={`agent-timeline-step ${step.state}`}
+								disabled={!step.opId}
+								on:click={() => step.opId && (selectedOpId = step.opId)}
+							>
+								<span>{step.label}</span>
+								<strong>{step.state}</strong>
+								<small>{step.evidence}</small>
+								<code>{step.artifact}</code>
+								<em>{step.detail}</em>
+							</button>
+						{/each}
+					</div>
+				</div>
 				<div class="handoff-contract" aria-label="Agent handoff contract">
 					<div class="handoff-contract-head">
 						<div>

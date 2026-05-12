@@ -496,6 +496,18 @@ export interface AgentHandoffReview {
 	opId?: string | null;
 }
 
+export type AgentExecutionStepState = 'done' | 'active' | 'blocked' | 'failed';
+
+export interface AgentExecutionStep {
+	id: string;
+	label: string;
+	state: AgentExecutionStepState;
+	evidence: string;
+	detail: string;
+	artifact: string;
+	opId?: string | null;
+}
+
 export interface AgentHandoffResponse {
 	handoff: AgentHandoff;
 	session: SessionSnapshot;
@@ -1270,10 +1282,143 @@ export function buildAgentHandoffReview(
 	};
 }
 
+export function buildAgentExecutionTimeline(
+	session: SessionSnapshot | null | undefined,
+	agentId: string,
+	agent?: AgentProfile | null
+): AgentExecutionStep[] {
+	const ops = session?.op_log ?? [];
+	const handoff = latestExactOp(ops, `agent.handoff.${agentId}`);
+	const plan = latestExactOp(ops, `agent.supervise.${agentId}`);
+	const approval = latestExactOp(ops, `agent.approval.${agentId}`);
+	const run = latestExactOp(ops, `agent.run.${agentId}`);
+	const events = ops.filter((op) => op.op.startsWith(`agent.event.${agentId}.`));
+	const eventKinds = agentEventKindCounts(events);
+	const writeAudit = agentWriteAuditSummary(run);
+	const approvalRequired = agent?.approval_required ?? true;
+	const promptArtifact = handoff?.artifacts[0] ?? plan?.artifacts[0] ?? run?.artifacts[0] ?? '.x07/studio/handoffs/';
+
+	return [
+		{
+			id: 'handoff',
+			label: 'Handoff',
+			state: handoff ? opStatusToAgentStepState(handoff.status) : session ? 'active' : 'blocked',
+			evidence: handoff?.op ?? 'generate a session-contract handoff',
+			detail: handoff?.notes ?? 'Compiles approved intent, allowed verbs, MCP tools, and write roots.',
+			artifact: promptArtifact,
+			opId: handoff?.id ?? null
+		},
+		{
+			id: 'plan',
+			label: 'Launch plan',
+			state: plan ? opStatusToAgentStepState(plan.status) : handoff ? 'active' : 'blocked',
+			evidence: plan?.op ?? (handoff ? 'ready to record supervised launch plan' : 'blocked before handoff'),
+			detail: plan?.command.join(' ') ?? 'Dry-run the supervised command before execution.',
+			artifact: plan?.artifacts[0] ?? promptArtifact,
+			opId: plan?.id ?? null
+		},
+		{
+			id: 'approval',
+			label: 'Human checkpoint',
+			state: approval
+				? opStatusToAgentStepState(approval.status)
+				: approvalRequired
+					? plan || handoff
+						? 'active'
+						: 'blocked'
+					: 'done',
+			evidence: approval?.op ?? (approvalRequired ? 'approval required before execute' : 'profile allows autonomous execute'),
+			detail: approval?.notes ?? 'Humans must approve policy, spec, architecture, world, budget, trust, or release widening.',
+			artifact: approval?.artifacts[0] ?? promptArtifact,
+			opId: approval?.id ?? null
+		},
+		{
+			id: 'run',
+			label: 'Supervised run',
+			state: run
+				? opStatusToAgentStepState(run.status)
+				: approval?.status === 'succeeded' || (!approvalRequired && plan)
+					? 'active'
+					: 'blocked',
+			evidence: run?.op ?? 'run waits for approval and command availability',
+			detail: run?.notes ?? run?.command.join(' ') ?? 'Run under Loom supervision with captured stdout/stderr.',
+			artifact: run?.artifacts[0] ?? promptArtifact,
+			opId: run?.id ?? null
+		},
+		{
+			id: 'events',
+			label: 'Agent events',
+			state: events.length ? 'done' : run ? 'active' : 'blocked',
+			evidence: events.length ? `${events.length} events` : 'waiting for agent_event JSONL or classified output',
+			detail: eventKinds || 'Artifacts, diagnostics, writes, and approval requests are promoted into worklog records.',
+			artifact: events.flatMap((op) => op.artifacts).at(0) ?? 'x07.studio.agent_event@0.1.0',
+			opId: events.at(-1)?.id ?? null
+		},
+		{
+			id: 'write-audit',
+			label: 'Write-root audit',
+			state: writeAudit
+				? writeAudit.violations
+					? 'failed'
+					: 'done'
+				: run
+					? 'active'
+					: 'blocked',
+			evidence: writeAudit
+				? `${writeAudit.created} created / ${writeAudit.modified} modified / ${writeAudit.deleted} deleted`
+				: 'audit recorded when supervised execution completes',
+			detail: writeAudit
+				? writeAudit.violations
+					? `${writeAudit.violations} unapproved writes`
+					: 'No out-of-contract writes'
+				: 'Approved write roots are enforced by post-run evidence.',
+			artifact: 'x07.studio.agent_write_audit@0.1.0',
+			opId: run?.id ?? null
+		}
+	];
+}
+
 function latestAgentHandoffOp(ops: OpRecord[], agentId: string): OpRecord | null {
 	const agentNeedles = agentId ? [`agent.handoff.${agentId}`, `agent.supervise.${agentId}`, `agent.run.${agentId}`] : [];
 	const genericNeedles = ['agent.handoff.', 'agent.supervise.', 'agent.run.'];
 	return latestMatchingOp(ops, agentNeedles.length ? agentNeedles : genericNeedles);
+}
+
+function latestExactOp(ops: OpRecord[], opName: string): OpRecord | null {
+	return [...ops].reverse().find((op) => op.op === opName) ?? null;
+}
+
+function opStatusToAgentStepState(status: OperationStatus): AgentExecutionStepState {
+	if (status === 'succeeded') return 'done';
+	if (status === 'failed') return 'failed';
+	if (status === 'running') return 'active';
+	return 'active';
+}
+
+function agentEventKindCounts(events: OpRecord[]): string {
+	const counts = new Map<string, number>();
+	for (const event of events) {
+		const kind = event.op.split('.').at(-1) ?? 'event';
+		counts.set(kind, (counts.get(kind) ?? 0) + 1);
+	}
+	return [...counts.entries()].map(([kind, count]) => `${kind} x${count}`).join(' / ');
+}
+
+function agentWriteAuditSummary(op: OpRecord | null): {
+	created: number;
+	modified: number;
+	deleted: number;
+	violations: number;
+} | null {
+	const report = asPlainRecord(op?.report_json);
+	const audit = asPlainRecord(report?.write_audit);
+	if (!audit) return null;
+	return {
+		created: stringArray(audit.created).length,
+		modified: stringArray(audit.modified).length,
+		deleted: stringArray(audit.deleted).length,
+		violations: stringArray(audit.violations).length
+	};
 }
 
 function handoffFromOp(op: OpRecord | null): AgentHandoff | null {

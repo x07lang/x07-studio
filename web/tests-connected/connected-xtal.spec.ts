@@ -115,6 +115,10 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await page.getByRole('button', { name: 'Run OpenAI Codex Command' }).click();
 	await expect(page.locator('footer').getByText('OpenAI Codex supervised command succeeded')).toBeVisible();
 	await expect(inspectOperation(page, 'agent.event.openai-codex.artifact')).toBeVisible();
+	await expect(page.getByLabel('Agent execution timeline')).toContainText('OpenAI Codex');
+	await expect(page.getByLabel('Agent execution timeline')).toContainText('Agent events');
+	await expect(page.getByLabel('Agent execution timeline')).toContainText(/\d+ events/);
+	await expect(page.getByLabel('Agent execution timeline')).toContainText('Write-root audit');
 	await page.getByLabel('Worklog filter').selectOption('codex');
 	await expect(inspectOperation(page, 'agent.run.openai-codex')).toBeVisible();
 	await expect(inspectOperation(page, 'agent.event.openai-codex.artifact')).toBeVisible();
