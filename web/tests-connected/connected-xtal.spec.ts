@@ -190,6 +190,7 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await expect(inspectOperation(page, 'lp.deploy.status.local')).toBeVisible();
 	await expect(page.getByLabel('XTAL automation plan')).toContainText('done');
 	await expect(page.getByLabel('XTAL automation plan')).toContainText('project.seed.x07_atlas');
+	await expect(page.getByLabel('XTAL automation plan')).not.toContainText('spec.scaffold');
 	await page.getByLabel('XTAL automation plan').getByRole('button', { name: /Project scaffold/ }).click();
 	await expect(page.getByLabel('Selected operation inspector')).toContainText('project.seed.x07_atlas');
 	await expect(page.getByLabel('Trust review signals')).toContainText('Local platform delivery');

@@ -710,3 +710,14 @@ This document records friction found while implementing the Studio web surface.
    the scaffold command from the selected docs-backed template and attaches
    completed automation-plan rows to the matching operation id, so users can
    click from the runbook directly into the recorded evidence.
+
+66. Seeded workflows should not show XTAL-pure scaffold rows.
+
+   After the scaffold row was corrected, complex docs-backed workflows still
+   showed generic `spec.scaffold`, `tests.gen.write`, and `impl.sync.write`
+   rows ahead of their real seeded workflow commands. That made x07 Atlas look
+   like a simple XTAL-pure project with a WASM tail, even though the daemon runs
+   from `project.seed.x07_atlas` into profile validation, app build, replay
+   tests, pack verification, provenance, deploy planning, and SLO evidence.
+   Studio now suppresses the XTAL-pure setup rows for seeded templates and lets
+   the template-specific canonical commands describe the actual runbook.

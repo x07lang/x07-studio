@@ -350,6 +350,11 @@ describe('x07 Studio XTAL web model', () => {
 		expect(scaffold?.command).toBe('project.seed.x07_atlas');
 		expect(scaffold?.state).toBe('done');
 		expect(scaffold?.opId).toBe(seedOp?.id);
+		expect(plan.map((step) => step.command)).not.toContain('spec.scaffold');
+		expect(plan.map((step) => step.command)).not.toContain('impl.sync.write');
+		expect(plan.map((step) => step.command)).toContain(
+			'x07-wasm app profile validate --profile atlas_dev'
+		);
 	});
 
 	it('maps prompt-to-artifact coverage from approval gates and operation evidence', () => {

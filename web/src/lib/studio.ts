@@ -1550,6 +1550,7 @@ export function buildAutomationPlan(
 	const taskType = session?.task_type ?? template.taskType;
 	const polishOp = latestOpForOps(ops, ['intent.formalize']);
 	const projectScaffoldCommand = projectScaffoldBindingId(template);
+	const seededProject = projectScaffoldCommand.startsWith('project.seed.');
 	const scaffoldOp = latestOpForOps(ops, [projectScaffoldCommand]);
 	const setupSteps: AutomationPlanStep[] = [
 		{
@@ -1612,7 +1613,7 @@ export function buildAutomationPlan(
 				opId: improveOp?.id ?? null
 			}
 		);
-	} else {
+	} else if (!seededProject) {
 		const specOp = latestOpForOps(ops, ['spec.scaffold']);
 		const testsOp = latestOpForOps(ops, ['tests.gen.write']);
 		setupSteps.push(
@@ -1635,15 +1636,17 @@ export function buildAutomationPlan(
 		);
 	}
 
-	const implOp = latestOpForOps(ops, ['impl.sync.write', 'wasm.app.build.atlas_dev']);
-	setupSteps.push({
-		label: 'Implementation sync',
-		command: 'impl.sync.write',
-		artifact: 'target/xtal/impl-sync.patchset.json',
-		gate: 'Implementation writes stay inside approved roots',
-		state: stateForOps(ops, ['impl.sync.write', 'wasm.app.build.atlas_dev'], approved),
-		opId: implOp?.id ?? null
-	});
+	if (!seededProject && taskType !== 'incident_repair') {
+		const implOp = latestOpForOps(ops, ['impl.sync.write']);
+		setupSteps.push({
+			label: 'Implementation sync',
+			command: 'impl.sync.write',
+			artifact: 'target/xtal/impl-sync.patchset.json',
+			gate: 'Implementation writes stay inside approved roots',
+			state: stateForOps(ops, ['impl.sync.write'], approved),
+			opId: implOp?.id ?? null
+		});
+	}
 
 	const templateSteps = template.canonicalCommands.map((command, index) => {
 		const op = latestOpForCommand(ops, command);

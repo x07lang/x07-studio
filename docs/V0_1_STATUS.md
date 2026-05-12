@@ -26,6 +26,7 @@
 - binding coverage for XTAL authoring, test generation, implementation sync, verify/repair/certify/ingest/improve, core checks, app, web-ui, device, workload, topology, deploy-plan, SLO, provenance, and selected platform query/control reads
 - seeded docs-example workflows for workflow graph, state-machine contracts, API gateway, x07crawl, x07dbguard, and x07 Atlas projects
 - clickable automation-plan steps that link completed approval-to-artifact runbook rows to their operation evidence, including seeded `project.seed.*` project setup
+- template-aware automation plans that keep XTAL-pure scaffold/test/impl rows out of docs-seeded workflows such as x07 Atlas
 - brownfield approval path that runs `spec.extract` before session contract lock
 - approval ledger that blocks stale approvals after human revision requests until the agent repolishes intent
 - session doctrine surfacing for canonical x07 docs, MCP tools, allowed verbs, and handoff prompt context
