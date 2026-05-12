@@ -529,3 +529,15 @@ This document records friction found while implementing the Studio web surface.
    handoff path, allowed verbs, MCP tools, write roots, approval mode, and the
    structured event schema. This is still not a full OS path sandbox, but it
    gives agent wrappers and future launchers a deterministic contract surface.
+
+50. Supervised agents need write-root evidence, not only write-root advice.
+
+   The `X07_STUDIO_WRITE_ROOTS` environment variable made the approved write
+   contract machine-readable, but a misbehaving or mismatched agent could still
+   write outside those roots and exit successfully. Loom now snapshots bounded
+   workspace source/config files before and after supervised agent execution.
+   If the command creates, modifies, or deletes files outside the approved
+   roots, Studio marks the `agent.run.*` operation failed and records a
+   `x07.studio.agent_write_audit@0.1.0` payload with created, modified,
+   deleted, and violating paths. This does not replace a future OS-level
+   sandbox, but it prevents unauthorized writes from becoming silent success.

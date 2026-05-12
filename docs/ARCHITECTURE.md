@@ -170,6 +170,13 @@ The prompt also tells agents to emit structured
 and approval milestones. The daemon turns those records into the same
 `agent.event.*` worklog entries as the text classifier, with attached artifact
 paths and structured payloads for review.
+Before supervised execution, Loom snapshots bounded workspace source/config
+files. After the agent exits, it compares the snapshot against the agent
+profile write roots plus Studio handoff state. Any created, modified, or
+deleted path outside those roots marks the `agent.run.*` operation failed and
+records a `x07.studio.agent_write_audit@0.1.0` payload. This is a review gate,
+not a kernel sandbox: it makes out-of-contract writes visible and prevents them
+from being recorded as a successful agent run.
 
 The web intake starts with simple, intermediate, advanced, complex, and expert
 x07 project briefs. They are intentionally editable form seeds, not hidden

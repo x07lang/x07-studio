@@ -33,6 +33,7 @@
 - daemon-side coding-agent readiness checks reject disabled profiles and missing execute commands even when clients bypass the browser controls
 - connected browser E2E proves both OpenAI Codex and Claude Code supervised handoffs through plan, approval, execute, structured agent event capture, and worklog filtering
 - supervised agent commands receive `X07_STUDIO_*` contract environment variables for session id, agent id, handoff path, allowed verbs, MCP tools, write roots, approval mode, and event schema
+- supervised agent commands run with a post-execution workspace write-root audit that fails the run when source/config files change outside the approved roots
 - standalone packaging scripts assemble the daemon, native desktop shell, Forge shell, and static Svelte web app into a portable bundle
 - standalone launcher refreshes setup defaults, selects free local daemon/web ports, and reports the actual runtime addresses through daemon health
 - native desktop shell runs packaged first-run component bootstrap before starting its embedded daemon, with skip/detect-only flags for controlled onboarding
@@ -47,7 +48,7 @@
 
 - GUI exposes HTTP MCP first; stdio MCP is available through the daemon API already
 - provider probing is bounded and capability-oriented, not a full benchmark suite
-- session execution policy is enforced by the reducer, canonical binding catalog, approval gates, and supervised agent contract environment, not yet by a full path sandbox
+- session execution policy is enforced by the reducer, canonical binding catalog, approval gates, supervised agent contract environment, and post-run write-root audits; this is still not an OS-level path sandbox
 - the v0.1 shells expose lifecycle controls, basic lineage graph projection, artifact logs, a compact trust review queue, artifact-backed patchset previews, path-level before/after visual patch review, and browser speech transcript capture; richer STT/provider configuration, graph overlays, and semantic side-by-side diff tooling remain later UI layers
 - no compile-time proof cache yet
 - no persisted audio capture, local STT model selection, or transcript confidence review yet

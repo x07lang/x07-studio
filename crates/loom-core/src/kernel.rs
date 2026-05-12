@@ -1023,6 +1023,7 @@ impl WorkspaceKernel {
     }
 
     pub async fn execute_agent_command(command: AgentCommandPlan) -> OpRecord {
+        let before = snapshot_agent_workspace(command.cwd.as_path());
         let envs = agent_command_env(&command);
         match CommandRunner
             .run_with_timeout(
@@ -1034,7 +1035,7 @@ impl WorkspaceKernel {
             )
             .await
         {
-            Ok(execution) => agent_execution_op(command, execution),
+            Ok(execution) => agent_execution_op(command, execution, before),
             Err(error) => agent_spawn_error_op(command, error),
         }
     }
@@ -1043,6 +1044,7 @@ impl WorkspaceKernel {
         command: AgentCommandPlan,
         updates: mpsc::UnboundedSender<OpRecord>,
     ) -> OpRecord {
+        let before = snapshot_agent_workspace(command.cwd.as_path());
         let (chunk_tx, mut chunk_rx) = mpsc::unbounded_channel();
         let run_command = command.clone();
         let execution = async move {
@@ -1073,7 +1075,7 @@ impl WorkspaceKernel {
                 }
                 result = &mut execution => {
                     return match result {
-                        Ok(execution) => agent_execution_op(command, execution),
+                        Ok(execution) => agent_execution_op(command, execution, before),
                         Err(error) => agent_spawn_error_op(command, error),
                     };
                 }
@@ -3580,7 +3582,206 @@ fn agent_semantic_op(command: &AgentCommandPlan, event: AgentSemanticEvent) -> O
     }
 }
 
-fn agent_execution_op(command: AgentCommandPlan, execution: CommandExecution) -> OpRecord {
+const AGENT_WORKSPACE_SNAPSHOT_FILE_LIMIT: usize = 20_000;
+
+#[derive(Debug, Clone, Default)]
+struct AgentWorkspaceSnapshot {
+    files: BTreeMap<String, String>,
+    truncated: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AgentWriteAudit {
+    allowed_roots: Vec<String>,
+    created: Vec<String>,
+    modified: Vec<String>,
+    deleted: Vec<String>,
+    violations: Vec<String>,
+    truncated: bool,
+}
+
+fn snapshot_agent_workspace(root: &Utf8Path) -> AgentWorkspaceSnapshot {
+    let mut snapshot = AgentWorkspaceSnapshot::default();
+    collect_agent_workspace_snapshot(
+        root.as_std_path(),
+        root.as_std_path(),
+        &mut snapshot.files,
+        &mut snapshot.truncated,
+    );
+    snapshot
+}
+
+fn collect_agent_workspace_snapshot(
+    root: &Path,
+    dir: &Path,
+    files: &mut BTreeMap<String, String>,
+    truncated: &mut bool,
+) {
+    if *truncated {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if files.len() >= AGENT_WORKSPACE_SNAPSHOT_FILE_LIMIT {
+            *truncated = true;
+            return;
+        }
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if should_skip_agent_snapshot_dir(&path) {
+                continue;
+            }
+            collect_agent_workspace_snapshot(root, &path, files, truncated);
+            if *truncated {
+                return;
+            }
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        let Some(relative) = relative_workspace_path(root, &path) else {
+            continue;
+        };
+        if let Some(fingerprint) = file_fingerprint(&path) {
+            files.insert(relative, fingerprint);
+        }
+    }
+}
+
+fn should_skip_agent_snapshot_dir(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            matches!(
+                name,
+                ".git" | ".svelte-kit" | "build" | "node_modules" | "target"
+            )
+        })
+}
+
+fn relative_workspace_path(root: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(root).ok()?;
+    Some(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn file_fingerprint(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    Some(format!("{}:{}", bytes.len(), sha256_hex(&bytes)))
+}
+
+fn agent_write_audit(
+    command: &AgentCommandPlan,
+    before: AgentWorkspaceSnapshot,
+    after: AgentWorkspaceSnapshot,
+) -> AgentWriteAudit {
+    let allowed_roots = agent_allowed_write_roots(command);
+    let mut audit = AgentWriteAudit {
+        allowed_roots: allowed_roots.clone(),
+        truncated: before.truncated || after.truncated,
+        ..AgentWriteAudit::default()
+    };
+
+    for (path, after_hash) in &after.files {
+        match before.files.get(path) {
+            None => audit.created.push(path.clone()),
+            Some(before_hash) if before_hash != after_hash => audit.modified.push(path.clone()),
+            _ => {}
+        }
+    }
+    for path in before.files.keys() {
+        if !after.files.contains_key(path) {
+            audit.deleted.push(path.clone());
+        }
+    }
+
+    audit.created.sort();
+    audit.modified.sort();
+    audit.deleted.sort();
+    audit.violations = audit
+        .created
+        .iter()
+        .chain(audit.modified.iter())
+        .chain(audit.deleted.iter())
+        .filter(|path| !is_agent_write_allowed(path, &allowed_roots))
+        .cloned()
+        .collect();
+    audit.violations.sort();
+    audit.violations.dedup();
+    audit
+}
+
+fn agent_allowed_write_roots(command: &AgentCommandPlan) -> Vec<String> {
+    let mut roots = command
+        .agent
+        .write_roots
+        .iter()
+        .map(|root| normalize_agent_write_root(root))
+        .collect::<Vec<_>>();
+    roots.push(".x07/studio/".to_string());
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn normalize_agent_write_root(root: &str) -> String {
+    let normalized = root
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .trim()
+        .to_string();
+    if normalized.is_empty() || normalized == "." {
+        return ".".to_string();
+    }
+    if normalized.ends_with('/') {
+        normalized
+    } else {
+        format!("{normalized}/")
+    }
+}
+
+fn is_agent_write_allowed(path: &str, allowed_roots: &[String]) -> bool {
+    allowed_roots.iter().any(|root| {
+        if root == "." {
+            true
+        } else {
+            path.starts_with(root)
+        }
+    })
+}
+
+fn agent_execution_op(
+    command: AgentCommandPlan,
+    execution: CommandExecution,
+    before: AgentWorkspaceSnapshot,
+) -> OpRecord {
+    let audit = agent_write_audit(
+        &command,
+        before,
+        snapshot_agent_workspace(command.cwd.as_path()),
+    );
+    let has_write_violations = !audit.violations.is_empty();
+    let mut stderr = execution.stderr;
+    if has_write_violations {
+        let message = format!(
+            "Studio write-root audit failed; unapproved workspace writes: {}",
+            audit.violations.join(", ")
+        );
+        if stderr.trim().is_empty() {
+            stderr = message;
+        } else {
+            stderr.push('\n');
+            stderr.push_str(&message);
+        }
+    }
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
         id: command.op_id,
@@ -3592,24 +3793,37 @@ fn agent_execution_op(command: AgentCommandPlan, execution: CommandExecution) ->
             .collect(),
         started_at: execution.started_at,
         finished_at: Some(execution.finished_at),
-        status: if execution.exit_code == Some(0) {
+        status: if execution.exit_code == Some(0) && !has_write_violations {
             OperationStatus::Succeeded
         } else {
             OperationStatus::Failed
         },
         exit_code: execution.exit_code,
         artifacts: vec![command.prompt_path.to_string()],
-        notes: Some(format!(
-            "Ran {} under Studio supervision.",
-            command.agent.label
-        )),
+        notes: Some(if has_write_violations {
+            format!(
+                "Ran {} under Studio supervision; write-root audit found unapproved writes.",
+                command.agent.label
+            )
+        } else {
+            format!("Ran {} under Studio supervision.", command.agent.label)
+        }),
         stdout: Some(execution.stdout),
-        stderr: Some(execution.stderr),
+        stderr: Some(stderr),
         stdout_json: execution.stdout_json,
         stderr_json: execution.stderr_json,
         report_json: Some(serde_json::json!({
             "mode": "execute",
             "handoff": command.handoff,
+            "write_audit": {
+                "schema_version": "x07.studio.agent_write_audit@0.1.0",
+                "allowed_roots": audit.allowed_roots,
+                "created": audit.created,
+                "modified": audit.modified,
+                "deleted": audit.deleted,
+                "violations": audit.violations,
+                "truncated": audit.truncated,
+            },
         })),
         report_path: None,
     }
@@ -4347,6 +4561,69 @@ mod tests {
         assert_eq!(blocked_again.op.op, "agent.approval.echo-agent");
         assert_eq!(blocked_again.op.status, OperationStatus::Pending);
         assert!(blocked_again.command.is_none());
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn supervised_agent_execute_fails_on_unapproved_workspace_write() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("write audit", TaskType::NewBehavior)
+            .expect("create session");
+        let agent = AgentProfile {
+            schema_version: "x07.studio.agent_profile@0.1.0".to_string(),
+            id: "write-agent".to_string(),
+            label: "Write Agent".to_string(),
+            command: "/bin/sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "mkdir -p src private && printf ok > src/ok.txt && printf bad > private/bad.txt"
+                    .to_string(),
+                "x07-studio-agent".to_string(),
+            ],
+            allowed_verbs: vec!["impl.sync.write".to_string()],
+            mcp_tools: vec!["x07.exec_v1".to_string()],
+            write_roots: vec!["src/".to_string()],
+            approval_required: false,
+            status: AgentStatus::Available,
+            notes: "test agent".to_string(),
+        };
+        kernel.save_agent_profile(&agent).expect("save agent");
+
+        let (_handoff, run_op, _session) = kernel
+            .run_agent_handoff(
+                session.session_id,
+                "write-agent",
+                AgentRunMode::Execute,
+                None,
+            )
+            .await
+            .expect("run agent");
+
+        assert_eq!(run_op.op, "agent.run.write-agent");
+        assert_eq!(run_op.status, OperationStatus::Failed);
+        assert!(root.join("src/ok.txt").exists());
+        assert!(root.join("private/bad.txt").exists());
+        assert!(run_op
+            .stderr
+            .as_deref()
+            .unwrap_or_default()
+            .contains("write-root audit failed"));
+        let write_audit = run_op
+            .report_json
+            .as_ref()
+            .and_then(|report| report.get("write_audit"))
+            .expect("write audit report");
+        assert_eq!(
+            write_audit
+                .get("violations")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|items| items.first())
+                .and_then(serde_json::Value::as_str),
+            Some("private/bad.txt")
+        );
 
         std::fs::remove_dir_all(root).ok();
     }

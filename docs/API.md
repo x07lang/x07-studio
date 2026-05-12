@@ -370,6 +370,26 @@ that the configured agent command exists before appending a supervised
 command must be updated first. `mode: "plan"` may still record a launch plan
 for a non-disabled profile because it does not spawn the command.
 
+During `mode: "execute"`, the launched process receives `X07_STUDIO_*`
+environment variables for the session id, agent id, handoff path, allowed
+verbs, MCP tools, write roots, approval mode, and event schema. Loom snapshots
+bounded workspace source/config files before and after the process. If the
+agent changes files outside its write roots plus Studio handoff state, the
+final `agent.run.*` operation is marked `failed` even when the process exits
+zero, and `report_json.write_audit` contains:
+
+```json
+{
+  "schema_version": "x07.studio.agent_write_audit@0.1.0",
+  "allowed_roots": ["src/", ".x07/studio/"],
+  "created": ["src/ok.txt", "private/bad.txt"],
+  "modified": [],
+  "deleted": [],
+  "violations": ["private/bad.txt"],
+  "truncated": false
+}
+```
+
 If the agent profile has `approval_required: true`, `mode: "execute"` first
 records a pending `agent.approval.*` checkpoint unless the latest relevant
 agent operation is a succeeded approval. A later handoff, plan, or run consumes
