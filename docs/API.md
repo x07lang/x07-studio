@@ -69,12 +69,29 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions`
 - `GET /sessions/{session_id}`
 - `GET /sessions/{session_id}/stream` *(SSE; see below)*
+- `GET /sessions/{session_id}/turns`
 - `POST /sessions/{session_id}/events`
 - `POST /sessions/{session_id}/intent/formalize`
 - `POST /sessions/{session_id}/intent/revision`
 - `POST /sessions/{session_id}/intent/clarify`
 - `POST /sessions/{session_id}/intent/answer`
+- `POST /sessions/{session_id}/intent/quorum`
+- `POST /sessions/{session_id}/intent/image`
 - `POST /sessions/{session_id}/bindings/run`
+- `POST /sessions/{session_id}/invoke`
+- `GET /sessions/{session_id}/ladder`
+- `POST /sessions/{session_id}/ladder/climb`
+- `GET /sessions/{session_id}/cassette`
+- `POST /sessions/{session_id}/cassette/branch`
+- `POST /sessions/{session_id}/ask`
+- `POST /sessions/{session_id}/incidents/scan`
+- `POST /sessions/{session_id}/incidents/{incident_id}/repair`
+- `POST /sessions/{session_id}/visual/streampipe/parse`
+- `POST /sessions/{session_id}/visual/streampipe/emit`
+- `POST /sessions/{session_id}/visual/statemachine/parse`
+- `POST /sessions/{session_id}/visual/statemachine/emit`
+- `POST /sessions/{session_id}/visual/tasks/parse`
+- `POST /sessions/{session_id}/visual/tasks/emit`
 - `POST /sessions/{session_id}/artifacts/preview`
 - `POST /sessions/{session_id}/docs/preview`
 - `POST /sessions/{session_id}/xtal/run`
@@ -497,7 +514,7 @@ Optional request body:
 }
 ```
 
-`POST /v1/sessions/{session_id}/build` is the simple-mode wrapper around
+`POST /v1/sessions/{session_id}/build` is the Timeline wrapper around
 the XTAL workflow. It emits a plain-English `build.stage.start` marker,
 runs `run_xtal_workflow_with_vars` (scaffold → spec.check →
 tests.gen.write → impl.sync.write → impl.check → xtal.verify), and — on
@@ -507,7 +524,132 @@ Stops at `trust_review` (verified) or `human_intervention_required`. On
 success, emits `build.stage.done` followed by a deterministic
 `summary.plain_english` OpRecord whose `report_json` carries
 `x07.studio.plain_english_summary@0.1.0`
-(`headline`, `behavior_promises`, `boundaries`, `evidence`).
+(`headline`, `behavior_promises`, `boundaries`, `evidence`,
+`run_invocation`, `followups`).
+
+## Timeline and Cycle 2 Operations
+
+`GET /v1/sessions/{session_id}/turns` returns a typed chronological projection
+for the browser Timeline. Turn variants include `user_intent`,
+`agent_clarify`, `user_answer`, `agent_draft`, `user_approved`,
+`build_stage`, `verified`, `incident`, and `repair`.
+
+Try-It request:
+
+```json
+{
+  "input_kind": "text",
+  "input_text": "[3,1,2]",
+  "input_b64": null,
+  "input_path": null,
+  "argv": [],
+  "profile": "sandbox"
+}
+```
+
+`POST /v1/sessions/{session_id}/invoke` executes the verified artifact through
+the x07 CLI using framed stdin for text or bytes input and returns captured
+output, stats, proof citations, and the recorded invocation op id.
+
+Shipping ladder:
+
+- `GET /v1/sessions/{session_id}/ladder`
+- `POST /v1/sessions/{session_id}/ladder/climb`
+
+```json
+{
+  "to_rung": "team"
+}
+```
+
+The ladder projects four rungs: `local_preview`, `shareable`, `team`, and
+`production`. Each rung reports satisfied state, missing evidence, and artifact
+evidence. Climbing records the trust command associated with the target rung.
+
+Intent quorum request:
+
+```json
+{
+  "agent_ids": ["openai-codex", "claude-code"]
+}
+```
+
+`POST /v1/sessions/{session_id}/intent/quorum` records a deterministic review
+round with per-agent clarification questions and a diff summary.
+
+Image witness upload uses `multipart/form-data`:
+
+```text
+POST /v1/sessions/{session_id}/intent/image
+field: file=<image file>
+field: mime=image/png
+```
+
+The daemon accepts `image/*` uploads up to 8 MiB and stores them under
+`.x07/studio/sessions/{session}/images/`.
+
+Cassette endpoints:
+
+- `GET /v1/sessions/{session_id}/cassette`
+- `POST /v1/sessions/{session_id}/cassette/branch`
+
+```json
+{
+  "from_entry": 4,
+  "new_title": "Try stricter empty-input behavior"
+}
+```
+
+Project Q&A request:
+
+```json
+{
+  "question": "Why is this safe to ship?",
+  "agent_id": null
+}
+```
+
+`POST /v1/sessions/{session_id}/ask` returns a concise answer plus citations
+to operation evidence, artifacts, docs, or memory.
+
+Incident endpoints:
+
+- `POST /v1/sessions/{session_id}/incidents/scan`
+- `POST /v1/sessions/{session_id}/incidents/{incident_id}/repair`
+
+The scan reads `.x07-wasm/incidents`, `target/xtal/violations`, and
+`target/xtal/ingest` and turns incident bundles into visible operations.
+Repair records the bounded `xtal.repair` / ingest-improve lane for the chosen
+incident.
+
+Visual parse/emit endpoints normalize simple graph payloads for
+`streampipe`, `statemachine`, and `tasks`:
+
+```json
+{
+  "source": {"nodes": [], "edges": []}
+}
+```
+
+```json
+{
+  "graph": {"nodes": [], "edges": []}
+}
+```
+
+## Sync and Memory
+
+- `GET /v1/sync/codes`
+- `POST /v1/sync/{code}/claim`
+- `GET /v1/memory`
+- `POST /v1/memory`
+
+Sync codes point at the daemon's current first session and expire while the
+daemon is running. Studio memory is stored locally as append-only JSONL at
+`~/.x07-studio/memory.jsonl` unless `X07_STUDIO_MEMORY_PATH` overrides it.
+`POST /v1/memory` accepts a JSON merge-style patch and returns the projected
+memory state, which contains preferences, recent projects, and reusable spec
+references.
 
 ## Session stream (Server-Sent Events)
 

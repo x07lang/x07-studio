@@ -3,6 +3,7 @@ use std::io::Write;
 
 use anyhow::Context;
 use camino::{Utf8Path, Utf8PathBuf};
+use loom_types::api::StudioMemory;
 use loom_types::artifacts::{AgentHandoff, AgentProfile, ProviderProbeReport, ProviderProfile};
 use loom_types::session::SessionSnapshot;
 
@@ -45,6 +46,19 @@ impl FsStore {
 
     pub fn reports_dir(&self) -> Utf8PathBuf {
         self.root.join("reports")
+    }
+
+    pub fn memory_path(&self) -> Utf8PathBuf {
+        if let Some(path) = std::env::var_os("X07_STUDIO_MEMORY_PATH")
+            .and_then(|path| Utf8PathBuf::from_path_buf(path.into()).ok())
+        {
+            return path;
+        }
+        if let Some(path) = dirs::home_dir().and_then(|home| Utf8PathBuf::from_path_buf(home).ok())
+        {
+            return path.join(".x07-studio").join("memory.jsonl");
+        }
+        self.root.join("memory.jsonl")
     }
 
     pub fn save_session(&self, session: &SessionSnapshot) -> anyhow::Result<()> {
@@ -152,6 +166,67 @@ impl FsStore {
             })
             .collect::<String>();
         self.reports_dir().join(format!("{safe}.json"))
+    }
+
+    pub fn load_memory(&self) -> anyhow::Result<StudioMemory> {
+        let path = self.memory_path();
+        if !path.exists() {
+            return Ok(default_memory());
+        }
+        let raw = fs::read_to_string(&path)?;
+        let mut memory = default_memory();
+        for line in raw.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            memory = serde_json::from_str(line)
+                .with_context(|| format!("failed to parse Studio memory event at {path}"))?;
+        }
+        Ok(memory)
+    }
+
+    pub fn save_memory(&self, memory: &StudioMemory) -> anyhow::Result<()> {
+        if let Some(parent) = self.memory_path().parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.memory_path())?;
+        file.write_all(serde_json::to_string(memory)?.as_bytes())?;
+        file.write_all(b"\n")?;
+        Ok(())
+    }
+
+    pub fn save_intent_image(
+        &self,
+        session_id: uuid::Uuid,
+        mime: &str,
+        bytes: &[u8],
+    ) -> anyhow::Result<String> {
+        let ext = match mime {
+            "image/png" => "png",
+            "image/jpeg" | "image/jpg" => "jpg",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            _ => "bin",
+        };
+        let relative = format!(
+            "sessions/{session_id}/images/{}.{}",
+            uuid::Uuid::new_v4(),
+            ext
+        );
+        let path = self.root.join(&relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, bytes)?;
+        Ok(format!(".x07/studio/{relative}"))
+    }
+}
+
+fn default_memory() -> StudioMemory {
+    StudioMemory {
+        preferences: Default::default(),
+        recent_projects: Vec::new(),
+        reusable_specs: Vec::new(),
     }
 }
 

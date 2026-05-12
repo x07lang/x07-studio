@@ -73,7 +73,12 @@
 - per-session Server-Sent Events stream (`GET /v1/sessions/{id}/stream`) delivers `Op` and `Snapshot` events from the daemon broadcast hub so the browser updates within ~100 ms of a state transition without polling
 - orchestrated `POST /v1/sessions/{id}/build` pipeline composes the canonical XTAL chain through verify and runs up to three rounds of semantic-only `xtal.repair` on failure, emitting plain-English `build.stage.*` markers (`start`, `repair`, `done`, `needs_help`)
 - deterministic plain-English summarizer (`summary.plain_english` OpRecord) renders the approved spec + verify evidence into a headline, behavior promises, boundaries, and evidence bullets a non-engineer can review
-- Simple Mode browser surface (`SimpleStart`, `ClarifyQuestionCard`, `SimpleBuildProgress`, `SimpleResultPreview`, plus a Simple/Expert mode toggle persisted in `localStorage`) gives new users a single guided prompt-to-verified flow without exposing JSON, rooms, or evidence boards by default
+- unified Timeline browser surface replaces the Simple/Expert split with typed turns for intent, clarification, answers, approval, build stages, verified summaries, incidents, and repairs; `?mode=expert` remains only as an evidence-drawer compatibility alias
+- plain-English verified summaries now include a runnable `x07 run ... --stdin` invocation and deterministic follow-up refinements
+- Try-It endpoint and browser panel invoke verified artifacts with text, file, base64, or argv input and return proof citations next to output
+- shipping ladder projects local preview, shareable, team, and production rungs and records trust commands when climbing
+- incident scan and repair endpoints ingest `.x07-wasm/incidents`, `target/xtal/violations`, and `target/xtal/ingest` bundles into the Timeline
+- cassette history, branch creation, project Q&A with citations, daemon sync codes, append-only local memory, intent quorum rounds, image witnesses, and visual parse/emit endpoints are wired through Loom and the browser shell
 
 ## Still intentionally thin in v0.1
 
@@ -83,6 +88,9 @@
 - the v0.1 shells expose lifecycle controls, graph overlays, artifact logs, a compact trust review queue, artifact-backed patchset previews, semantic patch review rows, path-level before/after visual patch review, and browser speech transcript capture with confidence review; richer provider and STT backend configuration remains a later UI layer
 - no compiler-backed persisted proof cache yet
 - no persisted audio capture or local STT model selection yet
+- quorum review is deterministic in Cycle 2; it records comparable questions and diffs but is not yet a live multi-agent scheduler
+- sync codes are daemon-memory local and expire with the running daemon
+- visual parse/emit endpoints normalize simple payloads; richer graphical editors remain later UI work
 
 ## Validation done here
 

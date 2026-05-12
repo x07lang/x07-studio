@@ -1,5 +1,5 @@
 // Plain-English labels for build pipeline stages and the canonical x07
-// binding ops a non-engineer sees in Simple Mode. Edit here to tweak the
+// binding ops a non-engineer sees in Timeline turns. Edit here to tweak the
 // vocabulary in one place rather than scattering strings across components.
 
 import type { OpRecord, SessionPhase, SessionSnapshot } from './studio';

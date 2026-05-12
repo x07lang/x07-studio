@@ -888,3 +888,49 @@ This document records friction found while implementing the Studio web surface.
    the Studio testing docs and (probably) baking a dedicated
    `whenHydrated()` helper into the Playwright fixtures would save future
    contributors a debugging hour.
+
+80. The beginner/expert split created a false boundary in the lifecycle.
+
+   Simple Mode made the first prompt approachable, but it also split the
+   user's mental model: beginner users saw a guided flow, while expert users
+   saw evidence rooms and operations. The actual artifact lifecycle is one
+   conversation with proof-backed turns. Cycle 2 replaces the split with a
+   daemon-projected Timeline (`GET /v1/sessions/{id}/turns`) that renders
+   intent, clarification, answers, approval, build stages, verified summaries,
+   incidents, and repairs as typed turns. The old `?mode=expert` URL now only
+   opens evidence drawers for compatibility.
+
+81. Verified output needs an immediate run path.
+
+   A plain-English summary is reviewable, but a user still needs to exercise
+   the artifact without translating proof evidence into a shell command. Cycle
+   2 extends `summary.plain_english` with `run_invocation` and `followups`,
+   adds `POST /v1/sessions/{id}/invoke`, and renders a Try-It panel beside the
+   verified turn. Invocation records remain normal operations and include proof
+   citations so output and verification evidence stay connected.
+
+82. Shipping readiness should be visible before release automation.
+
+   Previous Studio surfaces exposed verification and certification evidence,
+   but they did not answer the user's next operational question: "what is still
+   missing before this can be shared or run by a team?" Cycle 2 adds a
+   four-rung ladder (`local_preview`, `shareable`, `team`, `production`) that
+   lists missing evidence and records trust commands when climbing. This keeps
+   release readiness in the same lifecycle vocabulary as local proof.
+
+83. Runtime incidents need to re-enter the conversation, not a side log.
+
+   Incident repair existed as bindings and artifact previews, but users had to
+   know where to look for `.x07-wasm` and XTAL violation bundles. Cycle 2
+   scans `.x07-wasm/incidents`, `target/xtal/violations`, and
+   `target/xtal/ingest`, turns each bundle into Timeline incident turns, and
+   lets a user queue repair against the selected incident. Repair then appears
+   as normal proof-adjacent work instead of a detached operations chore.
+
+84. Shared context needs small local primitives before hosted accounts.
+
+   Cycle 2 adds sync codes and local memory, but deliberately keeps them small:
+   sync codes are daemon-memory handles to the current session, and memory is
+   append-only JSONL under `~/.x07-studio`. That is enough for local continuity
+   and device handoff experiments without introducing identity, hosted storage,
+   or account semantics before the product needs them.

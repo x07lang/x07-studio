@@ -17,6 +17,7 @@ intent -> spec -> realization -> verify -> repair -> trust/certify -> ingest -> 
 
 - **Real x07 CLI execution** using the documented machine-output contract (`--json`, `--report-out`, `--quiet-json`) through the canonical x07 / x07-wasm / x07lp CLIs.
 - **Binding-first lifecycle commands** for XTAL authoring, test generation, implementation sync, verify/repair/certify, incident ingest/improve, x07 core checks, x07-wasm web/device/workload/deploy lanes, and selected platform query/control reads.
+- **Unified Timeline browser surface** over typed session turns, plain-English verified summaries, runnable `x07 run` invocations, follow-up refinements, Try-It execution, shipping ladder state, incident repair, cassette history, sync codes, local memory, and visual parse/emit endpoints.
 - **Real MCP transport** for both:
   - HTTP JSON-RPC over `/mcp` with `initialize`, `notifications/initialized`, session headers, and `tools/list` / `tools/call`
   - stdio MCP with newline-delimited JSON-RPC
@@ -38,8 +39,10 @@ x07-studio/
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── API.md
+│   ├── TIMELINE_MODE.md
 │   ├── XTAL_WORKFLOW_FINDINGS.md
 │   ├── COMMAND_BINDINGS.md
+│   ├── CYCLE_2_NOTES.md
 │   └── design/xtal-studio-ui-mockup.png
 ├── web/
 │   └── src/

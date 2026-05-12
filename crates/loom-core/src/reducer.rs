@@ -25,7 +25,13 @@ pub fn apply_event(
         SessionEvent::FormalizeIntent(intent) => {
             ensure_phase(
                 &session.phase,
-                &[SessionPhase::IntentDrafting, SessionPhase::IntentReady],
+                &[
+                    SessionPhase::IntentDrafting,
+                    SessionPhase::IntentReady,
+                    SessionPhase::TrustReview,
+                    SessionPhase::Certified,
+                    SessionPhase::RepairEligible,
+                ],
                 "formalize_intent",
             )?;
             session.intent = Some(*intent);

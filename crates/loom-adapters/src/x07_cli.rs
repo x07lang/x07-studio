@@ -52,6 +52,14 @@ pub struct ExecutedBinding {
 }
 
 #[derive(Debug, Clone)]
+pub enum InputSpec {
+    Text(String),
+    Bytes(Vec<u8>),
+    File(Utf8PathBuf),
+    Argv(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
 pub struct BindingDescriptor {
     pub id: &'static str,
     pub category: &'static str,
@@ -190,6 +198,88 @@ impl CliAdapter {
             report_path,
         })
     }
+
+    pub async fn run_invoke(
+        &self,
+        project: &Utf8Path,
+        profile: Option<&str>,
+        input: InputSpec,
+    ) -> anyhow::Result<ExecutedBinding> {
+        let mut args = vec![
+            "run".to_string(),
+            "--project".to_string(),
+            project.to_string(),
+        ];
+        if let Some(profile) = profile.filter(|value| !value.trim().is_empty()) {
+            args.push("--profile".to_string());
+            args.push(profile.to_string());
+        }
+        let stdin = match input {
+            InputSpec::Text(text) => {
+                args.push("--stdin".to_string());
+                framed_bytes(text.as_bytes())
+            }
+            InputSpec::Bytes(bytes) => {
+                args.push("--stdin".to_string());
+                framed_bytes(&bytes)
+            }
+            InputSpec::File(path) => {
+                args.push("--input".to_string());
+                args.push(path.to_string());
+                Vec::new()
+            }
+            InputSpec::Argv(argv) => {
+                args.push("--".to_string());
+                args.extend(argv);
+                Vec::new()
+            }
+        };
+        std::fs::create_dir_all(&self.reports_dir)?;
+        let report_path = self
+            .reports_dir
+            .join(format!("{}-run-invoke.json", now_string()));
+        args.extend([
+            "--json".to_string(),
+            "--report-out".to_string(),
+            report_path.to_string(),
+            "--quiet-json".to_string(),
+        ]);
+        let rendered = RenderedCommand {
+            id: "run.invoke".to_string(),
+            category: "x07/run".to_string(),
+            program: "x07".to_string(),
+            args: args.clone(),
+            artifacts: vec!["target/x07run".to_string()],
+            notes: "Run the verified artifact with Studio input.".to_string(),
+        };
+        let program = resolve_program(ProgramKey::X07, self.root.as_path());
+        let execution = if stdin.is_empty() {
+            self.runner
+                .run(&self.root, &program, &args, &BTreeMap::new())
+                .await
+        } else {
+            self.runner
+                .run_with_stdin_bytes(&self.root, &program, &args, &BTreeMap::new(), &stdin)
+                .await
+        }
+        .with_context(|| "run.invoke failed to spawn")?;
+        let report_json = std::fs::read_to_string(&report_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+        Ok(ExecutedBinding {
+            rendered,
+            execution,
+            report_json,
+            report_path: Some(report_path),
+        })
+    }
+}
+
+fn framed_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + bytes.len());
+    out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(bytes);
+    out
 }
 
 fn interpolate(template: &str, vars: &BTreeMap<String, String>) -> String {
@@ -1173,6 +1263,33 @@ pub const XTAL_BINDINGS: &[BindingTemplate] = &[
         machine_json: MachineJsonMode::ReportFile,
     },
     BindingTemplate {
+        id: "trust.report.sandbox",
+        category: "x07/trust",
+        program: ProgramKey::X07,
+        args: &["trust", "report", "--profile", "sandbox"],
+        artifacts: &["target/trust/report.json"],
+        notes: "Inspect the sandbox trust profile.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "trust.profile.check",
+        category: "x07/trust",
+        program: ProgramKey::X07,
+        args: &["trust", "profile", "check", "--profile", "{profile}"],
+        artifacts: &["target/trust/profile-check.json"],
+        notes: "Check a trust profile before climbing the shipping ladder.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
+        id: "trust.certify.profile",
+        category: "x07/trust",
+        program: ProgramKey::X07,
+        args: &["trust", "certify", "--profile", "{profile}"],
+        artifacts: &["target/cert/certificate.json"],
+        notes: "Certify a Studio shipping-ladder rung.",
+        machine_json: MachineJsonMode::ReportFile,
+    },
+    BindingTemplate {
         id: "xtal.ingest",
         category: "xtal/runtime",
         program: ProgramKey::X07,
@@ -1768,6 +1885,9 @@ mod tests {
             "xtal.verify",
             "xtal.repair",
             "xtal.certify",
+            "trust.report.sandbox",
+            "trust.profile.check",
+            "trust.certify.profile",
             "xtal.ingest",
             "xtal.improve",
             "check.ast",

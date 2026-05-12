@@ -5,8 +5,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::artifacts::{
-    AgentHandoff, AgentProfile, IntentPacket, OpRecord, ProviderProbeReport, ProviderProfile,
-    TaskType, WitnessKind,
+    AgentHandoff, AgentProfile, IntentPacket, OpRecord, PlainEnglishSummary, ProviderProbeReport,
+    ProviderProfile, TaskType, WitnessKind,
 };
 use crate::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use crate::ops::SessionEvent;
@@ -62,6 +62,82 @@ pub struct WorkspacePathState {
     pub path: String,
     pub exists: bool,
     pub modified_unix_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionTurn {
+    UserIntent {
+        id: Uuid,
+        at: String,
+        raw: String,
+        source_kind: String,
+    },
+    AgentClarify {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        questions: Vec<TurnQuestion>,
+    },
+    UserAnswer {
+        id: Uuid,
+        at: String,
+        question_id: String,
+        text: String,
+    },
+    AgentDraft {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        summary: String,
+        evidence: Vec<TurnEvidence>,
+    },
+    UserApproved {
+        id: Uuid,
+        at: String,
+        by: String,
+    },
+    BuildStage {
+        id: Uuid,
+        at: String,
+        stage: String,
+        op_ids: Vec<Uuid>,
+    },
+    Verified {
+        id: Uuid,
+        at: String,
+        summary: PlainEnglishSummary,
+        op_ids: Vec<Uuid>,
+    },
+    Incident {
+        id: Uuid,
+        at: String,
+        incident_id: String,
+        summary: String,
+        repair_available: bool,
+    },
+    Repair {
+        id: Uuid,
+        at: String,
+        incident_id: String,
+        op_ids: Vec<Uuid>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnQuestion {
+    pub id: String,
+    pub text: String,
+    pub witness_kind: WitnessKind,
+    pub options: Vec<String>,
+    pub answer: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnEvidence {
+    pub label: String,
+    pub op_id: Option<Uuid>,
+    pub artifact: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +234,185 @@ pub struct RunBuildRequest {
 pub struct RunBindingRequest {
     pub binding_id: String,
     pub vars: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TryItInputKind {
+    Text,
+    File,
+    B64,
+    Argv,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TryItRequest {
+    pub input_kind: TryItInputKind,
+    pub input_text: Option<String>,
+    pub input_b64: Option<String>,
+    pub input_path: Option<String>,
+    #[serde(default)]
+    pub argv: Vec<String>,
+    pub profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TryItResult {
+    pub output_kind: String,
+    pub output_text: Option<String>,
+    pub output_json: Option<Value>,
+    pub stats: Value,
+    pub proof_citations: Vec<ProofCitation>,
+    pub op_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofCitation {
+    pub clause_id: String,
+    pub proof_report: Option<String>,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LadderRung {
+    pub id: String,
+    pub label: String,
+    pub profile_path: Option<String>,
+    pub satisfied: bool,
+    pub missing: Vec<String>,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LadderState {
+    pub current_rung: String,
+    pub rungs: Vec<LadderRung>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClimbRungRequest {
+    pub to_rung: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuorumRound {
+    pub round: u32,
+    pub agents: Vec<QuorumAgent>,
+    pub diff: Vec<QuorumDiff>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuorumAgent {
+    pub agent_id: String,
+    pub questions: Vec<TurnQuestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuorumDiff {
+    pub label: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuorumRequest {
+    pub agent_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CassetteEntry {
+    pub idx: u32,
+    pub kind: String,
+    pub key: String,
+    pub ts: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CassetteBranchRequest {
+    pub from_entry: u32,
+    pub new_title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AskRequest {
+    pub question: String,
+    pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AskAnswer {
+    pub text: String,
+    pub citations: Vec<AnswerCitation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnswerCitation {
+    pub kind: String,
+    pub path: String,
+    pub locator: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncCode {
+    pub code: String,
+    pub expires_at: String,
+    pub session_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StudioMemory {
+    pub preferences: MemoryPreferences,
+    pub recent_projects: Vec<MemoryProject>,
+    pub reusable_specs: Vec<MemoryReusableSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MemoryPreferences {
+    pub default_agent: Option<String>,
+    pub default_trust_profile: Option<String>,
+    pub naming_style: Option<String>,
+    pub verbosity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryProject {
+    pub root: String,
+    pub last_session_id: Option<Uuid>,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryReusableSpec {
+    pub module_id: String,
+    pub path: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncClaimResponse {
+    pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntentImageUploadResponse {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualParseRequest {
+    pub source: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualEmitRequest {
+    pub graph: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualResponse {
+    pub schema_version: String,
+    pub kind: String,
+    pub value: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

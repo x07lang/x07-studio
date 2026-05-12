@@ -8,35 +8,28 @@
 //! operations, witness list, and a bounded read of
 //! `target/xtal/verify/summary.json`.
 
-use serde::Serialize;
-
-use loom_types::artifacts::{IntentPacket, TaskType, WitnessKind};
+use loom_types::artifacts::{IntentPacket, PlainEnglishSummary, TaskType, WitnessKind};
 use loom_types::session::{SessionPhase, SessionSnapshot};
 
-#[derive(Debug, Clone, Serialize)]
-pub struct PlainEnglishSummary {
-    pub schema_version: String,
-    pub headline: String,
-    pub behavior_promises: Vec<String>,
-    pub boundaries: Vec<String>,
-    pub evidence: Vec<String>,
-}
-
-impl PlainEnglishSummary {
-    pub fn from_session(session: &SessionSnapshot) -> Option<Self> {
-        let intent = session.intent.as_ref()?;
-        let headline = headline_for(session, intent);
-        let behavior_promises = behavior_promises_for(intent);
-        let boundaries = boundaries_for(intent);
-        let evidence = evidence_for(session);
-        Some(Self {
-            schema_version: "x07.studio.plain_english_summary@0.1.0".to_string(),
-            headline,
-            behavior_promises,
-            boundaries,
-            evidence,
-        })
-    }
+pub fn plain_english_summary_from_session(
+    session: &SessionSnapshot,
+) -> Option<PlainEnglishSummary> {
+    let intent = session.intent.as_ref()?;
+    let headline = headline_for(session, intent);
+    let behavior_promises = behavior_promises_for(intent);
+    let boundaries = boundaries_for(intent);
+    let evidence = evidence_for(session);
+    let run_invocation = run_invocation_for(intent);
+    let followups = derive_followups(intent, session);
+    Some(PlainEnglishSummary {
+        schema_version: "x07.studio.plain_english_summary@0.1.0".to_string(),
+        headline,
+        behavior_promises,
+        boundaries,
+        evidence,
+        run_invocation,
+        followups,
+    })
 }
 
 /// Doctrine strings that `intent_packet_from_raw` seeds on every intent so
@@ -110,6 +103,8 @@ fn intent_source_text(intent: &IntentPacket) -> Option<&str> {
         IntentSource::Text { raw } | IntentSource::Spec { raw } => Some(raw.as_str()),
         IntentSource::Voice { transcript } => Some(transcript.as_str()),
         IntentSource::Incident { path } => Some(path.as_str()),
+        IntentSource::Sketch { path } => Some(path.as_str()),
+        IntentSource::Image { path, .. } => Some(path.as_str()),
     }
 }
 
@@ -245,4 +240,152 @@ fn evidence_for(session: &SessionSnapshot) -> Vec<String> {
         );
     }
     out
+}
+
+fn run_invocation_for(intent: &IntentPacket) -> Option<String> {
+    if intent.targets.is_empty() {
+        return None;
+    }
+    let example = intent
+        .examples
+        .iter()
+        .find_map(|example| invocation_input_from_example(example))
+        .unwrap_or_else(|| "<your input here>".to_string());
+    let escaped = example.replace('\\', "\\\\").replace('"', "\\\"");
+    Some(format!(
+        "printf \"%s\" \"{escaped}\" | x07 run --project x07.json --profile sandbox --stdin"
+    ))
+}
+
+fn invocation_input_from_example(example: &str) -> Option<String> {
+    let text = example.trim();
+    if text.is_empty() || is_doctrine(text) {
+        return None;
+    }
+    let candidate = text.split("->").next().unwrap_or(text).trim();
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate.to_string())
+    }
+}
+
+pub fn derive_followups(intent: &IntentPacket, _session: &SessionSnapshot) -> Vec<String> {
+    let mut out = Vec::new();
+    for ambiguity in &intent.ambiguities {
+        let text = ambiguity.trim();
+        if text.is_empty() || is_doctrine(text) {
+            continue;
+        }
+        push_followup(&mut out, format!("What if {text}?"));
+    }
+    let target = intent
+        .targets
+        .first()
+        .map(|target| {
+            format!(
+                "{} {}",
+                target.module_id,
+                target.entry.as_deref().unwrap_or_default()
+            )
+        })
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if target.contains("sort") {
+        push_followup(&mut out, "What about negative numbers?".to_string());
+        push_followup(
+            &mut out,
+            "Should duplicate values preserve their input order?".to_string(),
+        );
+    } else if target.contains("crawl") {
+        push_followup(&mut out, "What should it do for redirects?".to_string());
+        push_followup(&mut out, "Should failed pages be retried?".to_string());
+    } else if target.contains("gateway") {
+        push_followup(
+            &mut out,
+            "Should unmatched routes return a structured error?".to_string(),
+        );
+    } else if target.contains("incident") {
+        push_followup(
+            &mut out,
+            "Should this incident become a regression test?".to_string(),
+        );
+    }
+    push_followup(&mut out, "Do you want a CLI wrapper for this?".to_string());
+    push_followup(&mut out, "Should this become a service?".to_string());
+    out.truncate(3);
+    out
+}
+
+fn push_followup(target: &mut Vec<String>, value: String) {
+    let text = value.trim();
+    if text.is_empty() || is_doctrine(text) {
+        return;
+    }
+    let normalized = text.to_string();
+    if !target
+        .iter()
+        .any(|item| item.eq_ignore_ascii_case(&normalized))
+    {
+        target.push(normalized);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use loom_types::artifacts::{IntentPacket, TaskType};
+    use loom_types::session::{SessionPhase, SessionSnapshot};
+
+    use super::{derive_followups, plain_english_summary_from_session};
+
+    #[test]
+    fn summary_has_fallback_run_invocation_without_examples() {
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "sorter", "/workspace", TaskType::NewBehavior);
+        let mut intent = IntentPacket::demo(session_id, "/workspace");
+        intent.examples.clear();
+        session.intent = Some(intent);
+        session.phase = SessionPhase::TrustReview;
+
+        let summary = plain_english_summary_from_session(&session).expect("summary");
+
+        assert_eq!(
+            summary.run_invocation.as_deref(),
+            Some("printf \"%s\" \"<your input here>\" | x07 run --project x07.json --profile sandbox --stdin")
+        );
+    }
+
+    #[test]
+    fn derive_followups_caps_ambiguities_and_heuristics() {
+        let session_id = Uuid::new_v4();
+        let session =
+            SessionSnapshot::new(session_id, "sorter", "/workspace", TaskType::NewBehavior);
+        let mut intent = IntentPacket::demo(session_id, "/workspace");
+        intent.ambiguities = vec![
+            "empty input should be rejected or accepted".to_string(),
+            "sort order for equal values".to_string(),
+            "numeric width".to_string(),
+        ];
+
+        let followups = derive_followups(&intent, &session);
+
+        assert_eq!(followups.len(), 3);
+        assert!(followups[0].starts_with("What if"));
+    }
+
+    #[test]
+    fn derive_followups_uses_generic_fallback() {
+        let session_id = Uuid::new_v4();
+        let session = SessionSnapshot::new(session_id, "demo", "/workspace", TaskType::NewBehavior);
+        let mut intent = IntentPacket::demo(session_id, "/workspace");
+        intent.targets.clear();
+        intent.ambiguities.clear();
+
+        let followups = derive_followups(&intent, &session);
+
+        assert!(followups.iter().any(|item| item.contains("CLI wrapper")));
+    }
 }

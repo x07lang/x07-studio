@@ -4,13 +4,14 @@ use std::net::SocketAddr;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Multipart, Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{http::StatusCode, Json, Router};
 use camino::{Utf8Path, Utf8PathBuf};
 use futures::stream::{Stream, StreamExt};
+use serde_json::Value;
 use std::convert::Infallible;
 use std::pin::Pin;
 use tokio::sync::Mutex;
@@ -23,14 +24,17 @@ use loom_core::WorkspaceKernel;
 use loom_types::api::{
     AgentApprovalRequest, AgentApprovalResponse, AgentHandoffResponse, AgentRunRequest,
     AgentRunResponse, ArtifactPreviewRequest, ArtifactPreviewResponse, BindingDescriptor,
-    CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest,
-    DispatchEventRequest, DocPreviewRequest, DocPreviewResponse, FormalizeIntentRequest,
-    FormalizeIntentResponse, HealthResponse, IntentAnswerRequest, IntentAnswerResponse,
-    IntentClarifyRequest, IntentClarifyResponse, McpCallResponse, ProbeProviderRequest,
-    ProviderProbeResponse, RequestIntentRevisionRequest, RequestIntentRevisionResponse,
-    ResolveApprovalRequest, RunBindingRequest, RunBuildRequest, RunXtalWorkflowRequest,
-    RuntimeComponentState, RuntimeComponentStatus, SaveAgentProfileRequest,
-    SaveProviderProfileRequest, StudioDefaults, WorkspaceRadarResponse,
+    CallMcpToolRequest, CassetteBranchRequest, CassetteEntry, ClimbRungRequest, ConnectMcpRequest,
+    ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest, DocPreviewRequest,
+    DocPreviewResponse, FormalizeIntentRequest, FormalizeIntentResponse, HealthResponse,
+    IntentAnswerRequest, IntentAnswerResponse, IntentClarifyRequest, IntentClarifyResponse,
+    IntentImageUploadResponse, LadderState, McpCallResponse, ProbeProviderRequest,
+    ProviderProbeResponse, QuorumRequest, QuorumRound, RequestIntentRevisionRequest,
+    RequestIntentRevisionResponse, ResolveApprovalRequest, RunBindingRequest, RunBuildRequest,
+    RunXtalWorkflowRequest, RuntimeComponentState, RuntimeComponentStatus, SaveAgentProfileRequest,
+    SaveProviderProfileRequest, SessionTurn, StudioDefaults, StudioMemory, SyncClaimResponse,
+    SyncCode, TryItRequest, TryItResult, VisualEmitRequest, VisualParseRequest, VisualResponse,
+    WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -49,6 +53,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/sessions", get(list_sessions).post(create_session))
         .route("/v1/sessions/{session_id}", get(get_session))
         .route("/v1/sessions/{session_id}/stream", get(stream_session))
+        .route("/v1/sessions/{session_id}/turns", get(list_turns))
         .route("/v1/sessions/{session_id}/events", post(dispatch_event))
         .route(
             "/v1/sessions/{session_id}/intent/formalize",
@@ -66,7 +71,56 @@ pub fn router(state: ApiState) -> Router {
             "/v1/sessions/{session_id}/intent/answer",
             post(apply_intent_answer),
         )
+        .route(
+            "/v1/sessions/{session_id}/intent/quorum",
+            post(run_intent_quorum),
+        )
+        .route(
+            "/v1/sessions/{session_id}/intent/image",
+            post(upload_intent_image),
+        )
         .route("/v1/sessions/{session_id}/bindings/run", post(run_binding))
+        .route("/v1/sessions/{session_id}/invoke", post(invoke_artifact))
+        .route("/v1/sessions/{session_id}/ladder", get(ladder_state))
+        .route("/v1/sessions/{session_id}/ladder/climb", post(climb_ladder))
+        .route("/v1/sessions/{session_id}/cassette", get(cassette_entries))
+        .route(
+            "/v1/sessions/{session_id}/cassette/branch",
+            post(branch_cassette),
+        )
+        .route("/v1/sessions/{session_id}/ask", post(ask_project))
+        .route(
+            "/v1/sessions/{session_id}/incidents/scan",
+            post(scan_incidents),
+        )
+        .route(
+            "/v1/sessions/{session_id}/incidents/{incident_id}/repair",
+            post(repair_incident),
+        )
+        .route(
+            "/v1/sessions/{session_id}/visual/streampipe/parse",
+            post(visual_streampipe_parse),
+        )
+        .route(
+            "/v1/sessions/{session_id}/visual/streampipe/emit",
+            post(visual_streampipe_emit),
+        )
+        .route(
+            "/v1/sessions/{session_id}/visual/statemachine/parse",
+            post(visual_statemachine_parse),
+        )
+        .route(
+            "/v1/sessions/{session_id}/visual/statemachine/emit",
+            post(visual_statemachine_emit),
+        )
+        .route(
+            "/v1/sessions/{session_id}/visual/tasks/parse",
+            post(visual_tasks_parse),
+        )
+        .route(
+            "/v1/sessions/{session_id}/visual/tasks/emit",
+            post(visual_tasks_emit),
+        )
         .route(
             "/v1/sessions/{session_id}/artifacts/preview",
             post(preview_artifact),
@@ -78,6 +132,9 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/v1/sessions/{session_id}/build", post(run_build_pipeline))
         .route("/v1/providers", get(list_providers).post(save_provider))
+        .route("/v1/sync/codes", get(mint_sync_code))
+        .route("/v1/sync/{code}/claim", post(claim_sync_code))
+        .route("/v1/memory", get(load_memory).post(save_memory))
         .route("/v1/providers/probe", post(probe_provider))
         .route("/v1/agents", get(list_agents).post(save_agent))
         .route(
@@ -358,6 +415,15 @@ async fn get_session(
     Ok(Json(snapshot))
 }
 
+async fn list_turns(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<Vec<SessionTurn>>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let turns = kernel.session_turns(session_id).map_err(conflict_error)?;
+    Ok(Json(turns))
+}
+
 async fn stream_session(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -508,6 +574,87 @@ async fn apply_intent_answer(
     }))
 }
 
+async fn run_intent_quorum(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<QuorumRequest>,
+) -> Result<Json<QuorumRound>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let round = kernel
+        .run_intent_quorum(session_id, &request.agent_ids)
+        .map_err(conflict_error)?;
+    Ok(Json(round))
+}
+
+async fn upload_intent_image(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    mut multipart: Multipart,
+) -> Result<Json<IntentImageUploadResponse>, (StatusCode, String)> {
+    const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+
+    let mut file_mime = None;
+    let mut declared_mime = None;
+    let mut bytes = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?
+    {
+        match field.name().unwrap_or_default() {
+            "file" | "image" => {
+                if let Some(content_type) = field.content_type() {
+                    file_mime = Some(content_type.to_string());
+                }
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+                if data.len() > MAX_IMAGE_BYTES {
+                    return Err((
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "image upload exceeds 8 MiB".to_string(),
+                    ));
+                }
+                bytes = Some(data.to_vec());
+            }
+            "mime" => {
+                declared_mime = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let bytes = bytes.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "multipart upload must include a file field".to_string(),
+        )
+    })?;
+    let mime = declared_mime
+        .or(file_mime)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    if !mime.starts_with("image/") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "multipart file must use an image/* content type".to_string(),
+        ));
+    }
+
+    let kernel = state.kernel.lock().await;
+    let path = kernel
+        .save_intent_image(session_id, &mime, &bytes)
+        .map_err(conflict_error)?;
+    Ok(Json(IntentImageUploadResponse { path }))
+}
+
 async fn run_binding(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -519,6 +666,177 @@ async fn run_binding(
         .await
         .map_err(internal_error)?;
     Ok(Json(snapshot))
+}
+
+async fn invoke_artifact(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<TryItRequest>,
+) -> Result<Json<TryItResult>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let result = kernel
+        .invoke_artifact(session_id, request)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(result))
+}
+
+async fn ladder_state(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<LadderState>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let state = kernel.ladder_state(session_id).map_err(conflict_error)?;
+    Ok(Json(state))
+}
+
+async fn climb_ladder(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<ClimbRungRequest>,
+) -> Result<Json<SessionSnapshot>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let snapshot = kernel
+        .climb_rung(session_id, &request.to_rung)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(snapshot))
+}
+
+async fn scan_incidents(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<Vec<loom_types::artifacts::OpRecord>>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let ops = kernel
+        .ingest_incidents(session_id)
+        .map_err(conflict_error)?;
+    Ok(Json(ops))
+}
+
+async fn repair_incident(
+    Path((session_id, incident_id)): Path<(Uuid, String)>,
+    State(state): State<ApiState>,
+) -> Result<Json<SessionSnapshot>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let snapshot = kernel
+        .repair_incident(session_id, &incident_id)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(snapshot))
+}
+
+async fn cassette_entries(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<Vec<CassetteEntry>>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let entries = kernel
+        .cassette_entries(session_id)
+        .map_err(conflict_error)?;
+    Ok(Json(entries))
+}
+
+async fn branch_cassette(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<CassetteBranchRequest>,
+) -> Result<Json<Uuid>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let id = kernel
+        .branch_from_cassette(session_id, request.from_entry, &request.new_title)
+        .map_err(conflict_error)?;
+    Ok(Json(id))
+}
+
+async fn ask_project(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<loom_types::api::AskRequest>,
+) -> Result<Json<loom_types::api::AskAnswer>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let answer = kernel
+        .ask_project(session_id, request)
+        .map_err(conflict_error)?;
+    Ok(Json(answer))
+}
+
+async fn visual_streampipe_parse(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<VisualParseRequest>,
+) -> Result<Json<VisualResponse>, (StatusCode, String)> {
+    visual_parse(session_id, state, "streampipe", request).await
+}
+
+async fn visual_streampipe_emit(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<VisualEmitRequest>,
+) -> Result<Json<VisualResponse>, (StatusCode, String)> {
+    visual_emit(session_id, state, "streampipe", request).await
+}
+
+async fn visual_statemachine_parse(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<VisualParseRequest>,
+) -> Result<Json<VisualResponse>, (StatusCode, String)> {
+    visual_parse(session_id, state, "statemachine", request).await
+}
+
+async fn visual_statemachine_emit(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<VisualEmitRequest>,
+) -> Result<Json<VisualResponse>, (StatusCode, String)> {
+    visual_emit(session_id, state, "statemachine", request).await
+}
+
+async fn visual_tasks_parse(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<VisualParseRequest>,
+) -> Result<Json<VisualResponse>, (StatusCode, String)> {
+    visual_parse(session_id, state, "tasks", request).await
+}
+
+async fn visual_tasks_emit(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<VisualEmitRequest>,
+) -> Result<Json<VisualResponse>, (StatusCode, String)> {
+    visual_emit(session_id, state, "tasks", request).await
+}
+
+async fn visual_parse(
+    session_id: Uuid,
+    state: ApiState,
+    kind: &str,
+    request: VisualParseRequest,
+) -> Result<Json<VisualResponse>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    kernel.get_session(session_id).ok_or_else(not_found)?;
+    Ok(Json(
+        kernel
+            .visual_parse(kind, request.source)
+            .map_err(conflict_error)?,
+    ))
+}
+
+async fn visual_emit(
+    session_id: Uuid,
+    state: ApiState,
+    kind: &str,
+    request: VisualEmitRequest,
+) -> Result<Json<VisualResponse>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    kernel.get_session(session_id).ok_or_else(not_found)?;
+    Ok(Json(
+        kernel
+            .visual_emit(kind, request.graph)
+            .map_err(conflict_error)?,
+    ))
 }
 
 async fn preview_artifact(
@@ -575,6 +893,70 @@ async fn run_build_pipeline(
         .await
         .map_err(internal_error)?;
     Ok(Json(snapshot))
+}
+
+async fn mint_sync_code(
+    State(state): State<ApiState>,
+) -> Result<Json<SyncCode>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let session_id = kernel
+        .list_sessions()
+        .first()
+        .map(|session| session.session_id)
+        .ok_or_else(not_found)?;
+    let code = kernel.mint_sync_code(session_id).map_err(conflict_error)?;
+    Ok(Json(code))
+}
+
+async fn claim_sync_code(
+    Path(code): Path<String>,
+    State(state): State<ApiState>,
+) -> Result<Json<SyncClaimResponse>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let session = kernel.claim_sync_code(&code).map_err(conflict_error)?;
+    Ok(Json(SyncClaimResponse { session }))
+}
+
+async fn load_memory(
+    State(state): State<ApiState>,
+) -> Result<Json<StudioMemory>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let memory = kernel.load_memory().map_err(internal_error)?;
+    Ok(Json(memory))
+}
+
+async fn save_memory(
+    State(state): State<ApiState>,
+    Json(patch): Json<Value>,
+) -> Result<Json<StudioMemory>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let mut value = serde_json::to_value(kernel.load_memory().map_err(internal_error)?)
+        .map_err(internal_error)?;
+    merge_json(&mut value, patch);
+    let memory: StudioMemory = serde_json::from_value(value).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid memory patch: {error}"),
+        )
+    })?;
+    let memory = kernel.save_memory(&memory).map_err(internal_error)?;
+    Ok(Json(memory))
+}
+
+fn merge_json(target: &mut Value, patch: Value) {
+    match (target, patch) {
+        (Value::Object(target), Value::Object(patch)) => {
+            for (key, value) in patch {
+                match value {
+                    Value::Null => {
+                        target.remove(&key);
+                    }
+                    value => merge_json(target.entry(key).or_insert(Value::Null), value),
+                }
+            }
+        }
+        (target, patch) => *target = patch,
+    }
 }
 
 async fn list_providers(

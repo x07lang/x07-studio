@@ -79,7 +79,9 @@ export interface IntentPacket {
 		| { kind: 'text'; raw: string }
 		| { kind: 'voice'; transcript: string }
 		| { kind: 'spec'; raw: string }
-		| { kind: 'incident'; path: string };
+		| { kind: 'incident'; path: string }
+		| { kind: 'sketch'; path: string }
+		| { kind: 'image'; path: string; mime: string };
 	clarification_history?: ClarificationTurn[];
 }
 
@@ -127,6 +129,107 @@ export interface PlainEnglishSummary {
 	behavior_promises: string[];
 	boundaries: string[];
 	evidence: string[];
+	run_invocation?: string | null;
+	followups: string[];
+}
+
+export type SessionTurn =
+	| { kind: 'user_intent'; id: string; at: string; raw: string; source_kind: string }
+	| { kind: 'agent_clarify'; id: string; at: string; agent_id: string; questions: TurnQuestion[] }
+	| { kind: 'user_answer'; id: string; at: string; question_id: string; text: string }
+	| { kind: 'agent_draft'; id: string; at: string; agent_id: string; summary: string; evidence: TurnEvidence[] }
+	| { kind: 'user_approved'; id: string; at: string; by: string }
+	| { kind: 'build_stage'; id: string; at: string; stage: string; op_ids: string[] }
+	| { kind: 'verified'; id: string; at: string; summary: PlainEnglishSummary; op_ids: string[] }
+	| { kind: 'incident'; id: string; at: string; incident_id: string; summary: string; repair_available: boolean }
+	| { kind: 'repair'; id: string; at: string; incident_id: string; op_ids: string[] };
+
+export interface TurnQuestion {
+	id: string;
+	text: string;
+	witness_kind: IntentWitnessKind;
+	options: string[];
+	answer?: string | null;
+}
+
+export interface TurnEvidence {
+	label: string;
+	op_id?: string | null;
+	artifact?: string | null;
+}
+
+export interface TryItRequest {
+	input_kind: 'text' | 'file' | 'b64' | 'argv';
+	input_text?: string | null;
+	input_b64?: string | null;
+	input_path?: string | null;
+	argv: string[];
+	profile?: string | null;
+}
+
+export interface ProofCitation {
+	clause_id: string;
+	proof_report?: string | null;
+	summary: string;
+}
+
+export interface TryItResult {
+	output_kind: 'json' | 'text' | 'binary' | string;
+	output_text?: string | null;
+	output_json?: unknown;
+	stats: unknown;
+	proof_citations: ProofCitation[];
+	op_id: string;
+}
+
+export interface LadderRung {
+	id: 'local_preview' | 'shareable' | 'team' | 'production' | string;
+	label: string;
+	profile_path?: string | null;
+	satisfied: boolean;
+	missing: string[];
+	evidence: string[];
+}
+
+export interface LadderState {
+	current_rung: string;
+	rungs: LadderRung[];
+}
+
+export interface QuorumRound {
+	round: number;
+	agents: Array<{ agent_id: string; questions: TurnQuestion[] }>;
+	diff: Array<{ label: string; detail: string }>;
+}
+
+export interface CassetteEntry {
+	idx: number;
+	kind: string;
+	key: string;
+	ts: string;
+	size_bytes: number;
+}
+
+export interface AskAnswer {
+	text: string;
+	citations: Array<{ kind: string; path: string; locator: string }>;
+}
+
+export interface SyncCode {
+	code: string;
+	expires_at: string;
+	session_id: string;
+}
+
+export interface StudioMemory {
+	preferences: {
+		default_agent?: string | null;
+		default_trust_profile?: string | null;
+		naming_style?: string | null;
+		verbosity?: string | null;
+	};
+	recent_projects: Array<{ root: string; last_session_id?: string | null; label: string }>;
+	reusable_specs: Array<{ module_id: string; path: string; summary: string }>;
 }
 
 export interface OpRecord {

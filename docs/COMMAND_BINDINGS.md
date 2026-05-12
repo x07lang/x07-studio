@@ -22,6 +22,9 @@ Loom treats CLI execution as a rendered binding, not as free-form shell text.
 - `xtal.certify`
 - `xtal.ingest`
 - `xtal.improve`
+- `trust.report.sandbox`
+- `trust.profile.check`
+- `trust.certify.profile`
 - `fmt.write`
 - `lint.report`
 - `fix.write`

@@ -179,10 +179,12 @@ records a `x07.studio.agent_write_audit@0.1.0` payload. This is a review gate,
 not a kernel sandbox: it makes out-of-contract writes visible and prevents them
 from being recorded as a successful agent run.
 
-The web intake starts with simple, intermediate, advanced, complex, and expert
-x07 project briefs. They are intentionally editable form seeds, not hidden
-generators: a user or agent chooses difficulty, task type, title, input mode,
-and prompt text before a session is created.
+The browser shell now starts from one Timeline surface instead of a
+Simple/Expert split. Text, image witnesses, clarification, approval, build
+stages, verified summaries, incidents, repairs, Try-It runs, and shipping
+ladder state are projected as typed session turns and adjacent operational
+panels. The old `?mode=expert` URL remains only as a compatibility alias that
+opens evidence drawers.
 For `brownfield_extract` sessions, the browser approval path runs
 `spec.extract` in the `spec_draft` phase before locking the session contract,
 so existing implementation behavior becomes reviewable spec evidence instead

@@ -36,7 +36,7 @@ pub struct CommandRunner;
 #[derive(Debug)]
 struct RunOptions<'a> {
     timeout_seconds: Option<u64>,
-    stdin: Option<&'a str>,
+    stdin: Option<&'a [u8]>,
     updates: Option<mpsc::UnboundedSender<CommandStreamUpdate>>,
 }
 
@@ -69,6 +69,28 @@ impl CommandRunner {
         args: &[String],
         envs: &BTreeMap<String, String>,
         stdin: &str,
+    ) -> anyhow::Result<CommandExecution> {
+        self.run_with_options(
+            cwd,
+            program,
+            args,
+            envs,
+            RunOptions {
+                timeout_seconds: None,
+                stdin: Some(stdin.as_bytes()),
+                updates: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn run_with_stdin_bytes(
+        &self,
+        cwd: &Utf8Path,
+        program: &str,
+        args: &[String],
+        envs: &BTreeMap<String, String>,
+        stdin: &[u8],
     ) -> anyhow::Result<CommandExecution> {
         self.run_with_options(
             cwd,
@@ -160,7 +182,7 @@ impl CommandRunner {
         if let Some(input) = options.stdin {
             if let Some(mut child_stdin) = child.stdin.take() {
                 child_stdin
-                    .write_all(input.as_bytes())
+                    .write_all(input)
                     .await
                     .with_context(|| format!("failed to write stdin for `{program}`"))?;
             }

@@ -43,6 +43,8 @@ pub enum IntentSource {
     Voice { transcript: String },
     Spec { raw: String },
     Incident { path: String },
+    Sketch { path: String },
+    Image { path: String, mime: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -220,6 +222,17 @@ pub struct AgentHandoff {
     pub approval_required: bool,
     pub artifacts: Vec<String>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlainEnglishSummary {
+    pub schema_version: String,
+    pub headline: String,
+    pub behavior_promises: Vec<String>,
+    pub boundaries: Vec<String>,
+    pub evidence: Vec<String>,
+    pub run_invocation: Option<String>,
+    pub followups: Vec<String>,
 }
 
 impl AgentProfile {

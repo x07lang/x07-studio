@@ -22,7 +22,9 @@ import {
 	type AgentRunResponse,
 	type ApprovalDecision,
 	type ArtifactPreviewResponse,
+	type AskAnswer,
 	type BindingDescriptor,
+	type CassetteEntry,
 	type CertifyRunOptions,
 	type DocPreviewResponse,
 	type FormalizeIntentResponse,
@@ -32,12 +34,20 @@ import {
 	type IntentClarifyResponse,
 	type IntentInputMode,
 	type IntentPacket,
+	type LadderState,
+	type PlainEnglishSummary,
 	type ProviderProbeResponse,
 	type ProviderProfile,
+	type QuorumRound,
 	type RequestIntentRevisionResponse,
 	type SessionSnapshot,
 	type SessionStreamEvent,
+	type SessionTurn,
+	type StudioMemory,
+	type SyncCode,
 	type TaskType,
+	type TryItRequest,
+	type TryItResult,
 	type RepairRunOptions,
 	type VerifyRunOptions,
 	type WorkspaceRadarResponse
@@ -102,6 +112,17 @@ export class StudioApi {
 			this.demoSessions.find((session) => session.session_id === sessionId) ??
 			this.demoSessions[0]
 		);
+	}
+
+	async listTurns(sessionId: string): Promise<SessionTurn[]> {
+		if (!this.demoMode) {
+			try {
+				return await request<SessionTurn[]>(`/v1/sessions/${sessionId}/turns`);
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		return projectDemoTurns(this.demoSessions.find((session) => session.session_id === sessionId) ?? this.demoSessions[0]);
 	}
 
 	async listBindings(): Promise<BindingDescriptor[]> {
@@ -376,6 +397,15 @@ export class StudioApi {
 		}
 	}
 
+	async runIntentQuorum(session: SessionSnapshot, agentIds: string[]): Promise<QuorumRound | null> {
+		if (this.demoMode) return null;
+		const response = await request<QuorumRound>(`/v1/sessions/${session.session_id}/intent/quorum`, {
+			method: 'POST',
+			body: JSON.stringify({ agent_ids: agentIds })
+		});
+		return response;
+	}
+
 	async runBuildPipeline(
 		session: SessionSnapshot,
 		options: { maxRepairRounds?: number; verifyOptions?: Partial<VerifyRunOptions> } = {}
@@ -416,8 +446,131 @@ export class StudioApi {
 			'stage',
 			'done'
 		]);
+		current = appendDemoOp(
+			current,
+			'summary.plain_english',
+			'succeeded',
+			['studio', 'summary', 'plain-english'],
+			[`.x07/studio/sessions/${current.session_id}.json`],
+			{
+				schema_version: 'x07.studio.plain_english_summary@0.1.0',
+				headline: 'Built and verified.',
+				behavior_promises: [current.intent?.witnesses[0]?.text ?? 'The requested behavior is ready.'],
+				boundaries: [],
+				evidence: ['Verified correctness (1 pass).'],
+				run_invocation:
+					'printf "%s" "<your input here>" | x07 run --project x07.json --profile sandbox --stdin',
+				followups: ['Do you want a CLI wrapper for this?']
+			}
+		);
 		this.replaceDemo(current);
 		return current;
+	}
+
+	async invoke(session: SessionSnapshot, req: TryItRequest): Promise<TryItResult> {
+		if (!this.demoMode) {
+			const result = await request<TryItResult>(`/v1/sessions/${session.session_id}/invoke`, {
+				method: 'POST',
+				body: JSON.stringify(req)
+			});
+			return result;
+		}
+		return {
+			output_kind: 'text',
+			output_text: req.input_text ? `demo output for ${req.input_text}` : 'demo output',
+			output_json: null,
+			stats: { demo: true },
+			proof_citations: [
+				{
+					clause_id: session.intent?.targets[0]?.module_id ?? 'demo',
+					proof_report: 'target/xtal/verify/summary.json',
+					summary: 'Demo verify citation'
+				}
+			],
+			op_id: `op-try-${Date.now()}`
+		};
+	}
+
+	async ladderState(session: SessionSnapshot): Promise<LadderState> {
+		if (!this.demoMode) {
+			return await request<LadderState>(`/v1/sessions/${session.session_id}/ladder`);
+		}
+		return {
+			current_rung: session.phase === 'certified' ? 'team' : 'local_preview',
+			rungs: ['local_preview', 'shareable', 'team', 'production'].map((id, index) => ({
+				id,
+				label: ['Local preview', 'Shareable', 'Team', 'Production'][index],
+				profile_path: index === 0 ? null : `arch/trust/profiles/${id}.json`,
+				satisfied: index === 0,
+				missing: index === 0 ? [] : [`arch/trust/profiles/${id}.json`],
+				evidence: index === 0 ? ['demo verify evidence'] : []
+			}))
+		};
+	}
+
+	async climbRung(session: SessionSnapshot, toRung: string): Promise<SessionSnapshot> {
+		if (!this.demoMode) {
+			const next = await request<SessionSnapshot>(`/v1/sessions/${session.session_id}/ladder/climb`, {
+				method: 'POST',
+				body: JSON.stringify({ to_rung: toRung })
+			});
+			this.replaceDemo(next);
+			return next;
+		}
+		const next = appendDemoOp(session, `trust.certify.${toRung}`, 'succeeded');
+		this.replaceDemo(next);
+		return next;
+	}
+
+	async scanIncidents(session: SessionSnapshot) {
+		if (!this.demoMode) {
+			return await request(`/v1/sessions/${session.session_id}/incidents/scan`, { method: 'POST' });
+		}
+		return [];
+	}
+
+	async repairIncident(session: SessionSnapshot, incidentId: string): Promise<SessionSnapshot> {
+		if (!this.demoMode) {
+			const next = await request<SessionSnapshot>(
+				`/v1/sessions/${session.session_id}/incidents/${incidentId}/repair`,
+				{ method: 'POST' }
+			);
+			this.replaceDemo(next);
+			return next;
+		}
+		const next = appendDemoOp(session, 'xtal.improve', 'succeeded', ['x07', 'xtal', 'improve', incidentId]);
+		this.replaceDemo(next);
+		return next;
+	}
+
+	async cassetteEntries(session: SessionSnapshot): Promise<CassetteEntry[]> {
+		if (!this.demoMode) {
+			return await request<CassetteEntry[]>(`/v1/sessions/${session.session_id}/cassette`);
+		}
+		return [];
+	}
+
+	async askProject(session: SessionSnapshot, question: string): Promise<AskAnswer> {
+		if (!this.demoMode) {
+			return await request<AskAnswer>(`/v1/sessions/${session.session_id}/ask`, {
+				method: 'POST',
+				body: JSON.stringify({ question })
+			});
+		}
+		return {
+			text: `Demo answer for ${question}`,
+			citations: [{ kind: 'spec', path: 'spec/demo.x07spec.json', locator: '/operations/0' }]
+		};
+	}
+
+	async mintSyncCode(): Promise<SyncCode | null> {
+		if (this.demoMode) return null;
+		return await request<SyncCode>('/v1/sync/codes');
+	}
+
+	async loadMemory(): Promise<StudioMemory | null> {
+		if (this.demoMode) return null;
+		return await request<StudioMemory>('/v1/memory');
 	}
 
 	subscribeSession(
@@ -1049,6 +1202,64 @@ function demoDocPreview(docRef: string): DocPreviewResponse {
 	};
 }
 
+function projectDemoTurns(session: SessionSnapshot): SessionTurn[] {
+	const turns: SessionTurn[] = [];
+	if (session.intent) {
+		const source = session.intent.source;
+		const raw =
+			source.kind === 'text' || source.kind === 'spec'
+				? source.raw
+				: source.kind === 'voice'
+					? source.transcript
+					: source.path;
+		turns.push({
+			kind: 'user_intent',
+			id: `${session.session_id}-intent`,
+			at: session.op_log[0]?.started_at ?? 'demo',
+			raw,
+			source_kind: source.kind
+		});
+	}
+	for (const turn of session.intent?.clarification_history ?? []) {
+		turns.push({
+			kind: 'agent_clarify',
+			id: `${session.session_id}-${turn.question_id}`,
+			at: turn.question_recorded_at,
+			agent_id: turn.agent_id,
+			questions: [
+				{
+					id: turn.question_id,
+					text: turn.question_text,
+					witness_kind: turn.witness_kind,
+					options: turn.options,
+					answer: turn.answer_text
+				}
+			]
+		});
+	}
+	const buildOps = session.op_log.filter((op) => op.op.startsWith('build.stage.'));
+	if (buildOps.length) {
+		turns.push({
+			kind: 'build_stage',
+			id: `${session.session_id}-build`,
+			at: buildOps[0].started_at,
+			stage: buildOps.at(-1)?.op.replace('build.stage.', '') ?? 'start',
+			op_ids: buildOps.map((op) => op.id)
+		});
+	}
+	const summaryOp = [...session.op_log].reverse().find((op) => op.op === 'summary.plain_english');
+	if (summaryOp?.report_json) {
+		turns.push({
+			kind: 'verified',
+			id: `${session.session_id}-verified`,
+			at: summaryOp.started_at,
+			summary: summaryOp.report_json as PlainEnglishSummary,
+			op_ids: [summaryOp.id]
+		});
+	}
+	return turns;
+}
+
 const atlasDemoWorkflowBindings = [
 	'pkg.lock.atlas.frontend',
 	'wasm.app.profile.validate.atlas_dev',
@@ -1098,6 +1309,8 @@ function demoSessionHaystack(session: SessionSnapshot): string {
 		raw = session.intent.source.raw;
 	} else if (session.intent?.source.kind === 'voice') {
 		raw = session.intent.source.transcript;
+	} else if (session.intent?.source.kind === 'incident' || session.intent?.source.kind === 'sketch' || session.intent?.source.kind === 'image') {
+		raw = session.intent.source.path;
 	}
 	return `${target?.module_id ?? ''} ${target?.entry ?? ''} ${raw}`.toLowerCase();
 }
