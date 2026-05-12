@@ -594,3 +594,16 @@ This document records friction found while implementing the Studio web surface.
    The browser voice test now proves a low-confidence spoken workflow witness
    remains visible before spec approval instead of silently becoming trusted
    input.
+
+56. Provider polish needs capability gates, not only a profile id.
+
+   Provider-backed intent polish was opt-in and recorded as review evidence,
+   but the browser mostly showed a checkbox plus raw provider profile id. That
+   made it hard for a human to know whether a provider had proven `/models`,
+   `/responses`, `/chat/completions`, tool calls, JSON schema, streaming, or
+   trust tier before model suggestions entered the intent review. Studio now
+   lists configured OpenAI-compatible profiles, runs the existing provider probe
+   endpoint from the browser, and renders capability gates beside the Codex and
+   Claude Code lanes. The browser workflow test now proves the probe gate is
+   visible and that provider-backed polish stays reviewable rather than being a
+   hidden prompt enhancement.

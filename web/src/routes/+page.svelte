@@ -18,6 +18,7 @@
 		buildEvidenceCoverage,
 		buildOnboardingPlan,
 		buildPlatformBridge,
+		buildProviderProbeGates,
 		buildWorldBudgetGuard,
 		canonicalDocRefs,
 		canonicalMcpTools,
@@ -42,6 +43,8 @@
 		type IntentInputMode,
 		type OpRecord,
 		type PlatformBridgeItem,
+		type ProviderProbeReport,
+		type ProviderProfile,
 		type ProjectDifficulty,
 		type Room,
 		type RuntimeComponentStatus,
@@ -59,6 +62,7 @@
 	let sessions: SessionSnapshot[] = [];
 	let bindings: BindingDescriptor[] = [];
 	let agentProfiles: AgentProfile[] = [];
+	let providerProfiles: ProviderProfile[] = [];
 	let selectedId = '';
 	let selectedRoom: Room = 'intent';
 	let selectedSessionForRoom = '';
@@ -71,6 +75,8 @@
 	let revisionHistory: string[] = [];
 	let useProviderPolish = false;
 	let providerProfileId = '';
+	let providerProbeReport: ProviderProbeReport | null = null;
+	let providerProbeStatus = 'Provider probe not run';
 	let statusLine = 'Starting Studio surface';
 	let handoffStatus = 'No agent handoff generated';
 	let latestAgentHandoff: AgentHandoff | null = null;
@@ -367,6 +373,10 @@
 	$: providerSummary = api.isDemoMode ? 'demo projection' : 'Loom daemon';
 	$: defaultProviderProfileId = health.defaults.provider_profile_id || 'ollama-local';
 	$: if (!providerProfileId && defaultProviderProfileId) providerProfileId = defaultProviderProfileId;
+	$: selectedProviderProfile =
+		providerProfiles.find((profile) => profile.id === providerProfileId) ?? providerProfiles[0] ?? null;
+	$: providerProbeGates = buildProviderProbeGates(selectedProviderProfile, providerProbeReport);
+	$: providerProbeReady = providerProbeGates.filter((gate) => gate.state === 'ready').length;
 	$: setupComponents = health.components ?? [];
 	$: missingRequiredComponents = setupComponents.filter(
 		(component) => component.required && component.status !== 'available'
@@ -489,12 +499,40 @@
 		sessions = await api.listSessions();
 		bindings = await api.listBindings();
 		agentProfiles = await api.listAgents();
+		providerProfiles = await api.listProviders();
 		if (agentProfiles.length && !agentProfiles.some((profile) => profile.id === selectedAgentId)) {
 			selectedAgentId = agentProfiles[0].id;
+		}
+		if (providerProfiles.length && !providerProfiles.some((profile) => profile.id === providerProfileId)) {
+			providerProfileId = providerProfiles[0].id;
+			providerProbeReport = null;
+			providerProbeStatus = 'Provider probe not run';
 		}
 		workspaceRadar = await api.workspaceRadar();
 		selectedId = selectedId || sessions[0]?.session_id || '';
 		statusLine = api.isDemoMode ? 'Demo projection active' : 'Connected to Loom daemon';
+	}
+
+	async function probeSelectedProvider() {
+		if (!selectedProviderProfile) {
+			providerProbeStatus = 'No provider profile selected';
+			return;
+		}
+		busy = true;
+		providerProbeStatus = `Probing ${selectedProviderProfile.label}`;
+		try {
+			const response = await api.probeProvider(selectedProviderProfile);
+			providerProbeReport = response.report;
+			const okText = response.report.ok ? 'passed' : 'needs review';
+			providerProbeStatus = `${response.profile.label} probe ${okText}: ${response.report.models.length} model${response.report.models.length === 1 ? '' : 's'}`;
+			statusLine = providerProbeStatus;
+		} catch (error) {
+			providerProbeReport = null;
+			providerProbeStatus = error instanceof Error ? error.message : 'Provider probe failed';
+			statusLine = providerProbeStatus;
+		} finally {
+			busy = false;
+		}
 	}
 
 	async function createSession() {
@@ -540,6 +578,11 @@
 			projectTemplates.find((candidate) => candidate.id === target.value) ?? selectedProjectTemplate;
 		projectDifficulty = template.id;
 		loadProjectBrief(template);
+	}
+
+	function selectProviderProfile() {
+		providerProbeReport = null;
+		providerProbeStatus = 'Provider probe not run';
 	}
 
 	function toggleDetailMode() {
@@ -1636,12 +1679,17 @@
 								<input type="checkbox" bind:checked={useProviderPolish} />
 								<span>Provider polish</span>
 							</label>
-							<input
+							<select
 								aria-label="Provider profile"
 								bind:value={providerProfileId}
+								on:change={selectProviderProfile}
 								disabled={!useProviderPolish}
-							/>
-							<small>{useProviderPolish ? 'Model suggestions are merged as review evidence.' : 'Deterministic polish only.'}</small>
+							>
+								{#each providerProfiles as profile}
+									<option value={profile.id}>{profile.label}</option>
+								{/each}
+							</select>
+							<small>{useProviderPolish ? `${providerProbeReady}/${providerProbeGates.length} provider gates ready; model suggestions are review evidence.` : 'Deterministic polish only.'}</small>
 						</div>
 					</div>
 					<div class="spec-preview" aria-label="Spec approval preview">
@@ -1880,6 +1928,50 @@
 							<small>{provider.bridge}</small>
 						</div>
 					{/each}
+				</div>
+				<div class="provider-probe" aria-label="Provider capability gates">
+					<div class="provider-probe-head">
+						<div>
+							<span>Provider capability gate</span>
+							<strong>{selectedProviderProfile?.label ?? 'No provider configured'}</strong>
+						</div>
+						<div class="provider-probe-actions">
+							<select
+								aria-label="Provider capability profile"
+								bind:value={providerProfileId}
+								on:change={selectProviderProfile}
+							>
+								{#each providerProfiles as profile}
+									<option value={profile.id}>{profile.label}</option>
+								{/each}
+							</select>
+							<button
+								class="segmented-button"
+								type="button"
+								on:click={probeSelectedProvider}
+								disabled={busy || !selectedProviderProfile}
+							>
+								Probe Provider
+							</button>
+						</div>
+					</div>
+					<p>{providerProbeStatus}; {providerProbeReady}/{providerProbeGates.length} gates ready</p>
+					<div class="provider-gates">
+						{#each providerProbeGates as gate}
+							<div class={`provider-gate ${gate.state}`}>
+								<span>{gate.label}</span>
+								<strong>{gate.value}</strong>
+								<small>{gate.detail}</small>
+							</div>
+						{/each}
+					</div>
+					{#if providerProbeReport?.notes.length}
+						<div class="provider-notes" aria-label="Provider probe notes">
+							{#each providerProbeReport.notes.slice(0, 3) as note}
+								<code>{note}</code>
+							{/each}
+						</div>
+					{/if}
 				</div>
 				<div class="agent-profiles" aria-label="Configured coding agents">
 					{#each agentProfiles as agent}

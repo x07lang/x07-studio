@@ -31,6 +31,7 @@
 - browser transcript confidence review for Web Speech witnesses, including language selection, confidence gate, and low-confidence review badges
 - draft witness preview that classifies raw written/spoken/spec/incident input before polish as desired behavior, forbidden behavior, policy requirement, or incident evidence
 - opt-in provider-backed intent polish that records model suggestions as review evidence while keeping deterministic intent generation as the fallback
+- browser provider capability gates for OpenAI-compatible profiles, including model catalog, intent-polish API, tool calls, JSON schema, streaming, and trust-tier review
 - daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs
 - browser and native egui onboarding plans render first-run defaults, bootstrap command, resolved component sources, and required/optional setup work from the daemon health report
 - daemon-side coding-agent readiness checks reject disabled profiles and missing execute commands even when clients bypass the browser controls
@@ -53,7 +54,7 @@
 ## Still intentionally thin in v0.1
 
 - GUI exposes HTTP MCP first; stdio MCP is available through the daemon API already
-- provider probing is bounded and capability-oriented, not a full benchmark suite
+- provider probing is bounded and capability-oriented; it now surfaces readiness gates but is still not a full quality benchmark suite
 - session execution policy is enforced by the reducer, canonical binding catalog, approval gates, supervised agent contract environment, and post-run write-root audits; this is still not an OS-level path sandbox
 - the v0.1 shells expose lifecycle controls, graph overlays, artifact logs, a compact trust review queue, artifact-backed patchset previews, semantic patch review rows, path-level before/after visual patch review, and browser speech transcript capture with confidence review; richer provider and STT backend configuration remains a later UI layer
 - no compile-time proof cache yet

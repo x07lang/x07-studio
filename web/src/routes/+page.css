@@ -1571,6 +1571,7 @@ textarea {
 
 .spec-grid,
 .providers,
+.provider-gates,
 .agent-profiles,
 .agent-lanes {
 	display: grid;
@@ -1584,6 +1585,7 @@ textarea {
 
 .spec-grid div,
 .provider,
+.provider-gate,
 .agent-profiles > div,
 .agent-lanes div {
 	border: 1px solid var(--border);
@@ -1596,10 +1598,83 @@ textarea {
 }
 
 .provider strong,
+.provider-gate strong,
 .agent-profiles strong,
 .agent-lanes strong,
 .spec-grid strong {
 	color: var(--text);
+}
+
+.provider-probe {
+	display: grid;
+	gap: 10px;
+	margin-top: 10px;
+	border: 1px solid rgba(85, 214, 231, 0.16);
+	border-radius: var(--radius);
+	background: rgba(85, 214, 231, 0.035);
+	padding: 10px;
+}
+
+.provider-probe-head,
+.provider-probe-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.provider-probe-head span,
+.provider-gate span,
+.provider-gate small,
+.provider-probe p {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.provider-probe-head strong {
+	display: block;
+	margin-top: 2px;
+}
+
+.provider-probe-actions select {
+	min-width: 160px;
+}
+
+.provider-probe p {
+	margin: 0;
+}
+
+.provider-gates {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.provider-gate.ready {
+	border-color: rgba(114, 228, 180, 0.34);
+	background: rgba(114, 228, 180, 0.06);
+}
+
+.provider-gate.review {
+	border-color: rgba(255, 195, 91, 0.34);
+	background: rgba(255, 195, 91, 0.06);
+}
+
+.provider-gate.blocked {
+	border-color: rgba(243, 111, 141, 0.34);
+	background: rgba(243, 111, 141, 0.06);
+}
+
+.provider-notes {
+	display: grid;
+	gap: 5px;
+}
+
+.provider-notes code {
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: var(--radius);
+	background: rgba(0, 0, 0, 0.18);
+	padding: 6px;
+	white-space: normal;
+	overflow-wrap: anywhere;
 }
 
 .agent-profiles,
@@ -3156,6 +3231,16 @@ textarea {
 	.platform-summary,
 	.platform-lanes {
 		grid-template-columns: 1fr;
+	}
+
+	.provider-gates {
+		grid-template-columns: 1fr;
+	}
+
+	.provider-probe-head,
+	.provider-probe-actions {
+		align-items: stretch;
+		flex-direction: column;
 	}
 
 	.radar-grid {

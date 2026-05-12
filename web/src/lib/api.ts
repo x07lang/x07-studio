@@ -2,6 +2,7 @@ import {
 	appendDemoOp,
 	createIntentPacket,
 	defaultAgentProfiles,
+	defaultProviderProfiles,
 	demoBindings,
 	demoHealth,
 	demoSession,
@@ -19,6 +20,8 @@ import {
 	type HealthResponse,
 	type IntentInputMode,
 	type IntentPacket,
+	type ProviderProbeResponse,
+	type ProviderProfile,
 	type SessionSnapshot,
 	type TaskType,
 	type WorkspaceRadarResponse
@@ -100,6 +103,32 @@ export class StudioApi {
 			}
 		}
 		return defaultAgentProfiles;
+	}
+
+	async listProviders(): Promise<ProviderProfile[]> {
+		if (!this.demoMode) {
+			try {
+				const profiles = await request<ProviderProfile[]>('/v1/providers');
+				return profiles.length ? profiles : defaultProviderProfiles;
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		return defaultProviderProfiles;
+	}
+
+	async probeProvider(profile: ProviderProfile): Promise<ProviderProbeResponse> {
+		if (!this.demoMode) {
+			try {
+				return await request<ProviderProbeResponse>('/v1/providers/probe', {
+					method: 'POST',
+					body: JSON.stringify({ profile })
+				});
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		return demoProviderProbe(profile);
 	}
 
 	async createSession(title: string, task_type: TaskType): Promise<SessionSnapshot> {
@@ -533,6 +562,29 @@ function demoArtifactPreview(artifact: string): ArtifactPreviewResponse {
 				}
 			: null
 	};
+}
+
+function demoProviderProbe(profile: ProviderProfile): ProviderProbeResponse {
+	const report = {
+		schema_version: 'x07.studio.provider_probe_report@0.1.0' as const,
+		profile_id: profile.id,
+		base_url: profile.base_url,
+		observed_at: new Date(0).toISOString(),
+		ok: true,
+		http_status: 200,
+		models: [profile.model ?? 'qwen3-coder'],
+		capabilities: {
+			models_endpoint: 'supported' as const,
+			responses: 'supported' as const,
+			chat_completions: 'supported' as const,
+			tools: 'supported' as const,
+			json_schema: 'supported' as const,
+			streaming: 'unknown' as const
+		},
+		notes: ['demo provider deep probe covers /models, /responses, /chat/completions, tools, and JSON schema'],
+		raw: null
+	};
+	return { profile, report };
 }
 
 function demoDocPreview(docRef: string): DocPreviewResponse {

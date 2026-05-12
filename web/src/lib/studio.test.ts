@@ -16,11 +16,13 @@ import {
 	buildEvidenceCoverage,
 	buildOnboardingPlan,
 	buildPlatformBridge,
+	buildProviderProbeGates,
 	buildWorldBudgetGuard,
 	canonicalDocRefs,
 	canonicalMcpTools,
 	createIntentPacket,
 	defaultAgentProfiles,
+	defaultProviderProfiles,
 	demoBindings,
 	demoHealth,
 	demoSession,
@@ -237,6 +239,33 @@ describe('x07 Studio XTAL web model', () => {
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
+	});
+
+	it('builds provider capability gates from a deep probe report', () => {
+		const profile = { ...defaultProviderProfiles[0], model: 'qwen3-coder' };
+		const gates = buildProviderProbeGates(profile, {
+			schema_version: 'x07.studio.provider_probe_report@0.1.0',
+			profile_id: profile.id,
+			base_url: profile.base_url,
+			observed_at: '2026-05-11T00:00:00Z',
+			ok: true,
+			http_status: 200,
+			models: ['qwen3-coder'],
+			capabilities: {
+				models_endpoint: 'supported',
+				responses: 'supported',
+				chat_completions: 'supported',
+				tools: 'supported',
+				json_schema: 'supported',
+				streaming: 'unknown'
+			},
+			notes: []
+		});
+
+		expect(gates.find((gate) => gate.label === 'Model catalog')?.state).toBe('ready');
+		expect(gates.find((gate) => gate.label === 'Intent polish API')?.state).toBe('ready');
+		expect(gates.find((gate) => gate.label === 'Streaming')?.state).toBe('review');
+		expect(gates.find((gate) => gate.label === 'Trust tier')?.detail).toContain('Local provider');
 	});
 
 	it('keeps the approval gate before realization', () => {

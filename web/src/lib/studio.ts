@@ -227,6 +227,61 @@ export interface ProviderCard {
 	status: 'ready' | 'needs_probe' | 'not_configured';
 }
 
+export type ProviderProbeMode = 'shallow' | 'deep';
+export type ProviderTrustTier = 'local_trusted' | 'remote_untrusted' | 'remote_trusted';
+export type ProviderProbeStatus = 'supported' | 'unsupported' | 'unknown' | 'error';
+export type ProviderGateState = 'ready' | 'review' | 'blocked';
+
+export interface ProviderProfile {
+	schema_version: 'x07.studio.provider_profile@0.1.0';
+	id: string;
+	label: string;
+	base_url: string;
+	api_key_env?: string | null;
+	api_key?: string | null;
+	api_kind: 'openai_compatible';
+	model?: string | null;
+	default_headers: Record<string, string>;
+	local: boolean;
+	trust_tier: ProviderTrustTier;
+	probe_mode: ProviderProbeMode;
+	disabled: boolean;
+}
+
+export interface ProviderCapabilities {
+	models_endpoint: ProviderProbeStatus;
+	responses: ProviderProbeStatus;
+	chat_completions: ProviderProbeStatus;
+	tools: ProviderProbeStatus;
+	json_schema: ProviderProbeStatus;
+	streaming: ProviderProbeStatus;
+}
+
+export interface ProviderProbeReport {
+	schema_version: 'x07.studio.provider_probe_report@0.1.0';
+	profile_id: string;
+	base_url: string;
+	observed_at: string;
+	ok: boolean;
+	http_status?: number | null;
+	models: string[];
+	capabilities: ProviderCapabilities;
+	notes: string[];
+	raw?: unknown;
+}
+
+export interface ProviderProbeResponse {
+	profile: ProviderProfile;
+	report: ProviderProbeReport;
+}
+
+export interface ProviderGateItem {
+	label: string;
+	value: string;
+	detail: string;
+	state: ProviderGateState;
+}
+
 export interface AgentLane {
 	id: 'codex' | 'claude-code';
 	label: string;
@@ -452,6 +507,24 @@ export const providerCards: ProviderCard[] = [
 		bridge: 'MCP JSON-RPC',
 		trust: 'local',
 		status: 'ready'
+	}
+];
+
+export const defaultProviderProfiles: ProviderProfile[] = [
+	{
+		schema_version: 'x07.studio.provider_profile@0.1.0',
+		id: 'ollama-local',
+		label: 'Ollama local',
+		base_url: 'http://127.0.0.1:11434/v1',
+		api_key_env: null,
+		api_key: null,
+		api_kind: 'openai_compatible',
+		model: null,
+		default_headers: {},
+		local: true,
+		trust_tier: 'local_trusted',
+		probe_mode: 'deep',
+		disabled: false
 	}
 ];
 
@@ -795,6 +868,101 @@ export function buildWorldBudgetGuard(
 		budgets,
 		gates
 	};
+}
+
+export function buildProviderProbeGates(
+	profile: ProviderProfile | null | undefined,
+	report: ProviderProbeReport | null | undefined
+): ProviderGateItem[] {
+	if (!profile) {
+		return [
+			{
+				label: 'Provider profile',
+				value: 'missing',
+				detail: 'Configure an OpenAI-compatible provider before provider-backed polish.',
+				state: 'blocked'
+			}
+		];
+	}
+	if (profile.disabled) {
+		return [
+			{
+				label: 'Provider profile',
+				value: 'disabled',
+				detail: `${profile.label} is disabled; deterministic intent polish remains active.`,
+				state: 'blocked'
+			}
+		];
+	}
+	const capabilities = report?.capabilities;
+	const models = report?.models ?? [];
+	const hasModel = Boolean(profile.model || models.length);
+	return [
+		{
+			label: 'Model catalog',
+			value: report ? `${models.length} model${models.length === 1 ? '' : 's'}` : 'probe pending',
+			detail: profile.model
+				? `Pinned model ${profile.model}`
+				: hasModel
+					? `Defaulting to ${models[0]}`
+					: 'Deep probe should confirm an available model.',
+			state: report ? (hasModel ? 'ready' : 'blocked') : 'review'
+		},
+		capabilityGate('Intent polish API', capabilities?.responses, capabilities?.chat_completions),
+		capabilityGate('Tool calls', capabilities?.tools),
+		capabilityGate('JSON schema', capabilities?.json_schema),
+		capabilityGate('Streaming', capabilities?.streaming),
+		{
+			label: 'Trust tier',
+			value: profile.trust_tier.replaceAll('_', ' '),
+			detail: profile.local
+				? 'Local provider output can be reviewed without remote data transfer.'
+				: 'Remote provider output is advisory evidence and needs human review.',
+			state: profile.trust_tier === 'remote_untrusted' ? 'review' : 'ready'
+		}
+	];
+}
+
+function capabilityGate(
+	label: string,
+	primary: ProviderProbeStatus | undefined,
+	fallback?: ProviderProbeStatus | undefined
+): ProviderGateItem {
+	const status = combinedProviderStatus(primary, fallback);
+	const fallbackText = fallback ? `; fallback ${providerStatusLabel(fallback)}` : '';
+	return {
+		label,
+		value: providerStatusLabel(status),
+		detail: providerStatusDetail(label, status, fallbackText),
+		state: providerStatusState(status)
+	};
+}
+
+function combinedProviderStatus(
+	primary: ProviderProbeStatus | undefined,
+	fallback: ProviderProbeStatus | undefined
+): ProviderProbeStatus {
+	if (primary === 'supported' || fallback === 'supported') return 'supported';
+	if (primary === 'error' || fallback === 'error') return 'error';
+	if (primary === 'unsupported' || fallback === 'unsupported') return 'unsupported';
+	return primary ?? fallback ?? 'unknown';
+}
+
+function providerStatusLabel(status: ProviderProbeStatus): string {
+	return status.replaceAll('_', ' ');
+}
+
+function providerStatusState(status: ProviderProbeStatus): ProviderGateState {
+	if (status === 'supported') return 'ready';
+	if (status === 'unsupported' || status === 'error') return 'blocked';
+	return 'review';
+}
+
+function providerStatusDetail(label: string, status: ProviderProbeStatus, suffix: string): string {
+	if (status === 'supported') return `${label} is available for provider-backed review${suffix}.`;
+	if (status === 'unsupported') return `${label} is not available; keep deterministic fallback active${suffix}.`;
+	if (status === 'error') return `${label} probe failed; do not rely on this provider yet${suffix}.`;
+	return `${label} has not been proven by a deep probe${suffix}.`;
 }
 
 export function buildApprovalLedger(

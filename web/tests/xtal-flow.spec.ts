@@ -255,8 +255,8 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('x07 platform bridge')).toContainText('Platform optional');
 	await page.getByLabel('Provider intent polish').getByRole('checkbox').check();
 	await expect(page.getByLabel('Provider profile')).toBeEnabled();
-	await page.getByLabel('Provider profile').fill('ollama-local');
-	await expect(page.getByLabel('Provider intent polish')).toContainText('Model suggestions');
+	await page.getByLabel('Provider profile').selectOption('ollama-local');
+	await expect(page.getByLabel('Provider intent polish')).toContainText('provider gates ready');
 	await page.getByLabel('Provider intent polish').getByRole('checkbox').uncheck();
 
 	await page.getByRole('button', { name: 'Refresh Studio' }).click();
@@ -306,6 +306,14 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await expect(page.getByLabel('Session doctrine')).toContainText('x07.search_v1');
 	await expect(page.getByLabel('Session doctrine')).toContainText('x07/docs/getting-started/agent-quickstart.md');
 	await page.getByRole('tab', { name: 'Agents' }).click();
+	await expect(page.getByLabel('Provider capability gates')).toContainText('Provider probe not run');
+	await expect(page.getByLabel('Provider capability gates')).toContainText('Intent polish API');
+	await page.getByLabel('Provider capability profile').selectOption('ollama-local');
+	await page.getByRole('button', { name: 'Probe Provider' }).click();
+	await expect(page.locator('footer')).toContainText('Ollama local probe passed');
+	await expect(page.getByLabel('Provider capability gates')).toContainText('5/6');
+	await expect(page.getByLabel('Provider capability gates')).toContainText('Tool calls');
+	await expect(page.getByLabel('Provider probe notes')).toContainText('/responses');
 	await expect(
 		page.getByLabel('Configured coding agents').getByText('OpenAI Codex', { exact: true })
 	).toBeVisible();
