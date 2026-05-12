@@ -31,10 +31,12 @@
 - daemon health reports onboarding defaults and runtime component readiness for `x07`, `x07-wasm`, `x07lp`, and local agent CLIs
 - browser and native egui onboarding plans render first-run defaults, bootstrap command, resolved component sources, and required/optional setup work from the daemon health report
 - daemon-side coding-agent readiness checks reject disabled profiles and missing execute commands even when clients bypass the browser controls
+- saved custom agent profiles merge with the built-in OpenAI Codex and Claude Code lanes instead of replacing them
 - connected browser E2E proves both OpenAI Codex and Claude Code supervised handoffs through plan, approval, execute, structured agent event capture, and worklog filtering
 - supervised agent commands receive `X07_STUDIO_*` contract environment variables for session id, agent id, handoff path, allowed verbs, MCP tools, write roots, approval mode, and event schema
 - supervised agent commands run with a post-execution workspace write-root audit that fails the run when source/config files change outside the approved roots
 - browser review queue and operation inspector surface failed agent write-root audits as first-class review evidence
+- connected browser E2E proves a supervised agent write-root violation becomes a failed run plus visible review signal and inspector evidence
 - standalone packaging scripts assemble the daemon, native desktop shell, Forge shell, and static Svelte web app into a portable bundle
 - standalone launcher refreshes setup defaults, selects free local daemon/web ports, and reports the actual runtime addresses through daemon health
 - native desktop shell runs packaged first-run component bootstrap before starting its embedded daemon, with skip/detect-only flags for controlled onboarding

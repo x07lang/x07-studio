@@ -543,3 +543,21 @@ This document records friction found while implementing the Studio web surface.
    inspector now surface that audit as first-class evidence. This does not
    replace a future OS-level sandbox, but it prevents unauthorized writes from
    becoming silent success.
+
+51. Write-root audits need connected browser proof.
+
+   Unit coverage proved the write-root audit parser and the Loom kernel failure
+   path, but the real XTAL workflow target is a human reviewing the browser
+   surface while the daemon supervises an agent. The connected E2E now installs
+   a temporary `Write Audit Agent`, runs it from Studio, intentionally writes
+   outside `src/`, and verifies the browser shows the failed `agent.run.*`
+   record, `Write-root audit` review signal, allowed roots, and violating path.
+
+52. Custom agent profiles must not hide the built-in Codex and Claude lanes.
+
+   Adding the connected write-audit agent exposed a profile-loading bug: once a
+   custom agent was saved, Loom returned only saved profiles and the default
+   OpenAI Codex and Claude Code profiles disappeared from the browser selector.
+   Loom now merges saved profiles with the built-in profiles, letting saved
+   profiles override by id while preserving Codex and Claude Code when
+   additional local runners are configured.

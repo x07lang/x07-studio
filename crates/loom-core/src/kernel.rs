@@ -817,12 +817,15 @@ impl WorkspaceKernel {
     }
 
     pub fn list_agent_profiles(&self) -> anyhow::Result<Vec<AgentProfile>> {
-        let profiles = self.store.load_agent_profiles()?;
-        if profiles.is_empty() {
-            Ok(default_agent_profiles())
-        } else {
-            Ok(profiles)
+        let mut profiles = default_agent_profiles();
+        for saved in self.store.load_agent_profiles()? {
+            if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == saved.id) {
+                *existing = saved;
+            } else {
+                profiles.push(saved);
+            }
         }
+        Ok(profiles)
     }
 
     pub fn save_agent_profile(&self, profile: &AgentProfile) -> anyhow::Result<()> {
@@ -4624,6 +4627,40 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("private/bad.txt")
         );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn custom_agent_profiles_do_not_hide_default_coding_agents() {
+        let root = temp_root();
+        let kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let custom = AgentProfile {
+            schema_version: "x07.studio.agent_profile@0.1.0".to_string(),
+            id: "write-audit-agent".to_string(),
+            label: "Write Audit Agent".to_string(),
+            command: "/bin/sh".to_string(),
+            args: Vec::new(),
+            allowed_verbs: vec!["impl.sync.write".to_string()],
+            mcp_tools: vec!["x07.exec_v1".to_string()],
+            write_roots: vec!["src/".to_string()],
+            approval_required: false,
+            status: AgentStatus::Available,
+            notes: "test agent".to_string(),
+        };
+        kernel
+            .save_agent_profile(&custom)
+            .expect("save custom agent");
+
+        let profiles = kernel.list_agent_profiles().expect("list agent profiles");
+        let ids = profiles
+            .iter()
+            .map(|profile| profile.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(ids.contains(&"openai-codex"));
+        assert!(ids.contains(&"claude-code"));
+        assert!(ids.contains(&"write-audit-agent"));
 
         std::fs::remove_dir_all(root).ok();
     }

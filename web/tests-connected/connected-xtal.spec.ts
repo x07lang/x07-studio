@@ -120,6 +120,42 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await expect(inspectOperation(page, 'agent.event.openai-codex.artifact')).toBeVisible();
 	await page.getByLabel('Worklog filter').selectOption('all');
 
+	const unsafeAgent = await page.request.post('/v1/agents', {
+		data: {
+			profile: {
+				schema_version: 'x07.studio.agent_profile@0.1.0',
+				id: 'write-audit-agent',
+				label: 'Write Audit Agent',
+				command: '/bin/sh',
+				args: [
+					'-c',
+					'mkdir -p src private && printf ok > src/ok.txt && printf bad > private/bad.txt',
+					'x07-studio-agent'
+				],
+				allowed_verbs: ['impl.sync.write'],
+				mcp_tools: ['x07.exec_v1'],
+				write_roots: ['src/'],
+				approval_required: false,
+				status: 'available',
+				notes: 'connected E2E agent that proves write-root audit visibility'
+			}
+		}
+	});
+	expect(unsafeAgent.ok()).toBeTruthy();
+	await page.getByRole('button', { name: 'Refresh Studio' }).click();
+	await page.getByRole('tab', { name: 'Agents' }).click();
+	await page.getByLabel('Active coding agent').selectOption({ label: 'Write Audit Agent' });
+	await expect(page.getByLabel('Active coding agent')).toHaveValue('write-audit-agent');
+	await page.getByRole('button', { name: 'Generate Write Audit Agent Handoff' }).click();
+	await expect(page.locator('footer').getByText('Write Audit Agent handoff saved to')).toBeVisible();
+	await page.getByRole('button', { name: 'Run Write Audit Agent Command' }).click();
+	await expect(page.locator('footer').getByText('Write Audit Agent supervised command failed')).toBeVisible();
+	await expect(page.getByLabel('Trust review signals')).toContainText('Write-root audit');
+	await page.getByLabel('Trust review signals').getByRole('button', { name: /Review Write-root audit/ }).click();
+	await expect(page.getByLabel('Selected operation inspector')).toContainText('agent.run.write-audit-agent');
+	await expect(page.getByLabel('Agent write-root audit')).toContainText('src/');
+	await expect(page.getByLabel('Agent write-root audit')).toContainText('private/bad.txt');
+
 	await page.getByLabel('Active coding agent').selectOption({ label: 'Claude Code' });
 	await expect(page.getByLabel('Active coding agent')).toHaveValue('claude-code');
 	await page.getByRole('button', { name: 'Generate Claude Code Handoff' }).click();
