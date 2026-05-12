@@ -135,6 +135,19 @@ source and derives the target module/entry from `module_id` and the first
 operation name or id. Browser clients should use this endpoint instead of
 inventing their own connected-mode intent packet.
 
+Request revision:
+
+```json
+{
+  "note": "Keep empty input explicit before approval."
+}
+```
+
+`POST /v1/sessions/{session_id}/intent/revision` records a daemon-owned
+`intent.revision.request` operation, stores the note on the session snapshot,
+and keeps approval blocked until the intent is repolished through
+`intent.formalize`.
+
 Run binding request:
 
 ```json

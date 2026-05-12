@@ -100,6 +100,17 @@ pub struct FormalizeIntentResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestIntentRevisionRequest {
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestIntentRevisionResponse {
+    pub op: OpRecord,
+    pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunBindingRequest {
     pub binding_id: String,
     pub vars: BTreeMap<String, String>,

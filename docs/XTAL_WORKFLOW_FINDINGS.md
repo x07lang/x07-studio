@@ -721,3 +721,14 @@ This document records friction found while implementing the Studio web surface.
    tests, pack verification, provenance, deploy planning, and SLO evidence.
    Studio now suppresses the XTAL-pure setup rows for seeded templates and lets
    the template-specific canonical commands describe the actual runbook.
+
+67. Revision requests need operation evidence before repolish.
+
+   The browser blocked approval after `Request Changes`, but the request itself
+   lived only in client state until the next `intent.formalize` call carried
+   revision notes back to the daemon. That left a visibility gap in the loop
+   where the human asks the coding agent to improve the plan before approval.
+   Studio now records `intent.revision.request` through the daemon, stores the
+   revision notes on the session snapshot, and keeps that operation in the
+   worklog so reviewers can see why approval is blocked before the repolish
+   happens.

@@ -31,6 +31,7 @@ import {
 	type IntentPacket,
 	type ProviderProbeResponse,
 	type ProviderProfile,
+	type RequestIntentRevisionResponse,
 	type SessionSnapshot,
 	type TaskType,
 	type RepairRunOptions,
@@ -215,6 +216,7 @@ export class StudioApi {
 		}
 
 		let next = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, raw, inputMode, revisionNotes));
+		next.revision_notes = [...revisionNotes];
 		next = appendDemoOp(next, 'intent.formalize', 'succeeded', [
 			'studio',
 			'intent',
@@ -223,6 +225,47 @@ export class StudioApi {
 		]);
 		this.replaceDemo(next);
 		return { intent: next.intent!, op: next.op_log.at(-1)!, session: next };
+	}
+
+	async requestIntentRevision(
+		session: SessionSnapshot,
+		note: string
+	): Promise<RequestIntentRevisionResponse> {
+		if (!this.demoMode) {
+			try {
+				const response = await request<RequestIntentRevisionResponse>(
+					`/v1/sessions/${session.session_id}/intent/revision`,
+					{
+						method: 'POST',
+						body: JSON.stringify({ note })
+					}
+				);
+				this.replaceDemo(response.session);
+				return response;
+			} catch {
+				this.demoMode = true;
+			}
+		}
+
+		let next = structuredClone(session) as SessionSnapshot;
+		const revisions = [...(next.revision_notes ?? []), note.trim()].filter(Boolean);
+		next.revision_notes = revisions;
+		next.room = 'intent';
+		next = appendDemoOp(
+			next,
+			'intent.revision.request',
+			'succeeded',
+			['studio', 'intent', 'request-changes', String(revisions.length)],
+			['.x07/studio/sessions/intent.json'],
+			{
+				schema_version: 'x07.studio.intent_revision_request@0.1.0',
+				revision_index: revisions.length,
+				note: revisions.at(-1),
+				approval_state: 'changes'
+			}
+		);
+		this.replaceDemo(next);
+		return { op: next.op_log.at(-1)!, session: next };
 	}
 
 	async runBinding(

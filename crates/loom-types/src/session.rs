@@ -105,6 +105,8 @@ pub struct SessionSnapshot {
     pub room: Room,
     pub phase: SessionPhase,
     pub intent: Option<IntentPacket>,
+    #[serde(default)]
+    pub revision_notes: Vec<String>,
     pub contract: Option<SessionContract>,
     pub allowed_verbs: Vec<AllowedVerb>,
     pub op_log: Vec<OpRecord>,
@@ -126,6 +128,7 @@ impl SessionSnapshot {
             room: Room::Intent,
             phase: SessionPhase::IntentDrafting,
             intent: None,
+            revision_notes: Vec::new(),
             contract: None,
             allowed_verbs: vec![AllowedVerb::IntentFormalize],
             op_log: Vec::new(),

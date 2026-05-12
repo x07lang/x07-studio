@@ -97,10 +97,11 @@ initial plan -> polished intent packet -> approve/change -> spec draft
   -> approved spec -> realization proposal -> verify -> repair/trust
 ```
 
-When the human requests changes, Studio marks approval blocked until the agent
-repolishes the revised intent. The approval ledger keeps the source, polish
-step, revision notes, human decision, and write-contract lock visible in the
-Intent room.
+When the human requests changes, Studio records an `intent.revision.request`
+operation, stores the note on the session snapshot, and marks approval blocked
+until the agent repolishes the revised intent. The approval ledger keeps the
+source, polish step, revision notes, human decision, and write-contract lock
+visible in the Intent room.
 
 Provider-backed intent polish is opt-in. When selected, the daemon sends the
 deterministic intent packet and revision notes to a configured

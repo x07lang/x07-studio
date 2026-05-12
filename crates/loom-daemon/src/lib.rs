@@ -20,9 +20,10 @@ use loom_types::api::{
     CallMcpToolRequest, ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest,
     DispatchEventRequest, DocPreviewRequest, DocPreviewResponse, FormalizeIntentRequest,
     FormalizeIntentResponse, HealthResponse, McpCallResponse, ProbeProviderRequest,
-    ProviderProbeResponse, ResolveApprovalRequest, RunBindingRequest, RunXtalWorkflowRequest,
-    RuntimeComponentState, RuntimeComponentStatus, SaveAgentProfileRequest,
-    SaveProviderProfileRequest, StudioDefaults, WorkspaceRadarResponse,
+    ProviderProbeResponse, RequestIntentRevisionRequest, RequestIntentRevisionResponse,
+    ResolveApprovalRequest, RunBindingRequest, RunXtalWorkflowRequest, RuntimeComponentState,
+    RuntimeComponentStatus, SaveAgentProfileRequest, SaveProviderProfileRequest, StudioDefaults,
+    WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -44,6 +45,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/v1/sessions/{session_id}/intent/formalize",
             post(formalize_intent),
+        )
+        .route(
+            "/v1/sessions/{session_id}/intent/revision",
+            post(request_intent_revision),
         )
         .route("/v1/sessions/{session_id}/bindings/run", post(run_binding))
         .route(
@@ -369,6 +374,18 @@ async fn formalize_intent(
         op,
         session,
     }))
+}
+
+async fn request_intent_revision(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<RequestIntentRevisionRequest>,
+) -> Result<Json<RequestIntentRevisionResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let (op, session) = kernel
+        .request_intent_revision(session_id, &request.note)
+        .map_err(conflict_error)?;
+    Ok(Json(RequestIntentRevisionResponse { op, session }))
 }
 
 async fn run_binding(

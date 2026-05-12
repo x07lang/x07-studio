@@ -435,6 +435,7 @@ test('user can create increasingly difficult x07 project sessions and exercise c
 	await page.getByLabel('Revision').fill('Add a deterministic repair witness before implementation.');
 	await page.getByRole('button', { name: 'Request Changes' }).click();
 	await expect(page.getByText('Revision routed back to intent review')).toBeVisible();
+	await expect(inspectOperation(page, 'intent.revision.request')).toBeVisible();
 	await expect(page.getByLabel('Approval loop ledger')).toContainText('Revision 1');
 	await expect(page.getByLabel('Approval loop ledger')).toContainText(
 		'approval blocked until the agent repolishes revisions'

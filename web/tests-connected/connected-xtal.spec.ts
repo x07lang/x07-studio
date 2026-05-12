@@ -93,6 +93,7 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await page.getByLabel('Revision').fill('Require explicit local platform delivery evidence before trust review.');
 	await page.getByRole('button', { name: 'Request Changes' }).click();
 	await expect(page.getByText('Revision routed back to intent review')).toBeVisible();
+	await expect(inspectOperation(page, 'intent.revision.request')).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeDisabled();
 	await page.getByRole('button', { name: 'Polish Intent' }).click();
 	await expect(page.getByRole('button', { name: 'Approve and Run' })).toBeEnabled();

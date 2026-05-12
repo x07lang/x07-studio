@@ -425,6 +425,9 @@ impl WorkspaceKernel {
                 SessionEvent::FormalizeIntent(Box::new(intent.clone())),
             )
             .map_err(|error| anyhow!(error.to_string()))?;
+        if let Some(session) = self.model.get_session_mut(session_id) {
+            session.revision_notes = revision_notes.to_vec();
+        }
         let op = intent_formalize_op(session_id, &intent, input_mode, revision_notes, None);
         let snapshot = self
             .model
@@ -432,6 +435,29 @@ impl WorkspaceKernel {
             .map_err(|error| anyhow!(error.to_string()))?;
         self.store.save_session(&snapshot)?;
         Ok((intent, op, snapshot))
+    }
+
+    pub fn request_intent_revision(
+        &mut self,
+        session_id: Uuid,
+        note: &str,
+    ) -> anyhow::Result<(OpRecord, SessionSnapshot)> {
+        let note = note.trim();
+        if note.is_empty() {
+            bail!("revision note cannot be empty");
+        }
+        let revision_index = {
+            let session = self
+                .model
+                .get_session_mut(session_id)
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+            session.revision_notes.push(note.to_string());
+            session.room = Room::Intent;
+            session.revision_notes.len()
+        };
+        let op = intent_revision_request_op(session_id, note, revision_index);
+        let snapshot = self.append_op(session_id, op.clone())?;
+        Ok((op, snapshot))
     }
 
     pub async fn formalize_intent_with_provider(
@@ -476,6 +502,9 @@ impl WorkspaceKernel {
                 SessionEvent::FormalizeIntent(Box::new(intent.clone())),
             )
             .map_err(|error| anyhow!(error.to_string()))?;
+        if let Some(session) = self.model.get_session_mut(session_id) {
+            session.revision_notes = revision_notes.to_vec();
+        }
         let op = intent_formalize_op(
             session_id,
             &intent,
@@ -2169,6 +2198,42 @@ fn intent_formalize_op(
             "revision_notes": revision_notes,
             "intent": intent,
             "provider_polish": provider_polish,
+        })),
+        report_path: None,
+    }
+}
+
+fn intent_revision_request_op(session_id: Uuid, note: &str, revision_index: usize) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "intent.revision.request".to_string(),
+        backend: "studio-kernel".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "intent".to_string(),
+            "request-changes".to_string(),
+            revision_index.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![format!(".x07/studio/sessions/{session_id}.json")],
+        notes: Some("Human requested changes before spec approval.".to_string()),
+        stdout: Some(format!(
+            "Revision request {revision_index} recorded; approval remains blocked until intent repolish."
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.intent_revision_request@0.1.0",
+            "revision_index": revision_index,
+            "note": note,
+            "approval_state": "changes",
         })),
         report_path: None,
     }
@@ -4168,11 +4233,39 @@ mod tests {
             .any(|item| item.contains("Make cycle rejection explicit")));
         assert_eq!(op.op, "intent.formalize");
         assert_eq!(op.status, OperationStatus::Succeeded);
+        assert_eq!(
+            snapshot.revision_notes,
+            vec!["Make cycle rejection explicit.".to_string()]
+        );
         assert!(snapshot.intent.is_some());
         assert!(snapshot
             .op_log
             .iter()
             .any(|item| item.op == "intent.formalize"));
+    }
+
+    #[test]
+    fn request_intent_revision_records_visible_blocker() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root).expect("open kernel");
+        let session = kernel
+            .create_session("revision loop", TaskType::NewBehavior)
+            .expect("create session");
+
+        let (op, snapshot) = kernel
+            .request_intent_revision(session.session_id, "Keep empty input explicit.")
+            .expect("request revision");
+
+        assert_eq!(op.op, "intent.revision.request");
+        assert_eq!(op.status, OperationStatus::Succeeded);
+        assert_eq!(
+            snapshot.revision_notes,
+            vec!["Keep empty input explicit.".to_string()]
+        );
+        assert!(snapshot
+            .op_log
+            .iter()
+            .any(|item| item.op == "intent.revision.request"));
     }
 
     #[tokio::test]

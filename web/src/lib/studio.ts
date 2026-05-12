@@ -144,6 +144,7 @@ export interface SessionSnapshot {
 	room: Room;
 	phase: SessionPhase;
 	intent?: IntentPacket | null;
+	revision_notes?: string[];
 	contract?: {
 		schema_version: string;
 		allowed_verbs: string[];
@@ -515,6 +516,11 @@ export interface AgentHandoffResponse {
 
 export interface FormalizeIntentResponse {
 	intent: IntentPacket;
+	op: OpRecord;
+	session: SessionSnapshot;
+}
+
+export interface RequestIntentRevisionResponse {
 	op: OpRecord;
 	session: SessionSnapshot;
 }
@@ -3249,6 +3255,7 @@ export function demoSession(): SessionSnapshot {
 		room: 'intent',
 		phase: 'intent_drafting',
 		intent: null,
+		revision_notes: [],
 		contract: null,
 		allowed_verbs: ['intent_formalize'],
 		op_log: []

@@ -313,6 +313,21 @@ describe('x07 Studio XTAL web model', () => {
 		expect(awaitingLedger.find((item) => item.label === 'Human decision')?.state).toBe('active');
 	});
 
+	it('records revision requests as visible session operations', async () => {
+		const api = new StudioApi();
+		let session = demoSession();
+		session = reduceDemoEvent(session, 'formalize_intent', createIntentPacket(session, 'Create a sorter.'));
+
+		const response = await api.requestIntentRevision(session, 'Keep empty input explicit.');
+
+		expect(response.op.op).toBe('intent.revision.request');
+		expect(response.session.revision_notes).toEqual(['Keep empty input explicit.']);
+		expect(response.session.op_log.at(-1)?.report_json).toMatchObject({
+			schema_version: 'x07.studio.intent_revision_request@0.1.0',
+			approval_state: 'changes'
+		});
+	});
+
 	it('derives an approval-gated automation plan from the selected project template', () => {
 		let session = demoSession();
 		const draftPlan = buildAutomationPlan(session, projectTemplates[0], 'drafting');

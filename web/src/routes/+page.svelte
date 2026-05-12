@@ -271,6 +271,7 @@
 		selectedRoom = selected.room;
 		selectedSessionForRoom = selected.session_id;
 		selectedOpId = '';
+		syncApprovalLoop(selected);
 	}
 	$: if (selectedOpId && !allOps.some((op) => op.id === selectedOpId)) {
 		selectedOpId = '';
@@ -946,6 +947,7 @@
 		if (session) {
 			selectedRoom = session.room;
 			selectedSessionForRoom = session.session_id;
+			syncApprovalLoop(session);
 			statusLine = `Selected ${session.title}`;
 		}
 	}
@@ -1217,6 +1219,23 @@
 		}
 		selectedId = snapshot.session_id;
 		selectedRoom = snapshot.room;
+		syncApprovalLoop(snapshot);
+	}
+
+	function syncApprovalLoop(snapshot: SessionSnapshot) {
+		revisionHistory = snapshot.revision_notes ?? revisionHistory;
+		if (snapshot.contract || phaseIndex(snapshot.phase) >= phaseIndex('spec_approved')) {
+			approvalState = 'approved';
+			return;
+		}
+		const latestIntentOp = [...snapshot.op_log]
+			.reverse()
+			.find((op) => op.op === 'intent.revision.request' || op.op === 'intent.formalize');
+		if (latestIntentOp?.op === 'intent.revision.request') {
+			approvalState = 'changes';
+			return;
+		}
+		approvalState = snapshot.intent || latestIntentOp?.op === 'intent.formalize' ? 'awaiting' : 'drafting';
 	}
 
 	async function refreshSession(sessionId: string, keepRoom?: Room) {
@@ -1246,11 +1265,20 @@
 
 	async function requestChanges() {
 		if (!selected || !revisionText.trim()) return;
-		approvalState = 'changes';
 		const revision = revisionText.trim();
-		revisionHistory = [...revisionHistory, revision];
-		promptText = `${promptText}\n\nRevision request: ${revision}`;
-		statusLine = 'Revision routed back to intent review';
+		busy = true;
+		try {
+			const response = await api.requestIntentRevision(selected, revision);
+			await replaceSession(response.session);
+			revisionHistory = response.session.revision_notes ?? [...revisionHistory, revision];
+			if (!promptText.includes(`Revision request: ${revision}`)) {
+				promptText = `${promptText}\n\nRevision request: ${revision}`;
+			}
+			approvalState = 'changes';
+			statusLine = 'Revision routed back to intent review';
+		} finally {
+			busy = false;
+		}
 	}
 
 	async function dispatch(event: string, label: string) {
