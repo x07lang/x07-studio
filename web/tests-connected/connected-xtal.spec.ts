@@ -48,7 +48,7 @@ function escapeRegex(value: string) {
 
 test('connected Studio creates simple-to-Atlas projects and runs the complex workflow through Loom', async ({ page }) => {
 	await page.setViewportSize({ width: 1520, height: 940 });
-	await page.goto('/');
+	await page.goto('/?mode=expert');
 
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.locator('.rail-status')).toContainText('Loom online');
@@ -226,7 +226,7 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 
 test('connected Studio drives a simple XTAL session through Loom', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 920 });
-	await page.goto('/');
+	await page.goto('/?mode=expert');
 
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.locator('.rail-status')).toContainText('Loom online');

@@ -128,7 +128,7 @@ async function installFakeSpeechRecognition(page: Page) {
 test('voice transcript capture appends a spoken witness before spec approval', async ({ page }) => {
 	await installFakeSpeechRecognition(page);
 	await page.setViewportSize({ width: 1440, height: 900 });
-	await page.goto('/');
+	await page.goto('/?mode=expert');
 
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.getByLabel('Speech witness capture')).toContainText('Speech capture available');
@@ -181,7 +181,7 @@ test('voice transcript capture appends a spoken witness before spec approval', a
 
 test('agent handoff actions stay visible in focused mode', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
-	await page.goto('/');
+	await page.goto('/?mode=expert');
 
 	await page.getByLabel('Project title').fill('Focused agent handoff');
 	await page.getByRole('button', { name: 'New Session', exact: true }).click();
@@ -196,7 +196,7 @@ test('agent handoff actions stay visible in focused mode', async ({ page }) => {
 
 test('semantic patch review explains implementation sync changes', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
-	await page.goto('/');
+	await page.goto('/?mode=expert');
 
 	await page.getByLabel('Project title').fill('Semantic patch review sorter');
 	await page.getByRole('button', { name: 'New Session', exact: true }).click();
@@ -276,7 +276,7 @@ test('semantic patch review explains implementation sync changes', async ({ page
 
 test('user can create increasingly difficult x07 project sessions and exercise controls', async ({ page }) => {
 	await page.setViewportSize({ width: 1728, height: 972 });
-	await page.goto('/');
+	await page.goto('/?mode=expert');
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.getByText('Demo projection active')).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-pressed', 'false');
