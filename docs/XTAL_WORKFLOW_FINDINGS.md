@@ -752,3 +752,14 @@ This document records friction found while implementing the Studio web surface.
    to correlate two separate surfaces before approving. Studio now shows a
    revision review ledger directly inside the approval preview, with each note
    marked as pending agent repolish or visible in the polished intent.
+
+70. Revision incorporation must be evidenced by the intent packet.
+
+   The first revision-review surface derived the resolved label from the approval
+   loop state. That is not strong enough for XTAL review: the UI should not claim
+   a requested change is visible unless the polished intent packet actually
+   carries that note forward. Studio now checks the current intent constraints
+   before marking a revision as visible in the polished intent, and otherwise
+   keeps the row pending with an explicit missing-evidence label. The browser
+   computes those rows as reactive state so the approval card updates after
+   repolish instead of reusing stale helper output.

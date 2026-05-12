@@ -154,6 +154,13 @@
 		state: 'accepted' | 'review';
 	};
 
+	type RevisionReviewItem = {
+		index: number;
+		revision: string;
+		state: 'pending' | 'resolved';
+		status: string;
+	};
+
 	type SpeechRecognitionResultLike = {
 		isFinal: boolean;
 		[index: number]: { transcript: string; confidence?: number } | undefined;
@@ -312,6 +319,28 @@
 	$: selectedOpOutput = operationOutput(selectedOp);
 	$: checklist = selected ? workflowChecklist(selected) : [];
 	$: approvalLedger = buildApprovalLedger(selected, revisionHistory, approvalState);
+	$: revisionIntentConstraints = selected?.intent?.constraints ?? [];
+	$: revisionReviewItems = revisionHistory.map((revision, index): RevisionReviewItem => {
+		const included = revisionIncludedInConstraints(revision, revisionIntentConstraints);
+		const resolved = approvalState !== 'changes' && included;
+		return {
+			index,
+			revision,
+			state: resolved ? 'resolved' : 'pending',
+			status:
+				approvalState === 'changes'
+					? 'pending agent repolish'
+					: included
+						? 'visible in polished intent'
+						: 'not visible in polished intent'
+		};
+	});
+	$: revisionReviewSummaryText =
+		approvalState === 'changes'
+			? 'repolish required'
+			: revisionReviewItems.every((item) => item.state === 'resolved')
+				? 'included in intent packet'
+				: 'intent packet missing revision evidence';
 	$: automationPlan = buildAutomationPlan(selected, selectedProjectTemplate, approvalState);
 	$: evidenceCoverage = buildEvidenceCoverage(selected, selectedProjectTemplate, approvalState);
 	$: verifyRunOptions = normalizeVerifyRunOptions({
@@ -1469,6 +1498,11 @@
 		return current;
 	}
 
+	function revisionIncludedInConstraints(revision: string, constraints: string[]): boolean {
+		const note = revision.trim();
+		return Boolean(note) && constraints.some((constraint) => constraint.includes(note));
+	}
+
 	function selectedProviderPolishProfile() {
 		if (!useProviderPolish) return undefined;
 		return providerProfileId.trim() || defaultProviderProfileId;
@@ -1904,13 +1938,13 @@
 							<div class="revision-review" aria-label="Revision review ledger">
 								<div class="revision-review-head">
 									<strong>Revision Review</strong>
-									<span>{approvalState === 'changes' ? 'repolish required' : 'included in intent packet'}</span>
+									<span>{revisionReviewSummaryText}</span>
 								</div>
-								{#each revisionHistory as revision, index}
-									<div class={`revision-note ${approvalState === 'changes' ? 'pending' : 'resolved'}`}>
-										<span>Revision {index + 1}</span>
-										<strong>{revision}</strong>
-										<em>{approvalState === 'changes' ? 'pending agent repolish' : 'visible in polished intent'}</em>
+								{#each revisionReviewItems as item}
+									<div class={`revision-note ${item.state}`}>
+										<span>Revision {item.index + 1}</span>
+										<strong>{item.revision}</strong>
+										<em>{item.status}</em>
 									</div>
 								{/each}
 							</div>
