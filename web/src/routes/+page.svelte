@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import './+page.css';
 	import { StudioApi } from '$lib/api';
 	import {
@@ -79,6 +79,8 @@
 	let selectedOpId = '';
 	let worklogFilter: 'all' | 'codex' | 'claude' | 'xtal' = 'all';
 	let autoScroll = true;
+	let detailMode = false;
+	let lineageZoom = 1;
 	let commandLaneText = 'x07 run --workspace x07-project --from intent --to trust';
 	let commandLaneMode: 'plan' | 'execute' = 'execute';
 	let commandLaneEnv = 'dev';
@@ -90,6 +92,7 @@
 	let docPreviewStatus = 'No documentation preview loaded';
 	let selectedDocPreview: DocPreviewResponse | null = null;
 	let workspaceRadar: WorkspaceRadarResponse | null = null;
+	let operationLogEl: HTMLElement | null = null;
 	let speechSupported = false;
 	let speechListening = false;
 	let speechStatus = 'Speech capture will append a transcript witness.';
@@ -264,6 +267,7 @@
 			selected?.phase === 'spec_approved' ||
 			selected?.phase === 'realization_proposed');
 	$: currentRoomStatus = roomStatus[selectedRoom];
+	$: roomUsesRightRail = selectedRoom === 'trust' || selectedRoom === 'repair' || selectedRoom === 'mcp';
 	$: currentLifecycle = lifecycle[Math.min(progress, lifecycle.length - 1)] ?? lifecycle[0];
 	$: consumedCredits = Math.min(42, Number((2.7 + progress * 3.6 + worklog.length * 0.9).toFixed(1)));
 	$: budgetPercent = Math.min(98, Math.round((consumedCredits / 42) * 100));
@@ -372,8 +376,17 @@
 	$: doctrineAllowedVerbs = selected?.contract?.allowed_verbs.length
 		? selected.contract.allowed_verbs
 		: selected?.allowed_verbs ?? [];
+	$: lineageZoomLabel = `${Math.round(lineageZoom * 100)}%`;
 	$: if (selected && selectedOp && selectedPatchArtifact) {
 		void loadArtifactPreview(selected.session_id, selectedOp.id, selectedPatchArtifact);
+	}
+	$: if (autoScroll && selectedOpId) {
+		const opId = selectedOpId;
+		tick().then(() => {
+			if (autoScroll && selectedOpId === opId) {
+				operationLogEl?.scrollIntoView({ block: 'nearest' });
+			}
+		});
 	}
 
 	onMount(async () => {
@@ -430,14 +443,27 @@
 		return selectedProjectTemplate.label;
 	}
 
-	function loadProjectBrief() {
-		projectTitle = selectedProjectTemplate.title;
-		projectTaskType = selectedProjectTemplate.taskType;
-		promptText = selectedProjectTemplate.prompt;
-		revisionText = selectedProjectTemplate.revision;
+	function loadProjectBrief(template = selectedProjectTemplate) {
+		projectTitle = template.title;
+		projectTaskType = template.taskType;
+		promptText = template.prompt;
+		revisionText = template.revision;
 		revisionHistory = [];
 		approvalState = 'drafting';
-		statusLine = `${selectedProjectTemplate.label} project brief loaded`;
+		statusLine = `${template.label} project brief loaded`;
+	}
+
+	function selectProjectDifficulty(event: Event) {
+		const target = event.currentTarget as HTMLSelectElement;
+		const template =
+			projectTemplates.find((candidate) => candidate.id === target.value) ?? selectedProjectTemplate;
+		projectDifficulty = template.id;
+		loadProjectBrief(template);
+	}
+
+	function toggleDetailMode() {
+		detailMode = !detailMode;
+		statusLine = detailMode ? 'Detailed audit surfaces shown' : 'Focused room view shown';
 	}
 
 	function focusRoom(room: Room) {
@@ -642,6 +668,16 @@
 			event.preventDefault();
 			focusRoom(room);
 		}
+	}
+
+	function adjustLineageZoom(delta: number) {
+		lineageZoom = Math.max(0.8, Math.min(1.25, Number((lineageZoom + delta).toFixed(2))));
+		statusLine = `Lineage graph zoom ${Math.round(lineageZoom * 100)}%`;
+	}
+
+	function fitLineage() {
+		lineageZoom = 1;
+		statusLine = 'Lineage graph fit to panel';
 	}
 
 	function selectSession(sessionId: string) {
@@ -864,14 +900,26 @@
 	async function runCommandLane() {
 		if (!selected) return;
 		if (commandLaneMode === 'plan') {
-			statusLine = `Planned ${selectedBindingId || commandLaneText}`;
+			statusLine = `Planned ${commandLaneText.trim() || selectedBindingId}`;
 			return;
 		}
-		if (selectedBindingId) {
-			await runBinding(selectedBindingId);
+		const bindingId = bindingFromCommandLane();
+		if (bindingId) {
+			await runBinding(bindingId);
 		} else {
-			statusLine = 'Select a canonical binding before execution';
+			statusLine = 'Choose a canonical binding or type one in the command lane';
 		}
+	}
+
+	function bindingFromCommandLane() {
+		const command = commandLaneText.trim();
+		return bindings.find((binding) => command === binding.id || command.includes(binding.id))?.id ?? selectedBindingId;
+	}
+
+	function updateAutoScroll(event: Event) {
+		const target = event.currentTarget as HTMLInputElement;
+		autoScroll = target.checked;
+		statusLine = autoScroll ? 'Worklog auto-scroll enabled' : 'Worklog auto-scroll paused';
 	}
 
 	async function replaceSession(snapshot: SessionSnapshot) {
@@ -1082,7 +1130,7 @@
 	<title>x07 Studio</title>
 </svelte:head>
 
-<main class="studio-shell">
+<main class={`studio-shell${detailMode ? ' detail-mode' : ''}${roomUsesRightRail ? ' show-room-rail' : ''}`}>
 	<aside class="rail" aria-label="x07 Studio rooms">
 		<div class="brand">
 			<div class="brand-mark">x07</div>
@@ -1101,7 +1149,7 @@
 					data-room={room.id}
 					aria-label={room.label}
 					aria-selected={selectedRoom === room.id}
-					on:pointerdown={() => focusRoom(room.id)}
+					on:click={() => focusRoom(room.id)}
 					on:keydown={(event) => focusRoomFromKey(event, room.id)}
 				>
 					<span>{room.label}</span>
@@ -1191,6 +1239,15 @@
 			<div class="top-actions">
 				<button class="icon-button" type="button" aria-label="Refresh Studio" on:click={refresh}>
 					R
+				</button>
+				<button
+					class="command-button"
+					class:active={detailMode}
+					type="button"
+					aria-pressed={detailMode}
+					on:click={toggleDetailMode}
+				>
+					Details
 				</button>
 				<button class="command-button" type="button" on:click={runSelectedBinding} disabled={!selected || !selectedBindingId}>
 					Run Binding
@@ -1299,14 +1356,14 @@
 			</div>
 			<div class="field">
 				<label for="project-difficulty">Project difficulty</label>
-				<select id="project-difficulty" bind:value={projectDifficulty}>
+				<select id="project-difficulty" bind:value={projectDifficulty} on:change={selectProjectDifficulty}>
 					{#each projectTemplates as template}
 						<option value={template.id}>{template.label}</option>
 					{/each}
 				</select>
 			</div>
 			<div class="intake-actions">
-				<button class="command-button" type="button" on:click={loadProjectBrief} disabled={busy}>
+				<button class="command-button" type="button" on:click={() => loadProjectBrief()} disabled={busy}>
 					Load Brief
 				</button>
 				<button class="command-button primary" type="button" on:click={createSession} disabled={busy}>
@@ -1351,7 +1408,7 @@
 		</section>
 
 		<section class="main-grid">
-			<section id="room-intent" class="intent-panel panel" class:focused={selectedRoom === 'intent'}>
+			<section id="room-intent" class="intent-panel panel room-panel" class:focused={selectedRoom === 'intent'}>
 				<div class="panel-head">
 					<div>
 						<p class="eyebrow">Intent</p>
@@ -1521,19 +1578,20 @@
 				</div>
 			</section>
 
-			<section id="room-spec" class="graph-panel panel" class:focused={selectedRoom === 'spec'}>
+			<section id="room-spec" class="graph-panel panel room-panel" class:focused={selectedRoom === 'spec'}>
 				<div class="panel-head">
 					<div>
 						<p class="eyebrow">Lineage Graph</p>
 						<h2>Intent to evidence</h2>
 					</div>
 					<div class="graph-tools" aria-label="Lineage tools">
-						<button type="button" class="icon-button" aria-label="Zoom in">+</button>
-						<button type="button" class="icon-button" aria-label="Zoom out">-</button>
-						<button type="button" class="icon-button" aria-label="Fit graph">Fit</button>
+						<button type="button" class="icon-button" aria-label="Zoom in" on:click={() => adjustLineageZoom(0.1)}>+</button>
+						<button type="button" class="icon-button" aria-label="Zoom out" on:click={() => adjustLineageZoom(-0.1)}>-</button>
+						<button type="button" class="icon-button" aria-label="Fit graph" on:click={fitLineage}>Fit</button>
+						<span>{lineageZoomLabel}</span>
 					</div>
 				</div>
-				<div class="lineage-map" aria-label="XTAL lineage graph">
+				<div class="lineage-map" aria-label="XTAL lineage graph" style={`--lineage-zoom: ${lineageZoom}`}>
 					<div class="map-node incident">INTENT<br /><small>{inputMode}</small></div>
 					<div class="map-node spec">SPEC<br /><small>{approvalState}</small></div>
 					<div class="map-node arch">ARCH<br /><small>{selected?.contract ? 'locked' : 'draft'}</small></div>
@@ -1553,7 +1611,86 @@
 				</div>
 			</section>
 
-			<section id="room-providers" class="agent-panel panel" class:focused={selectedRoom === 'providers'}>
+			<section id="room-realization" class="realization-panel panel room-panel compact-only" class:focused={selectedRoom === 'realization'} aria-label="Realization room">
+				<div class="panel-head">
+					<div>
+						<p class="eyebrow">Realization</p>
+						<h2>{selected?.contract ? 'Implementation lane unlocked' : 'Waiting for spec approval'}</h2>
+					</div>
+					<span class="badge">{selectedProjectTemplate.label}</span>
+				</div>
+				<div class="automation-plan" aria-label="Realization automation plan">
+					<div class="automation-head">
+						<div>
+							<span>Automation Plan</span>
+							<strong>{selectedProjectTemplate.label} patch and verify path</strong>
+						</div>
+						<em>{selected?.contract ? 'contract locked' : 'approval gated'}</em>
+					</div>
+					{#each automationPlan as step}
+						<div class={`automation-step ${step.state}`}>
+							<span>{step.state}</span>
+							<strong>{step.label}</strong>
+							<code>{step.command}</code>
+							<small>{step.artifact}</small>
+							<em>{step.gate}</em>
+						</div>
+					{/each}
+				</div>
+				<div class="button-row">
+					<button class="command-button" type="button" on:click={approveSpec} disabled={busy || !canApproveSpec}>
+						Approve Spec
+					</button>
+					<button class="command-button primary" type="button" on:click={approveAndRun} disabled={busy || !canRunProject}>
+						Approve and Run
+					</button>
+				</div>
+			</section>
+
+			<section id="room-verify" class="verify-panel panel room-panel compact-only" class:focused={selectedRoom === 'verify'} aria-label="Verification room">
+				<div class="panel-head">
+					<div>
+						<p class="eyebrow">Verify</p>
+						<h2>{latestVerifyOp ? statusLabel(latestVerifyOp) : 'No verification run yet'}</h2>
+					</div>
+					<span class="badge">{currentLifecycle.binding ?? 'xtal.verify'}</span>
+				</div>
+				<div class="platform-summary">
+					<div>
+						<span>Latest evidence</span>
+						<strong>{latestVerifyOp?.op ?? 'Run the XTAL workflow to produce verify evidence.'}</strong>
+					</div>
+					<code>{latestVerifyOp?.report_path ?? 'target/xtal/verify/summary.json'}</code>
+				</div>
+				<div class="button-row">
+					<button class="command-button primary" type="button" on:click={approveAndRun} disabled={busy || !canRunProject}>
+						Run Verification
+					</button>
+					<button class="command-button" type="button" on:click={() => runBinding('xtal.verify')} disabled={busy || !selected}>
+						Run xtal.verify
+					</button>
+				</div>
+				<div class="review-signal-list">
+					{#if reviewSignals.length}
+						{#each reviewSignals.slice(0, 4) as signal}
+							<button
+								type="button"
+								class={`review-signal ${signal.tone}`}
+								aria-label={`Review ${signal.label} ${signal.op}`}
+								on:click={() => selectReviewSignal(signal)}
+							>
+								<span>{signal.label}</span>
+								<strong>{signal.detail}</strong>
+								<em>{signal.op}</em>
+							</button>
+						{/each}
+					{:else}
+						<div class="review-empty">No verification signals recorded</div>
+					{/if}
+				</div>
+			</section>
+
+			<section id="room-providers" class="agent-panel panel room-panel" class:focused={selectedRoom === 'providers'}>
 				<div class="panel-head">
 					<div>
 						<p class="eyebrow">Agent Providers</p>
@@ -1706,7 +1843,7 @@
 				</div>
 			</section>
 
-			<section id="room-ops" class="ops-panel panel" class:focused={selectedRoom === 'ops'} aria-label="x07 platform bridge">
+			<section id="room-ops" class="ops-panel panel room-panel" class:focused={selectedRoom === 'ops'} aria-label="x07 platform bridge">
 				<div class="panel-head">
 					<div>
 						<p class="eyebrow">Ops / Platform</p>
@@ -1754,7 +1891,7 @@
 							<option value="xtal">XTAL</option>
 						</select>
 						<label class:active={autoScroll}>
-							<input type="checkbox" bind:checked={autoScroll} />
+							<input type="checkbox" checked={autoScroll} on:change={updateAutoScroll} aria-label="Auto-scroll" />
 							Auto-scroll
 						</label>
 					</div>
@@ -1776,7 +1913,7 @@
 			</section>
 		</section>
 
-		<section class="operation-log panel" aria-label="Operation log">
+		<section class="operation-log panel" aria-label="Operation log" bind:this={operationLogEl}>
 			<div class="panel-head">
 				<div>
 					<p class="eyebrow">Operation Log</p>

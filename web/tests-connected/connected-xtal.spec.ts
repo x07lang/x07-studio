@@ -53,6 +53,10 @@ test('connected Studio creates simple-to-Atlas projects and runs the complex wor
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.locator('.rail-status')).toContainText('Loom online');
 	await expect(page.getByText('Demo projection active')).toHaveCount(0);
+	await expect(page.locator('footer')).toContainText('Connected to Loom daemon');
+	await expect(page.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-pressed', 'false');
+	await page.getByRole('button', { name: 'Details' }).click();
+	await expect(page.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-pressed', 'true');
 	await expect(page.getByLabel('Onboarding setup plan')).toContainText('First-run defaults');
 	await expect(page.getByLabel('OpenAI Codex readiness')).toContainText('Ready');
 	await expect(page.getByLabel('Claude Code readiness')).toContainText('Ready');
@@ -142,6 +146,7 @@ test('connected Studio drives a simple XTAL session through Loom', async ({ page
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.locator('.rail-status')).toContainText('Loom online');
 	await expect(page.locator('footer')).toContainText('Connected to Loom daemon');
+	await page.getByRole('button', { name: 'Details' }).click();
 	const setupReadiness = page.getByLabel('Setup readiness');
 	await expect(setupReadiness.locator('div', { hasText: 'x07 CLI' }).first()).toContainText('Ready');
 	await expect(setupReadiness.locator('div', { hasText: 'x07-wasm' }).first()).toContainText('Ready');

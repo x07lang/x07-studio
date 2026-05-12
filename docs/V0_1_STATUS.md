@@ -9,6 +9,7 @@
 - semantic `agent.event.*` records derived from supervised-agent artifacts, diagnostics, writes, and approval/policy requests
 - browser trust review queue derived from artifacts, diagnostics, writes, patchsets, verify evidence, and certify evidence
 - prompt-to-artifact audit that maps user input, approval, scaffold, specs/tests, implementation, verification, visible agent work, and trust/platform evidence to concrete operations and artifacts
+- browser focused/detail modes that keep the current XTAL room, visible agent worklog, and canonical command lane in the first workflow view while preserving the full audit surface behind an explicit Details toggle
 - x07 Platform bridge that traces app packaging, provenance, deploy planning, local x07lp delivery, SLO/budget checks, and runtime feedback to canonical operation evidence
 - visual patch review in the operation inspector for x07 patchset payloads, patchset artifacts, write roots, review gates, path risk, and before/after JSON previews
 - world/budget guard for solve-rr, sandbox/run-os, WASM app, release/provenance, and budget widening surfaces

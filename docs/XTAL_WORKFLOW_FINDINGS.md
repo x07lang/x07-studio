@@ -495,3 +495,16 @@ This document records friction found while implementing the Studio web surface.
    `x07.studio.agent_event@0.1.0` protocol are visible before execution. This
    keeps Codex/Claude integration aligned with XTAL's rule that agents act
    through finite, reviewable lifecycle verbs instead of an opaque chat prompt.
+
+47. Non-expert users need a focused workflow view before the full audit wall.
+
+   The browser had accumulated the right XTAL evidence surfaces, but the
+   default screen still behaved like a dense reviewer console. That works for
+   experts, but it slows the target user who starts with a plan and needs the
+   next legal action, visible agent work, and canonical command lane without
+   reading every trust, budget, and MCP panel at once. Studio now opens in a
+   focused room layout, keeps the operation log in the first workflow view,
+   adds a `Details` toggle for the full audit surface, and gives the Realize and
+   Verify rooms compact first-class panels. The connected browser test now
+   proves the same focused/detail controls work against a real Loom daemon and
+   the simple-to-Atlas XTAL workflow.
