@@ -24,6 +24,7 @@ Severity legend:
 | F11 | **FIXED** | `architect_enrich_after_scaffold` wrote `serde_json::to_string_pretty`, which fails x07's `WXTAL_SPEC_NONCANONICAL_JSON` gate; downstream `xtal.verify` rejected the spec | tier1.5 |
 | F12 | **FIXED** | Build-pipeline scaffolds the impl as `["bytes.empty"]`; any non-trivial `ensures` predicate produced a counterexample. Tier-1.5b lands: predicates promote **after** `try_template_synthesis` / coder writes a real impl, mirrored into both spec and impl files | tier1.5b |
 | F4  | **FIXED** | Real `x07 verify` proof-support warnings (`WXTAL_VERIFY_PROVE_*`, `X07V_*`, `EXTAL_VERIFY_PROVE_*`) now surface in `TrustPosture.proof_support_notes`; TrustCard renders them in a collapsible "Proof support" panel with severity-colored borders | tier1.5b |
+| F13 | **OPEN** | Scenario 2 CSV repair does not exercise repair: parser spec remains doc-only (`ensures: []`), `xtal.verify` warns but succeeds, and no `xtal.repair` op fires | 2 |
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 
@@ -419,6 +420,27 @@ Both render in the new panel with amber severity borders (warning class), each w
 - `kernel::tests::parse_structured_agent_event_accepts_spec_enrichment_kind` — confirms the agent_event allowlist accepts the new kind.
 - `kernel::tests::ingest_architect_enrichment_writes_doc_from_recorded_event` — full ingest: pre-populates a fake `agent.event.<agent>.spec_enrichment` op-record, calls ingest, asserts spec on disk + `architect.enrich_spec` op-record + agent-named stage note.
 - `kernel::tests::ingest_architect_enrichment_records_visible_op_when_no_event_emitted` — silent-agent path still appends a visible op-record so the timeline shows the run happened.
+
+---
+
+## F13 — scenario 2 CSV repair loop does not fire
+
+**Severity:** FIX — blocks public-beta A5 completion.
+
+**Observed:** A direct real-daemon probe of `scenario-2-csv-repair` on 2026-05-13 reached `trust_review` with 28 ops and no `xtal.repair` operation. The scenario's acceptance requires the strict CSV quote constraint to make `xtal.verify` fail, then trigger the repair loop. Instead, `xtal.verify` succeeded with proof-support warnings only.
+
+**Evidence:**
+
+- Session: `fd5eb1be-2ae6-45f8-867e-9797d359154c`
+- Bundle: `target/stress-pass/scenario-2-csv-repair/`
+- Real toolchain: `x07 0.2.10`, `claude 2.1.140`, `codex 0.130.0`
+- `target/stress-pass/scenario-2-csv-repair/workspace/spec/app.parser.x07spec.json` has `ensures: []` and `ensures_props: []`.
+- `target/stress-pass/scenario-2-csv-repair/workspace/target/xtal/verify/summary.json` reports `coverage_outcome: "pass"` and `prove_outcome: "warn"`, not a failing strict-quote diagnostic.
+- `target/stress-pass/scenario-2-csv-repair/op-log.json` has no `xtal.repair` op.
+
+**Root cause:** `app.parser.parse_v1` remains doc-only in the archetype table. The deterministic parser synthesis floor writes a length-prefixed echo implementation, and the post-implementation predicate promotion path has no parser predicate to promote. With no formal contract for malformed quote rejection, `xtal.verify` has nothing strict to fail against, so the repair loop never becomes eligible.
+
+**Fix direction:** Complete the C2 parser predicate expansion, or add a scenario-specific pre-seeded failing contract/workspace setup. The fix must make a real `xtal.verify` failure reachable before claiming scenario 2 coverage. Do not mark A5 complete from the current bundle.
 
 ---
 

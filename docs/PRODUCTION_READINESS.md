@@ -29,7 +29,7 @@ Last updated 2026-05-13 after the pre-production readiness pass.
 
 ### Before public beta
 - [x] **F3 diagnosed and fixed.** Daemon HTTP remains responsive during real-claude / real-codex subprocess execution (commits `1ae54f8`, `2344fde`).
-- [ ] **Scenarios 2-5 run with real toolchain.** Currently 1/5 scenarios run.
+- [ ] **Scenarios 2-5 run with real toolchain.** Currently 1/5 scenarios accepted. Scenario 2 was probed against the real daemon and is blocked by F13: no parser contract reaches `xtal.verify`, so the repair loop does not fire.
 - [x] Cross-browser smoke (Chromium + Firefox + WebKit). Harness: `python3 scripts/cross_browser_smoke.py`; latest local result passed.
 - [x] 30-minute long-running stability test (single autopilot session, observe op-log size + memory). Harness: `python3 scripts/stability_soak.py`; latest local result passed.
 - [x] F4: proof-support warnings surfaced in TrustCard.
@@ -72,8 +72,9 @@ The daemon now exports `active_sessions` and `subscriber_count` on `/v1/health` 
 ## Open questions for Bodik
 
 1. **Workspace shape for scenarios 2-5.** Scenario 2 (CSV repair) assumes the workspace already has a failing impl to repair. Should scenarios run sequentially against a single workspace (cumulative state) or each get a fresh workspace?
-2. **Recording bundles in git.** The Cycle 7 plan said `.gitignore` them. Worth committing the *sanitized summary* artifacts (real-AGENT.md, real-verify-diag.json snippets) as evidence?
-3. **Internal-alpha launch timing.** The real-toolchain integration works on disk and the historical F3 workaround is obsolete. Worth a soft launch to the x07 team this week while scenarios 2-5 and the long soak are queued?
+2. **Scenario 2 contract source.** Should the CSV repair scenario get a deterministic parser predicate (C2) or a pre-seeded failing contract fixture so repair is deliberately exercised?
+3. **Recording bundles in git.** The Cycle 7 plan said `.gitignore` them. Worth committing the *sanitized summary* artifacts (real-AGENT.md, real-verify-diag.json snippets) as evidence?
+4. **Internal-alpha launch timing.** The real-toolchain integration works on disk and the historical F3 workaround is obsolete. Worth a soft launch to the x07 team this week while scenarios 2-5 and the long soak are queued?
 
 ## Source documents
 
