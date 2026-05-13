@@ -34,6 +34,62 @@ state through the browser, native Studio shell, Forge shell, and daemon API.
   `streampipe`, `statemachine`, and `tasks` graph exchange layer; they are not a
   domain-specific layout engine for every future x07 surface.
 
+## Subscription-Only Cost Contract
+
+Studio's realize pipeline uses the user's **locally-installed Claude Code
+and OpenAI Codex CLIs in their non-interactive batch modes**, so flat-rate
+Pro subscriptions pay for inference. We never invoke metered HTTP APIs
+(`api.anthropic.com`, `api.openai.com`) from this codebase, and we never
+pass API-key-only CLI flags (`--bare` for `claude`, `--oss` for `codex`)
+that would route inference through metered providers.
+
+### How the flags translate
+
+The realize handoff spawns either CLI with these flags:
+
+| Need | Claude Code | Codex |
+| --- | --- | --- |
+| Non-interactive batch | `-p` | `exec` |
+| Auto-accept file edits | `--permission-mode acceptEdits` | `--sandbox workspace-write` |
+| Structured event output | `--output-format stream-json --include-partial-messages` | `--json` |
+| Scoped write access | `--add-dir <workspace>` | `-C <workspace>` |
+| Tool allowlist | `--allowedTools "Edit Write Read Glob Grep"` | (sandbox covers this) |
+| Allow non-git directories | (n/a) | `--skip-git-repo-check` |
+| Prompt input | last positional argv | last positional argv |
+
+The full flag set lives in `crates/loom-core/src/synthesis.rs`
+(`build_realize_subscription_command`) and is unit-tested with the
+"flags assert no metered routes" pair in the same file.
+
+### Template fallback (no CLI, no API, $0)
+
+When the user has no agent CLI installed, the realize lane falls back to
+`crates/loom-core/src/synthesis.rs::synthesize_from_template`, which
+emits a deterministic real-x07AST body for the common project kinds
+(sort, greet, calc, parse, validate, crawl, gateway, workflow-graph).
+The template floor is intentionally simple — its job is to make Try-It
+return a real output for the easy kinds so the user gets immediate
+feedback without spending a dime. Complex targets surface the realize
+CTA so the user opts into a subscription run.
+
+### Auto-realize on build
+
+`run_build_pipeline` now detects `scaffold_only` at the end of the
+canonical build chain and automatically fires the template synthesizer,
+re-running `impl.check` + `xtal.verify` before emitting the summary. The
+user sees a single Verified turn with a non-stub headline instead of a
+manual "Implement with Claude Code" step. The CTA stays available for
+target kinds the template doesn't cover.
+
+### Build-time enforcement
+
+`crates/loom-core/tests/no_metered_api.rs` grep-scans every Rust + TOML
+file under `crates/loom-{types,store,adapters,core,daemon}` for the
+forbidden strings (`api.anthropic.com`, `api.openai.com`,
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Comment lines are exempt so the
+contract can be documented in module docs. CI fails the build if any
+new code path references those tokens.
+
 ## Validation Targets
 
 ```bash

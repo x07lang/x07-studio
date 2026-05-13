@@ -5,6 +5,7 @@ pub mod kernel;
 pub mod ladder;
 pub mod reducer;
 pub mod summarize;
+pub mod synthesis;
 pub mod timeline;
 pub mod workspace;
 

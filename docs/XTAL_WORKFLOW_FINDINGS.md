@@ -957,3 +957,56 @@ This document records friction found while implementing the Studio web surface.
    `streampipe`, `statemachine`, and `tasks` parse/emit contract. Connected E2E
    now exercises those paths against the daemon instead of treating them as
    documentation-only surfaces.
+
+87. Realize must use coding-agent subscriptions, not metered HTTP APIs.
+
+   The first cut of the realize lane spawned `claude <handoff.md>` and waited
+   for the CLI to follow our `agent_event` JSONL protocol — which it doesn't,
+   because the CLI is interactive by default and treats unrecognized argv as
+   a chat opener. The replacement uses each CLI's documented non-interactive
+   batch mode:
+
+   ```
+   claude -p \
+       --permission-mode acceptEdits \
+       --allowedTools "Edit Write Read Glob Grep" \
+       --output-format stream-json --include-partial-messages \
+       --add-dir <workspace> \
+       "<prompt>"
+   ```
+
+   ```
+   codex exec \
+       --sandbox workspace-write \
+       --json --skip-git-repo-check \
+       -C <workspace> \
+       "<prompt>"
+   ```
+
+   Both flag sets stay on the user's flat-rate Pro subscription. Studio never
+   passes `--bare` (claude's API-key-only mode) or `--oss` (codex's non-
+   subscription routing), and a build-time grep test
+   (`crates/loom-core/tests/no_metered_api.rs`) keeps that contract honest by
+   failing CI if any source line references `api.anthropic.com`,
+   `api.openai.com`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`.
+
+   Recommendation for x07 itself: the x07-mcp / agent-quickstart docs should
+   explicitly list the subscription-friendly batch flags for Claude Code and
+   Codex. Today agents are described in terms of CLI names without a
+   canonical "non-interactive code-edit invocation" recipe, which led us
+   straight into the API-key trap on the first pass.
+
+88. Auto-realize via deterministic templates is a $0 floor for Try-It.
+
+   The XTAL build pipeline ends at a verified *stub* — verify trivially
+   passes against an empty body. Users saw "Built and verified" but Try-It
+   returned no output. The new template synthesizer in
+   `crates/loom-core/src/synthesis.rs` emits a real x07AST body for each
+   intent target the heuristics already detect (sort, greet, calc, parse,
+   validate, crawl, gateway, workflow-graph). The kernel runs it
+   automatically at the end of `run_build_pipeline` whenever
+   `summarize::scan_stub_modules` returns a non-empty list, re-runs
+   `impl.check` + `xtal.verify`, and only then emits the
+   `summary.plain_english` op. Users with a working subscription agent can
+   still click "Implement with Claude Code" to upgrade the floor; users
+   without one get a working Try-It at zero cost.

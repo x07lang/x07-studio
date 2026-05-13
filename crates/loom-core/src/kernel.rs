@@ -1188,6 +1188,40 @@ impl WorkspaceKernel {
         };
         self.append_op(session_id, build_stage_op(session_id, final_stage, round))?;
         if final_stage == "done" {
+            // SUBSCRIPTION-FRIENDLY AUTO-REALIZE
+            // ----------------------------------
+            // The XTAL chain reaches "verified" against a stub body. If
+            // the deterministic template synthesizer recognizes the
+            // target kind (sort/greet/calc/parse/validate/crawler/...) we
+            // fill in a working implementation right here, then re-run
+            // verify. This happens *without* spawning any subscription
+            // CLI or HTTP API — it's a free local floor that makes
+            // Try-It produce a real output for the common kinds. When no
+            // template matches, the scaffolded summary stays put and
+            // surfaces the realize CTA so the user can opt into a
+            // subscription-backed Claude Code / Codex run.
+            let stub_paths_pre = crate::summarize::scan_stub_modules(self.root.as_path());
+            if !stub_paths_pre.is_empty() {
+                if let Some(template_op) = self.try_template_synthesis(&current)? {
+                    self.append_op(session_id, template_op)?;
+                    // Re-verify against the synthesized impl. We're still
+                    // in TrustReview from the build path, so the reducer
+                    // rejects another VerificationPassed event — that's
+                    // fine: we just want the fresh xtal.verify report on
+                    // disk so the next summary scan reflects reality.
+                    let _ = self
+                        .run_binding(session_id, "impl.check", &BTreeMap::new())
+                        .await;
+                    let _ = self
+                        .run_binding(session_id, "xtal.verify", &build_vars)
+                        .await;
+                    current = self
+                        .model
+                        .get_session(session_id)
+                        .cloned()
+                        .unwrap_or(current);
+                }
+            }
             let summary_op =
                 match build_plain_english_summary_with_root(&current, Some(self.root.as_path())) {
                     Some(op) => op,
@@ -1424,6 +1458,76 @@ impl WorkspaceKernel {
             }
         };
         self.append_op(session_id, op)
+    }
+
+    /// Run the deterministic template synthesizer over the session's
+    /// approved intent. Writes `src/<module>.x07.json` directly and
+    /// records a `synthesis.template` OpRecord so the timeline can
+    /// attribute the write. Returns `Ok(None)` when no template matches
+    /// the target — that's a hint to the UI that the user should hand
+    /// off to a real subscription agent.
+    fn try_template_synthesis(
+        &self,
+        session: &SessionSnapshot,
+    ) -> anyhow::Result<Option<OpRecord>> {
+        let Some(intent) = session.intent.as_ref() else {
+            return Ok(None);
+        };
+        let Some(synth) = crate::synthesis::synthesize_from_template(intent) else {
+            return Ok(None);
+        };
+        let abs = self.root.join(&synth.relative_path);
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent.as_std_path()).with_context(|| {
+                format!(
+                    "create directory for template synthesis at {}",
+                    parent.as_str()
+                )
+            })?;
+        }
+        let bytes = serde_json::to_vec_pretty(&synth.body).context("serialize template body")?;
+        std::fs::write(abs.as_std_path(), bytes)
+            .with_context(|| format!("write template impl to {abs}"))?;
+        let now = now_string();
+        let op = OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id: session.session_id,
+            op: "synthesis.template".to_string(),
+            backend: "studio-kernel".to_string(),
+            command: vec![
+                "studio".to_string(),
+                "synthesis".to_string(),
+                "template".to_string(),
+                synth.module_id.clone(),
+            ],
+            started_at: now.clone(),
+            finished_at: Some(now),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: vec![synth.relative_path.clone()],
+            notes: Some(format!(
+                "Wrote a template implementation for `{}` so Try-It has a working floor. \
+                 The user can ask Claude Code / Codex to refine it further.",
+                synth.module_id
+            )),
+            stdout: Some(format!(
+                "Synthesized {}.{} from the spec template library.",
+                synth.module_id, synth.entry_name
+            )),
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: Some(serde_json::json!({
+                "schema_version": "x07.studio.synthesis_template@0.1.0",
+                "source": "studio.template",
+                "module_id": synth.module_id,
+                "entry": synth.entry_name,
+                "wrote_path": synth.relative_path,
+            })),
+            report_path: None,
+        };
+        Ok(Some(op))
     }
 
     /// Build-pipeline counterpart to [`Self::ensure_incident_xtal_manifest`].
@@ -1845,6 +1949,31 @@ impl WorkspaceKernel {
         let mut realize_agent = agent.clone();
         realize_agent.allowed_verbs = handoff.allowed_verbs.clone();
         realize_agent.write_roots = handoff.write_roots.clone();
+        // SUBSCRIPTION-ONLY COST CONTRACT
+        // -------------------------------
+        // We invoke the user's installed Claude Code / Codex CLIs in their
+        // non-interactive batch modes so their *subscriptions* — flat-rate
+        // Pro tiers — pay for the inference, not metered HTTP APIs at
+        // $3–$15 per million tokens. The CLIs need explicit flags to:
+        //   * exit after one round (no interactive REPL)
+        //   * accept file edits without prompting (acceptEdits / workspace-write)
+        //   * stream structured JSON so the daemon can render progress
+        //   * write directly into the workspace
+        // We pass the prompt **content** as the last positional argv
+        // element, not the markdown path, because both CLIs treat
+        // unrecognized positional args as the user prompt.
+        //
+        // The build-time `tests/no_metered_api.rs` test asserts that this
+        // crate never references metered HTTP endpoints
+        // (api.anthropic.com / api.openai.com) or API-key-only flags
+        // (--bare for claude, --oss for codex).
+        let prompt_content = std::fs::read_to_string(prompt_path.as_std_path())
+            .with_context(|| format!("read realize prompt at {prompt_path}"))?;
+        let (program, args) = crate::synthesis::build_realize_subscription_command(
+            &agent.id,
+            self.root.as_path(),
+            &prompt_content,
+        );
         let command = AgentCommandPlan {
             session_id,
             op_id: op.id,
@@ -1852,9 +1981,11 @@ impl WorkspaceKernel {
             handoff: handoff.clone(),
             prompt_path: prompt_path.clone(),
             cwd: self.root.clone(),
-            program: agent.command.clone(),
-            args: handoff.command.iter().skip(1).cloned().collect(),
-            timeout_seconds: timeout_seconds.unwrap_or(180).clamp(20, 600),
+            program,
+            args,
+            // Real coding agents need more time than our fast clarify round.
+            // Default 4 minutes; capped at 10 to bound runaway sessions.
+            timeout_seconds: timeout_seconds.unwrap_or(240).clamp(20, 600),
             op_kind: "realize".to_string(),
         };
         let snapshot = self.append_op(session_id, op.clone())?;
@@ -1867,11 +1998,15 @@ impl WorkspaceKernel {
         })
     }
 
-    /// Runs after the realize agent exits. Re-runs `impl.check` and
-    /// `xtal.verify` (with the same world override the build pipeline
-    /// uses) so the timeline gains a fresh Verified turn with a non-stub
-    /// summary. Returns the final session snapshot and the workspace-
-    /// relative files the agent wrote.
+    /// Runs after the realize agent exits. If the subscription CLI didn't
+    /// produce a non-stub `src/`, the kernel falls back to the
+    /// deterministic template synthesizer ([`crate::synthesis`]) so the
+    /// user still gets a working impl floor without spending API dollars.
+    /// Then it re-runs `impl.check` and `xtal.verify` (with the same
+    /// world override the build pipeline uses) so the timeline gains a
+    /// fresh Verified turn with a non-stub summary. Returns the final
+    /// session snapshot, whether verify passed, and the workspace-
+    /// relative files the agent (or the template) wrote.
     pub async fn finalize_realize(
         &mut self,
         session_id: Uuid,
@@ -1882,7 +2017,7 @@ impl WorkspaceKernel {
             .get_session(session_id)
             .cloned()
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
-        let wrote_files: Vec<String> = current
+        let mut wrote_files: Vec<String> = current
             .op_log
             .iter()
             .find(|op| op.id == run_op_id)
@@ -1897,6 +2032,33 @@ impl WorkspaceKernel {
                     .collect()
             })
             .unwrap_or_default();
+        // SUBSCRIPTION + TEMPLATE FALLBACK
+        // --------------------------------
+        // If the supervised CLI didn't write any files inside the
+        // workspace OR the workspace is still flagged as stub-only, fall
+        // back to the deterministic template synthesizer. This keeps the
+        // Verified turn honest: the user gets a working Try-It floor even
+        // when their subscription agent failed, and no metered API call
+        // is ever made.
+        let still_stub_after_agent = !crate::summarize::scan_stub_modules(self.root.as_path())
+            .is_empty();
+        if still_stub_after_agent {
+            if let Some(template_op) = self.try_template_synthesis(&current)? {
+                if let Some(path) = template_op
+                    .artifacts
+                    .iter()
+                    .find(|p| p.starts_with("src/"))
+                    .cloned()
+                {
+                    if !wrote_files.contains(&path) {
+                        wrote_files.push(path);
+                    }
+                }
+                // The next `run_binding` calls below return a fresh
+                // snapshot, so we don't need to capture this one.
+                self.append_op(session_id, template_op)?;
+            }
+        }
         let mut vars: BTreeMap<String, String> = BTreeMap::new();
         vars.insert("allow_os_world".to_string(), "true".to_string());
         let after_check = self
