@@ -2198,7 +2198,7 @@ impl WorkspaceKernel {
                 return Ok(snapshot);
             }
             let mut k = kernel.lock().await;
-            k.architect_enrich_after_scaffold(session_id, &vars)?;
+            k.architect_enrich_after_scaffold(session_id, &vars).await?;
         } else {
             let input = vars
                 .get("input")
@@ -2206,6 +2206,12 @@ impl WorkspaceKernel {
                 .unwrap_or_else(|| "spec/app.main.x07spec.json".to_string());
             let mut k = kernel.lock().await;
             k.append_op(session_id, existing_spec_op(session_id, &input))?;
+            // The xtal-pure template installs a toy.sorter example spec
+            // (rich doc + ensures); other archetypes land here when the
+            // user brings their own spec. Run the same enrichment so
+            // empty `doc`/`ensures` fields get the archetype defaults;
+            // non-empty fields are preserved by the merge.
+            k.architect_enrich_after_scaffold(session_id, &vars).await?;
         }
 
         for binding_id in ["spec.check", "tests.gen.write"] {
@@ -2837,13 +2843,21 @@ impl WorkspaceKernel {
             if last_op_failed(&snapshot) {
                 return Ok(snapshot);
             }
-            self.architect_enrich_after_scaffold(session_id, &vars)?;
+            self.architect_enrich_after_scaffold(session_id, &vars)
+                .await?;
         } else {
             let input = vars
                 .get("input")
                 .cloned()
                 .unwrap_or_else(|| "spec/app.main.x07spec.json".to_string());
             self.append_op(session_id, existing_spec_op(session_id, &input))?;
+            // The xtal-pure template installs a toy.sorter example spec
+            // (rich doc + ensures); other archetypes land here when the
+            // user brings their own spec. Run the same enrichment so
+            // empty `doc`/`ensures` fields get the archetype defaults;
+            // non-empty fields are preserved by the merge.
+            self.architect_enrich_after_scaffold(session_id, &vars)
+                .await?;
         }
 
         for binding_id in ["spec.check", "tests.gen.write"] {
@@ -3118,7 +3132,7 @@ impl WorkspaceKernel {
     /// Best-effort: a missing or unparseable spec is non-fatal (we log a
     /// no-op op-record and continue). The downstream `spec.check` step will
     /// surface any structural issue.
-    fn architect_enrich_after_scaffold(
+    async fn architect_enrich_after_scaffold(
         &mut self,
         session_id: Uuid,
         vars: &BTreeMap<String, String>,
@@ -3149,7 +3163,21 @@ impl WorkspaceKernel {
             module_id,
             entry,
         )?;
+        let needs_canonicalization = report.doc_added || report.ensures_added > 0;
         self.append_op(session_id, architect_enrich_op(session_id, &report))?;
+        if needs_canonicalization {
+            // `serde_json::to_string_pretty` is not x07's canonical form;
+            // without this re-format, `xtal.verify` later fails with
+            // `WXTAL_SPEC_NONCANONICAL_JSON`. The `spec.format` binding
+            // (`x07 xtal spec fmt --write --inject-ids`) reshapes the
+            // file in place so the downstream gates accept it.
+            let mut fmt_vars = vars.clone();
+            fmt_vars
+                .entry("input".to_string())
+                .or_insert_with(|| spec_path.clone());
+            self.run_binding(session_id, "spec.format", &fmt_vars)
+                .await?;
+        }
         Ok(())
     }
 
@@ -4255,6 +4283,7 @@ impl WorkspaceKernel {
                         module_id: module_id.clone(),
                         entry: entry.clone(),
                         doc_added: false,
+                        ensures_added: 0,
                         archetype_recognized: false,
                         agent_id: Some(agent_id.to_string()),
                     },
@@ -4272,6 +4301,7 @@ impl WorkspaceKernel {
                         module_id: module_id.clone(),
                         entry: entry.clone(),
                         doc_added: false,
+                        ensures_added: 0,
                         archetype_recognized: false,
                         agent_id: Some(agent_id.to_string()),
                     },
@@ -7746,14 +7776,27 @@ fn architect_stage_note(session: &SessionSnapshot) -> String {
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
     let agent_id = report.get("agent_id").and_then(serde_json::Value::as_str);
+    let ensures_added = report
+        .get("ensures_added")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
     let target = format!("{module_id}.{entry}");
     match (doc_added, agent_id, archetype_recognized) {
         (true, Some(agent), _) => format!(
             "Architect agent `{agent}` drafted a behaviour contract for `{target}` before handing off to the coder."
         ),
-        (true, None, _) => format!(
-            "Architect enriched `{target}` spec with archetype contract before handing off to the coder."
-        ),
+        (true, None, _) => {
+            if ensures_added > 0 {
+                let plural = if ensures_added == 1 { "" } else { "s" };
+                format!(
+                    "Architect enriched `{target}` spec with archetype contract (+{ensures_added} ensures clause{plural}) before handing off to the coder."
+                )
+            } else {
+                format!(
+                    "Architect enriched `{target}` spec with archetype contract before handing off to the coder."
+                )
+            }
+        }
         (false, _, true) => format!(
             "Architect confirmed `{target}` spec already carries the archetype contract."
         ),
@@ -7823,6 +7866,7 @@ fn architect_enrich_op(session_id: Uuid, report: &crate::architect::EnrichmentRe
             "spec_path": report.spec_path,
             "archetype_recognized": report.archetype_recognized,
             "doc_added": report.doc_added,
+            "ensures_added": report.ensures_added,
             "fields_added": fields_added,
             "agent_id": report.agent_id,
         })),
@@ -10107,8 +10151,8 @@ mod tests {
             .any(|item| item.op == "intent.formalize"));
     }
 
-    #[test]
-    fn architect_enrich_after_scaffold_writes_doc_for_known_archetype() {
+    #[tokio::test]
+    async fn architect_enrich_after_scaffold_writes_doc_for_known_archetype() {
         let root = temp_root();
         let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
         let session = kernel
@@ -10158,6 +10202,7 @@ mod tests {
 
         kernel
             .architect_enrich_after_scaffold(session.session_id, &vars)
+            .await
             .expect("enrich scaffolded spec");
 
         let on_disk: serde_json::Value =
@@ -10467,8 +10512,8 @@ mod tests {
         std::fs::remove_dir_all(root).ok();
     }
 
-    #[test]
-    fn architect_enrich_after_scaffold_is_quiet_for_unknown_archetype() {
+    #[tokio::test]
+    async fn architect_enrich_after_scaffold_is_quiet_for_unknown_archetype() {
         let root = temp_root();
         let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
         let session = kernel
@@ -10487,6 +10532,7 @@ mod tests {
 
         kernel
             .architect_enrich_after_scaffold(session.session_id, &vars)
+            .await
             .expect("enrich is non-fatal on unknown archetype");
 
         let snapshot = kernel

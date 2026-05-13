@@ -20,6 +20,9 @@ Severity legend:
 | F7 | **FIXED** | Architect role emits a dummy "spec confirmed" log without enriching the scaffolded spec; coder gets empty `requires/ensures/doc` and produces identity passthrough (deterministic floor — `doc` enrichment from archetype semantics) | 5 |
 | F8 | **FIXED** | `claude -p` variadic flags (`--add-dir`, `--allowedTools`) swallow the trailing prompt positional; architect-enrich subprocess produced 0 bytes and timed out | tier2 |
 | F9 | **FIXED** | claude `--output-format stream-json` wraps the agent's text inside assistant/result envelopes; top-level `agent_event` parser missed the embedded `spec_enrichment` line | tier2 |
+| F10 | **FIXED** | `architect_enrich_after_scaffold` was only wired into the fresh-scaffold branch; the xtal-pure template auto-installs `spec/toy.sorter.x07spec.json` so the else branch was taken and no enrichment ran | tier1.5 |
+| F11 | **FIXED** | `architect_enrich_after_scaffold` wrote `serde_json::to_string_pretty`, which fails x07's `WXTAL_SPEC_NONCANONICAL_JSON` gate; downstream `xtal.verify` rejected the spec | tier1.5 |
+| F12 | **DEFERRED** | Build-pipeline scaffolds the impl as `["bytes.empty"]`; any non-trivial `ensures` predicate (`len > 0`, `len = len(payload)`, `len <= len(payload) * 4`) produces a counterexample against that stub. Predicate-merge is gated off in the build pipeline until a "Tier-1.5b" pass adds them after the coder writes a real impl | tier1.5 |
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 
@@ -277,6 +280,40 @@ This is what F7-Tier-2 was supposed to do: read a novel-intent prompt the heuris
 **Evidence bundle:** `target/stress-pass/scenario-tier2/evidence/`:
 - `session-final.json` — full session snapshot (244 KB, 169 ops).
 - `app.main.x07spec.json` — enriched spec on disk.
+
+### Tier-1.5 — archetype `ensures` predicates (deferred; doc-only ships)
+
+The hypothesis was simple: extend the `ArchetypeSemantic` table with structured `ensures` predicates that `x07 xtal spec check` accepts (length preservation for sort, length upper bound for normalize, non-empty for greeter). The predicates parse as valid x07 SMT-shape and round-trip through `x07 xtal spec check --project x07.json --input <spec>` cleanly in isolation. So the *spec*-side is fine.
+
+Then a real-toolchain validation pass surfaced two integration bugs (F10, F11) and a deep architectural mismatch (F12):
+
+**F10 — enrichment was only wired into the fresh-scaffold branch.** The xtal-pure template auto-installs `spec/toy.sorter.x07spec.json` (with rich doc + ensures from the canonical x07 example). `should_scaffold_spec` returns `false`, the `else` branch runs `existing_spec_op`, and `architect_enrich_after_scaffold` was never called. Fix: call it in both branches; the merge is conservative so a fully-populated template spec stays untouched.
+
+**F11 — `serde_json::to_string_pretty` fails x07's canonical-JSON gate.** After enrichment, `xtal.verify` rejected the spec with `WXTAL_SPEC_NONCANONICAL_JSON: spec JSON is not in canonical form (run x07 xtal spec fmt --write)`. Fix: when enrichment mutates the spec, follow up with the existing `spec.format` binding (`x07 xtal spec fmt --write --inject-ids`) to re-canonicalize.
+
+**F12 — the impl stub violates every non-trivial predicate.** `impl.sync.write` scaffolds the impl as `["bytes.empty"]` (returns empty bytes). `xtal.verify` runs the SMT prover against this stub. Any predicate that constrains the output (`len > 0`, `len = len(payload)`, etc.) fails because the stub returns zero-length output. The counterexample is *correct* — the stub doesn't satisfy the contract. But this means Tier-1.5 predicates would block the build pipeline at the verify step on every archetype that doesn't have a real impl in the template.
+
+The only template that does ship a real impl is `toy.sorter` (from the xtal-pure template), and its `len_preserved` predicate verifies against the real sort impl. Our archetype path adds predicates to the spec but leaves the impl as the no-op stub — so verify fails.
+
+**Decision:** disable the predicate-merge in `merge_semantic_into_spec` behind a const flag `MERGE_ENSURES_IN_BUILD = false`. The archetype table keeps the predicates declared (so a future "Tier-1.5b" pass can run them after the coder writes a real impl). Doc-only enrichment ships now. Validation confirms: the greeter scenario now reaches `trust_review` cleanly with `architect.enrich_spec [doc=True, ensures=0]`, two `xtal.verify -> succeeded` calls, and a `summary.plain_english` op.
+
+**Where Tier-1.5 leaves us:**
+
+| Layer | Status |
+|---|---|
+| Archetype-table schema with `ensures` field | ✅ shipped |
+| 3 declared predicates (sort len-preserved, greeter non-empty, text-normalize doc-only) | ✅ ship in source |
+| `merge_ensures_into_spec` helper (preserves user content) | ✅ shipped (called by tests, gated off in build) |
+| Build-pipeline merge invocation | ❌ gated off, see F12 |
+| spec.format canonicalization after enrichment | ✅ shipped (F11 fix) |
+| Existing-spec branch enrichment | ✅ shipped (F10 fix) |
+
+**Path forward (Cycle-8 or later):** add an "architect contracts" stage that runs AFTER the coder produces real impl, before `xtal.verify`. That stage merges the archetype `ensures` from the table (already declared!) and validates against the real impl. Then flip `MERGE_ENSURES_IN_BUILD` and the existing infrastructure carries the rest.
+
+**Evidence bundle:** `target/stress-pass/scenario-tier15/evidence/`:
+- `session-greeter-final.json` — full session snapshot (trust_review reached).
+- `app.greeter.x07spec.json` — doc-only enriched spec.
+- `xtal.verify.diag.json` — verify ok (proof-support warnings only, no counterexamples).
 
 **Tests:** loom-core grew to 125 passing (was 109 after Tier-1, 121 after Tier-2 wiring, +4 after F8/F9 fixes). New coverage:
 - `architect::tests::operation_doc_is_empty_*` (3) — checks the gate predicate.
