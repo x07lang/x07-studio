@@ -418,6 +418,13 @@ export interface PostureDelta {
 	summary: string;
 }
 
+export interface ProofSupportNote {
+	code: string;
+	target: string;
+	severity: string;
+	message: string;
+}
+
 export interface TrustPosture {
 	schema_version: 'x07.studio.trust_posture@0.1.0';
 	session_id: string;
@@ -427,6 +434,7 @@ export interface TrustPosture {
 	capabilities: Capability[];
 	budgets: BudgetSummary;
 	proof_coverage: ProofCoverage;
+	proof_support_notes?: ProofSupportNote[];
 	deltas: PostureDelta[];
 	posture_color: 'green' | 'amber' | 'red' | string;
 }

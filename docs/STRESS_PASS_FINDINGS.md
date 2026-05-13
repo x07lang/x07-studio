@@ -22,7 +22,8 @@ Severity legend:
 | F9 | **FIXED** | claude `--output-format stream-json` wraps the agent's text inside assistant/result envelopes; top-level `agent_event` parser missed the embedded `spec_enrichment` line | tier2 |
 | F10 | **FIXED** | `architect_enrich_after_scaffold` was only wired into the fresh-scaffold branch; the xtal-pure template auto-installs `spec/toy.sorter.x07spec.json` so the else branch was taken and no enrichment ran | tier1.5 |
 | F11 | **FIXED** | `architect_enrich_after_scaffold` wrote `serde_json::to_string_pretty`, which fails x07's `WXTAL_SPEC_NONCANONICAL_JSON` gate; downstream `xtal.verify` rejected the spec | tier1.5 |
-| F12 | **DEFERRED** | Build-pipeline scaffolds the impl as `["bytes.empty"]`; any non-trivial `ensures` predicate (`len > 0`, `len = len(payload)`, `len <= len(payload) * 4`) produces a counterexample against that stub. Predicate-merge is gated off in the build pipeline until a "Tier-1.5b" pass adds them after the coder writes a real impl | tier1.5 |
+| F12 | **FIXED** | Build-pipeline scaffolds the impl as `["bytes.empty"]`; any non-trivial `ensures` predicate produced a counterexample. Tier-1.5b lands: predicates promote **after** `try_template_synthesis` / coder writes a real impl, mirrored into both spec and impl files | tier1.5b |
+| F4  | **FIXED** | Real `x07 verify` proof-support warnings (`WXTAL_VERIFY_PROVE_*`, `X07V_*`, `EXTAL_VERIFY_PROVE_*`) now surface in `TrustPosture.proof_support_notes`; TrustCard renders them in a collapsible "Proof support" panel with severity-colored borders | tier1.5b |
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 
@@ -314,6 +315,81 @@ The only template that does ship a real impl is `toy.sorter` (from the xtal-pure
 - `session-greeter-final.json` — full session snapshot (trust_review reached).
 - `app.greeter.x07spec.json` — doc-only enriched spec.
 - `xtal.verify.diag.json` — verify ok (proof-support warnings only, no counterexamples).
+
+### Tier-1.5b — predicate promotion after real impl (FIXED)
+
+The plan worked. Tier-1.5b lands a new sequence in the build pipeline:
+
+1. `synthesis.template` (or coder agent) writes a real impl.
+2. `architect_promote_predicates_after_impl`:
+   - Reads the archetype's `ensures` predicates.
+   - Merges them into the spec (only when ensures is empty).
+   - **Mirrors the same clauses into the impl file** — preserving the body, just adding the contract metadata to the `defn` decl.
+   - Runs `spec.format` to canonicalize.
+   - Appends an `architect.enrich_spec` op-record with `ensures_added` count.
+3. `impl.check` and `xtal.verify` re-run with the real impl + the predicates. The prover proves the contract against the real code.
+
+The mirror step is critical: without it, `x07 xtal impl check` raises `EXTAL_IMPL_CONTRACT_MISSING` because the spec and impl `ensures` arrays don't match.
+
+**Real-toolchain validation (greeter scenario):**
+
+```
+[trust_review] architect.enrich_spec  [doc=True,  ensures=0]   ← Tier-1
+[trust_review] spec.check             succeeded
+[trust_review] impl.sync.write        (stub)
+[trust_review] impl.check + xtal.verify  succeeded             ← stub passes (no contract)
+[trust_review] synthesis.template     (real greeter impl)
+[trust_review] architect.enrich_spec  [doc=False, ensures=1]   ← Tier-1.5b fired
+[trust_review] spec.format            succeeded
+[trust_review] impl.check             succeeded                 ← mirror fix worked
+[trust_review] xtal.verify            succeeded                 ← real impl + predicate PROVED
+[trust_review] summary.plain_english  succeeded
+[trust_review] autopilot.decision.complete
+phase: trust_review
+```
+
+Both files on disk carry the same predicate:
+
+**Spec** (`spec/app.greeter.x07spec.json`):
+```json
+"ensures": [{"id": "result_nonempty", "expr": [">", ["bytes.len", "__result"], 0]}]
+```
+
+**Impl** (`src/app/greeter.x07.json` — body preserved, ensures mirrored):
+```json
+"defn": {
+  "name": "app.greeter.greet_v1",
+  "body": ["begin", ["let", "n", ["bytes.len", "payload"]], ...],
+  "ensures": [{"id": "result_nonempty", "expr": [">", ["bytes.len", "__result"], 0]}]
+}
+```
+
+**Evidence bundle:** `target/stress-pass/scenario-tier15b/evidence/`:
+- `session-final.json` — autopilot.decision.complete reached.
+- `app.greeter.x07spec.json` — spec with promoted predicate.
+- `greeter.x07.json` — impl with mirrored predicate + real body.
+- `xtal.verify.diag.json` — `ok: true`, predicate proved.
+
+### Examples pipe — Tier-2 agent examples → IntentPacket
+
+Tier-2's `spec_enrichment` event carries an `examples[]` array alongside `doc`. Previously dropped on the floor. `ingest_architect_enrichment` now merges those into `IntentPacket.examples` (deduped against existing entries; capped at 5 per round to bound a pathological agent output). The realize prompt and the UI's plain-English summary now both pick up the architect's worked input → output illustrations.
+
+Test coverage: `ingest_architect_enrichment_writes_doc_from_recorded_event` extended to assert the example landed on the intent.
+
+### F4 — proof-support warnings in TrustCard (FIXED)
+
+Real `x07 verify --prove` emits diagnostic codes that explain *why* the prover left a target unverified:
+
+- `X07V_NO_CONTRACTS` — target function has no requires/ensures/invariant clauses.
+- `X07V_UNSUPPORTED_HEAP_EFFECT` — x07 verify does not support heap/pointer effect "bytes.set_u8" in the certifiable pure subset.
+- `WXTAL_VERIFY_PROVE_SUPPORT` / `WXTAL_VERIFY_PROVE_UNSUPPORTED` — proof-attempt summary lines.
+- `EXTAL_VERIFY_PROVE_COUNTEREXAMPLE` — solver found an input that violates the predicate.
+
+Previously these landed in `target/xtal/xtal.verify.diag.json` and were ignored by the UI. The TrustCard rendered a `Math.round(proved_pct)%` figure with zero context.
+
+Now: `trust_posture::current` reads the diag, filters for proof-support codes, and populates a new `proof_support_notes: Vec<ProofSupportNote>` field on `TrustPosture`. The TypeScript type + the SvelteKit TrustCard component were updated in lockstep. A new collapsible "Proof support" panel renders below the BUDGET/PROOFS grid with severity-colored borders (red for error, amber for warning).
+
+Test counts now: 135 loom-core tests (was 131; +4 for predicate promotion, impl mirror, and existing ingest test extended). Web: 70/70 (TrustCard new field optional + backward-compatible).
 
 **Tests:** loom-core grew to 125 passing (was 109 after Tier-1, 121 after Tier-2 wiring, +4 after F8/F9 fixes). New coverage:
 - `architect::tests::operation_doc_is_empty_*` (3) — checks the gate predicate.

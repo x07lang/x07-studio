@@ -57,6 +57,23 @@
 				{/each}
 			</div>
 		{/if}
+		{#if (posture.proof_support_notes ?? []).length}
+			<details class="proof-notes" data-testid="proof-support-notes">
+				<summary>
+					<span class="proof-notes-eyebrow">Proof support</span>
+					<span class="proof-notes-count">{(posture.proof_support_notes ?? []).length} note{(posture.proof_support_notes ?? []).length === 1 ? '' : 's'}</span>
+				</summary>
+				<ul>
+					{#each posture.proof_support_notes ?? [] as note}
+						<li class="proof-note severity-{note.severity || 'warning'}">
+							<code class="proof-note-code">{note.code}</code>
+							{#if note.target}<span class="proof-note-target">{note.target}</span>{/if}
+							<span class="proof-note-message">{note.message}</span>
+						</li>
+					{/each}
+				</ul>
+			</details>
+		{/if}
 	{:else}
 		<p class="pending-line">Build or formalize a session to capture the first posture.</p>
 	{/if}
@@ -194,5 +211,68 @@
 		margin: 0;
 		color: var(--muted);
 		font-size: 12px;
+	}
+	.proof-notes {
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: rgba(255, 255, 255, 0.025);
+	}
+	.proof-notes summary {
+		display: flex;
+		gap: 8px;
+		align-items: baseline;
+		padding: 8px 12px;
+		cursor: pointer;
+		list-style: none;
+	}
+	.proof-notes summary::-webkit-details-marker {
+		display: none;
+	}
+	.proof-notes-eyebrow {
+		color: var(--muted);
+		font-size: 10px;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		font-weight: 600;
+	}
+	.proof-notes-count {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--text);
+	}
+	.proof-notes ul {
+		margin: 0;
+		padding: 0 12px 10px 12px;
+		list-style: none;
+		display: grid;
+		gap: 6px;
+	}
+	.proof-note {
+		display: grid;
+		gap: 2px;
+		padding: 6px 8px;
+		border-radius: 4px;
+		background: rgba(255, 255, 255, 0.025);
+		font-size: 11px;
+		line-height: 1.4;
+	}
+	.proof-note.severity-error {
+		border-left: 2px solid var(--accent-danger);
+	}
+	.proof-note.severity-warning {
+		border-left: 2px solid var(--accent-sandbox);
+	}
+	.proof-note-code {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		color: var(--accent);
+	}
+	.proof-note-target {
+		font-family: var(--font-mono);
+		font-size: 10px;
+		color: var(--muted);
+	}
+	.proof-note-message {
+		color: var(--text);
 	}
 </style>

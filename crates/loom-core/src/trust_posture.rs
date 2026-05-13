@@ -1,6 +1,8 @@
 use camino::Utf8Path;
 use loom_adapters::command_runner::now_string;
-use loom_types::api::{BudgetSummary, Capability, PostureDelta, ProofCoverage, TrustPosture};
+use loom_types::api::{
+    BudgetSummary, Capability, PostureDelta, ProofCoverage, ProofSupportNote, TrustPosture,
+};
 use loom_types::artifacts::OperationStatus;
 use loom_types::session::SessionSnapshot;
 use serde_json::Value;
@@ -19,6 +21,7 @@ pub fn current(root: &Utf8Path, session: &SessionSnapshot) -> TrustPosture {
     let capabilities = capabilities(root, &profile, &trust_report, &worlds);
     let budgets = budgets(&trust_report, &verify_report, &x07_json);
     let proof_coverage = proof_coverage(session, &verify_report);
+    let proof_support_notes = proof_support_notes_from_diag(root);
     let mut posture = TrustPosture {
         schema_version: "x07.studio.trust_posture@0.1.0".to_string(),
         session_id: session.session_id,
@@ -28,6 +31,7 @@ pub fn current(root: &Utf8Path, session: &SessionSnapshot) -> TrustPosture {
         capabilities,
         budgets,
         proof_coverage,
+        proof_support_notes,
         deltas: Vec::new(),
         posture_color: String::new(),
     };
@@ -276,6 +280,60 @@ fn latest_json_for_op(session: &SessionSnapshot, prefix: &str) -> Option<Value> 
         .rev()
         .find(|op| op.op.starts_with(prefix) && op.report_json.is_some())
         .and_then(|op| op.report_json.clone())
+}
+
+/// Collect `WXTAL_VERIFY_PROVE_*` / `X07V_*` notes from x07's verify
+/// diag. Studio's TrustCard renders these inline so users see *why* the
+/// prover left a target unverified (e.g. "no requires/ensures
+/// declared", "unsupported heap effect"), instead of a silent
+/// `support_pct` figure with no context.
+fn proof_support_notes_from_diag(root: &Utf8Path) -> Vec<ProofSupportNote> {
+    let diag_path = root.join("target/xtal/xtal.verify.diag.json");
+    let Some(diag) = read_json(diag_path.as_path()) else {
+        return Vec::new();
+    };
+    let Some(diagnostics) = diag.get("diagnostics").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    for entry in diagnostics {
+        let code = entry
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let is_proof_support = code.starts_with("WXTAL_VERIFY_PROVE_")
+            || code.starts_with("X07V_")
+            || code.starts_with("EXTAL_VERIFY_PROVE_");
+        if !is_proof_support {
+            continue;
+        }
+        let message = entry
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if message.is_empty() {
+            continue;
+        }
+        let severity = entry
+            .get("severity")
+            .and_then(Value::as_str)
+            .unwrap_or("warning")
+            .to_string();
+        let target = entry
+            .get("target")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        notes.push(ProofSupportNote {
+            code: code.to_string(),
+            target,
+            severity,
+            message,
+        });
+    }
+    notes
 }
 
 fn read_json(path: &Utf8Path) -> Option<Value> {

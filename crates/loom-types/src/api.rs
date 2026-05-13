@@ -637,8 +637,29 @@ pub struct TrustPosture {
     pub capabilities: Vec<Capability>,
     pub budgets: BudgetSummary,
     pub proof_coverage: ProofCoverage,
+    /// Diagnostic notes from `x07 verify --prove` that explain *why* the
+    /// prover left a target unverified. Populated when the verify diag on
+    /// disk carries `WXTAL_VERIFY_PROVE_*` codes (e.g. `X07V_NO_CONTRACTS`,
+    /// `X07V_UNSUPPORTED_HEAP_EFFECT`). Empty when the prover is silent
+    /// or the artifact isn't available yet.
+    #[serde(default)]
+    pub proof_support_notes: Vec<ProofSupportNote>,
     pub deltas: Vec<PostureDelta>,
     pub posture_color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProofSupportNote {
+    /// Diagnostic code (e.g. `X07V_NO_CONTRACTS`, `X07V_UNSUPPORTED_HEAP_EFFECT`).
+    pub code: String,
+    /// Operation or module the note applies to (e.g. `app.greeter.greet_v1`).
+    /// Empty when the diag is unscoped.
+    #[serde(default)]
+    pub target: String,
+    /// Severity reported by the prover (`warning` / `error`).
+    pub severity: String,
+    /// Plain-English explanation pulled directly from the diag.
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

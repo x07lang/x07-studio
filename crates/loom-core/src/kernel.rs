@@ -2348,6 +2348,14 @@ impl WorkspaceKernel {
                         let mut k = kernel.lock().await;
                         k.append_op(session_id, op)?;
                     }
+                    // Tier-1.5b: now that a real impl is on disk,
+                    // promote the archetype's `ensures` predicates into
+                    // the spec so the downstream verify proves against
+                    // them. spec.format runs inside the helper.
+                    {
+                        let mut k = kernel.lock().await;
+                        let _ = k.architect_promote_predicates_after_impl(session_id).await;
+                    }
                     let _ = Self::run_binding_yielding(
                         kernel,
                         session_id,
@@ -3181,6 +3189,109 @@ impl WorkspaceKernel {
         Ok(())
     }
 
+    /// Tier-1.5b: promote archetype `ensures` predicates into the spec
+    /// **and** mirror them into the implementation file after a real
+    /// impl has been written (either by the coder agent or by
+    /// `try_template_synthesis`).
+    ///
+    /// The build-pipeline phase scaffolds the impl as `["bytes.empty"]`,
+    /// which violates every non-trivial predicate. Adding `ensures` at
+    /// that point produces counterexamples from `xtal.verify`. So this
+    /// runs AFTER a real impl lands, just before the downstream verify
+    /// reads the spec.
+    ///
+    /// Both files must carry the same `ensures` array — `x07 xtal impl
+    /// check` raises `EXTAL_IMPL_CONTRACT_MISSING` when the spec has a
+    /// clause the impl doesn't mirror. The mirror step preserves the
+    /// impl body verbatim; only the contract metadata is touched.
+    ///
+    /// Returns `true` when at least one predicate was merged.
+    async fn architect_promote_predicates_after_impl(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<bool> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let intent = session
+            .intent
+            .as_ref()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
+        let Some(target) = intent.targets.first() else {
+            return Ok(false);
+        };
+        let module_id = target.module_id.clone();
+        let Some(entry) = target.entry.clone() else {
+            return Ok(false);
+        };
+        let Some(semantic) = crate::architect::archetype_for(&module_id, &entry) else {
+            return Ok(false);
+        };
+        if semantic.ensures.is_empty() {
+            return Ok(false);
+        }
+        let spec_relative = format!("spec/{module_id}.x07spec.json");
+        let absolute = self.root.join(&spec_relative);
+        let raw = match std::fs::read_to_string(&absolute) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(false);
+            }
+            Err(error) => {
+                return Err(anyhow!(
+                    "failed to read spec for predicate promotion at `{absolute}`: {error}"
+                ));
+            }
+        };
+        let mut spec_value: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|error| anyhow!("spec `{absolute}` is not valid JSON: {error}"))?;
+        let operation_name = format!("{module_id}.{entry}");
+        let appended = crate::architect::merge_ensures_into_spec(
+            &mut spec_value,
+            &operation_name,
+            semantic.ensures,
+        );
+        if appended == 0 {
+            return Ok(false);
+        }
+        let mut serialized = serde_json::to_string_pretty(&spec_value)
+            .map_err(|error| anyhow!("re-serialize predicate-enriched spec: {error}"))?;
+        serialized.push('\n');
+        std::fs::write(&absolute, serialized)
+            .map_err(|error| anyhow!("write predicate-enriched spec to `{absolute}`: {error}"))?;
+        // Mirror the same clauses into the impl. `x07 xtal impl check`
+        // enforces that every spec ensures clause has a matching impl
+        // entry; promoting only on the spec side fails the gate with
+        // `EXTAL_IMPL_CONTRACT_MISSING`.
+        let impl_relative = format!("src/{}.x07.json", module_id.replace('.', "/"));
+        let impl_mirrored = mirror_ensures_into_impl(
+            self.root.as_path(),
+            &impl_relative,
+            &operation_name,
+            semantic.ensures,
+        )?;
+        let report = crate::architect::EnrichmentReport {
+            spec_path: spec_relative.clone(),
+            module_id: module_id.clone(),
+            entry: entry.clone(),
+            doc_added: false,
+            ensures_added: appended,
+            archetype_recognized: true,
+            agent_id: None,
+        };
+        self.append_op(session_id, architect_enrich_op(session_id, &report))?;
+        let _ = impl_mirrored;
+        // Canonicalize the spec so the downstream `xtal.verify` doesn't
+        // fail with `WXTAL_SPEC_NONCANONICAL_JSON`.
+        let mut fmt_vars = BTreeMap::new();
+        fmt_vars.insert("input".to_string(), spec_relative);
+        self.run_binding(session_id, "spec.format", &fmt_vars)
+            .await?;
+        Ok(true)
+    }
+
     fn ensure_verify_phase(&mut self, session_id: Uuid) -> anyhow::Result<()> {
         let current = self
             .model
@@ -3862,6 +3973,15 @@ impl WorkspaceKernel {
                 self.append_op(session_id, template_op)?;
             }
         }
+        // Tier-1.5b: regardless of whether the impl came from the coder
+        // agent or the template fallback, it's now real (not the
+        // `bytes.empty` stub). Promote archetype `ensures` predicates
+        // into the spec so the downstream `xtal.verify` proves against
+        // a real contract. No-op when the archetype carries no
+        // predicates or the spec already has user-authored ensures.
+        let _ = self
+            .architect_promote_predicates_after_impl(session_id)
+            .await;
         let mut vars: BTreeMap<String, String> = BTreeMap::new();
         vars.insert("allow_os_world".to_string(), "true".to_string());
         let after_check = self
@@ -4320,6 +4440,39 @@ impl WorkspaceKernel {
         )?;
         let doc_added = report.doc_added;
         self.append_op(session_id, architect_enrich_op(session_id, &report))?;
+        // Pipe the agent's `examples` array into the IntentPacket so
+        // the realize prompt (and the UI's plain-English summary) can
+        // pick up the architect's worked input → output illustrations.
+        // De-dup against existing entries; cap the merge so a pathological
+        // agent output can't balloon the packet.
+        if !enrichment.examples.is_empty() {
+            let mut session = self
+                .model
+                .get_session(session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+            if let Some(intent) = session.intent.as_mut() {
+                let mut appended = 0usize;
+                for example in enrichment.examples.iter() {
+                    if appended >= 5 {
+                        break;
+                    }
+                    let trimmed = example.trim();
+                    if trimmed.is_empty() || intent.examples.iter().any(|e| e == trimmed) {
+                        continue;
+                    }
+                    intent.examples.push(trimmed.to_string());
+                    appended += 1;
+                }
+                if appended > 0 {
+                    let snapshot = self.dispatch_with_publish(
+                        session_id,
+                        SessionEvent::FormalizeIntent(Box::new(intent.clone())),
+                    )?;
+                    self.store.save_session(&snapshot)?;
+                }
+            }
+        }
         Ok(doc_added)
     }
 
@@ -7809,6 +7962,94 @@ fn architect_stage_note(session: &SessionSnapshot) -> String {
     }
 }
 
+/// Mirror archetype `ensures` clauses into the implementation file at
+/// `src/<module-path>.x07.json` without touching the implementation
+/// body. Each `defn` matching `operation_name` gains the supplied
+/// predicates in its `ensures` array — but only when the impl's
+/// current `ensures` is empty or missing, never overwriting existing
+/// contract clauses.
+///
+/// Returns the number of clauses appended. Non-fatal on missing files
+/// or malformed JSON — the downstream `impl.check` will surface those
+/// issues with a much clearer error than this helper could.
+fn mirror_ensures_into_impl(
+    root: &Utf8Path,
+    impl_relative_path: &str,
+    operation_name: &str,
+    predicates: &[crate::architect::SpecPredicate],
+) -> anyhow::Result<u32> {
+    if predicates.is_empty() {
+        return Ok(0);
+    }
+    let absolute = root.join(impl_relative_path);
+    let raw = match std::fs::read_to_string(&absolute) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(0);
+        }
+        Err(error) => {
+            return Err(anyhow!(
+                "failed to read impl for mirror at `{absolute}`: {error}"
+            ));
+        }
+    };
+    let mut impl_value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(_) => return Ok(0),
+    };
+    let Some(decls) = impl_value
+        .get_mut("decls")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(0);
+    };
+    let mut appended = 0u32;
+    for decl in decls.iter_mut() {
+        let is_defn = decl.get("kind").and_then(serde_json::Value::as_str) == Some("defn");
+        let name_matches = decl
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|n| n == operation_name);
+        if !is_defn || !name_matches {
+            continue;
+        }
+        let current_is_empty = decl
+            .get("ensures")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| items.is_empty())
+            .unwrap_or(true);
+        if !current_is_empty {
+            break;
+        }
+        let mut new_ensures = Vec::with_capacity(predicates.len());
+        for predicate in predicates {
+            if let Ok(expr) = serde_json::from_str::<serde_json::Value>(predicate.expr_json) {
+                new_ensures.push(serde_json::json!({
+                    "id": predicate.id,
+                    "expr": expr,
+                }));
+                appended += 1;
+            }
+        }
+        if appended == 0 {
+            return Ok(0);
+        }
+        decl.as_object_mut()
+            .expect("defn decl is JSON object")
+            .insert("ensures".to_string(), serde_json::Value::Array(new_ensures));
+        break;
+    }
+    if appended == 0 {
+        return Ok(0);
+    }
+    let mut serialized = serde_json::to_string_pretty(&impl_value)
+        .map_err(|error| anyhow!("re-serialize impl after ensures-mirror: {error}"))?;
+    serialized.push('\n');
+    std::fs::write(&absolute, serialized)
+        .map_err(|error| anyhow!("write impl after ensures-mirror to `{absolute}`: {error}"))?;
+    Ok(appended)
+}
+
 fn architect_enrich_op(session_id: Uuid, report: &crate::architect::EnrichmentReport) -> OpRecord {
     let now = now_string();
     let fields_added = report.fields_added();
@@ -10441,6 +10682,18 @@ mod tests {
             "stage note should name the agent, got `{note}`"
         );
 
+        // examples pipe: the agent's `examples` array lands in
+        // IntentPacket.examples (deduped against pre-existing entries).
+        let intent_after = snapshot.intent.as_ref().expect("intent");
+        assert!(
+            intent_after
+                .examples
+                .iter()
+                .any(|e| e == "[10,20,30]->[ewma per-byte]"),
+            "expected agent example merged into intent, got {:?}",
+            intent_after.examples
+        );
+
         std::fs::remove_dir_all(root).ok();
     }
 
@@ -10557,6 +10810,221 @@ mod tests {
             report.get("doc_added").and_then(serde_json::Value::as_bool),
             Some(false)
         );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn mirror_ensures_into_impl_appends_when_decl_lacks_ensures_field() {
+        let root = temp_root();
+        let impl_relative = "src/app/greeter.x07.json";
+        std::fs::create_dir_all(root.join("src/app")).unwrap();
+        let impl_value = serde_json::json!({
+            "schema_version": "x07.x07ast@0.8.0",
+            "kind": "module",
+            "module_id": "app.greeter",
+            "imports": [],
+            "decls": [
+                {"kind": "export", "names": ["app.greeter.greet_v1"]},
+                {
+                    "kind": "defn",
+                    "name": "app.greeter.greet_v1",
+                    "params": [{"name": "payload", "ty": "bytes"}],
+                    "result": "bytes",
+                    "body": ["begin", ["bytes.lit", "hi"]]
+                }
+            ]
+        });
+        std::fs::write(
+            root.join(impl_relative),
+            serde_json::to_string_pretty(&impl_value).unwrap(),
+        )
+        .unwrap();
+        let predicates = &[crate::architect::SpecPredicate {
+            id: "result_nonempty",
+            expr_json: r#"[">", ["bytes.len", "__result"], 0]"#,
+        }];
+        let appended = super::mirror_ensures_into_impl(
+            root.as_path(),
+            impl_relative,
+            "app.greeter.greet_v1",
+            predicates,
+        )
+        .unwrap();
+        assert_eq!(appended, 1);
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(impl_relative)).unwrap())
+                .unwrap();
+        let defn = on_disk["decls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d.get("kind").and_then(serde_json::Value::as_str) == Some("defn"))
+            .unwrap();
+        // Body still present.
+        assert!(defn.get("body").is_some());
+        let ensures = defn["ensures"].as_array().unwrap();
+        assert_eq!(ensures.len(), 1);
+        assert_eq!(ensures[0]["id"].as_str(), Some("result_nonempty"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn mirror_ensures_into_impl_preserves_existing_contract() {
+        let root = temp_root();
+        let impl_relative = "src/app/greeter.x07.json";
+        std::fs::create_dir_all(root.join("src/app")).unwrap();
+        let impl_value = serde_json::json!({
+            "schema_version": "x07.x07ast@0.8.0",
+            "kind": "module",
+            "module_id": "app.greeter",
+            "decls": [{
+                "kind": "defn",
+                "name": "app.greeter.greet_v1",
+                "params": [{"name": "payload", "ty": "bytes"}],
+                "result": "bytes",
+                "body": ["begin", ["bytes.lit", "hi"]],
+                "ensures": [{"id": "user_authored", "expr": [">=", ["bytes.len", "__result"], 7]}]
+            }]
+        });
+        std::fs::write(
+            root.join(impl_relative),
+            serde_json::to_string_pretty(&impl_value).unwrap(),
+        )
+        .unwrap();
+        let predicates = &[crate::architect::SpecPredicate {
+            id: "result_nonempty",
+            expr_json: r#"[">", ["bytes.len", "__result"], 0]"#,
+        }];
+        let appended = super::mirror_ensures_into_impl(
+            root.as_path(),
+            impl_relative,
+            "app.greeter.greet_v1",
+            predicates,
+        )
+        .unwrap();
+        assert_eq!(appended, 0);
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(impl_relative)).unwrap())
+                .unwrap();
+        let ensures = on_disk["decls"][0]["ensures"].as_array().unwrap();
+        assert_eq!(ensures.len(), 1);
+        assert_eq!(ensures[0]["id"].as_str(), Some("user_authored"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn architect_promote_predicates_after_impl_writes_ensures_for_known_archetype() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("greeter post-impl", TaskType::NewBehavior)
+            .expect("create session");
+
+        // Hello/greet intent routes to app.greeter.greet_v1 which has a
+        // Tier-1.5b predicate (`len > 0`).
+        let (intent, _, _) = kernel
+            .formalize_intent(
+                session.session_id,
+                "Build a greeter that returns a hello message as bytes.",
+                IntentInputMode::Text,
+                &[],
+            )
+            .expect("formalize intent");
+        assert_eq!(intent.targets[0].module_id, "app.greeter");
+
+        // Drop a pre-existing scaffolded spec (no ensures) on disk; the
+        // method writes back ensures only when the on-disk file has an
+        // empty array.
+        let spec_relative = format!("spec/{}.x07spec.json", intent.targets[0].module_id);
+        std::fs::create_dir_all(root.join("spec")).expect("create spec dir");
+        let scaffolded = serde_json::json!({
+            "schema_version": "x07.x07spec@0.1.0",
+            "module_id": intent.targets[0].module_id,
+            "operations": [{
+                "id": "op.greet_v1.v1",
+                "name": "app.greeter.greet_v1",
+                "doc": "Already filled by Tier-1.",
+                "params": [{"name": "payload", "ty": "bytes"}],
+                "result": "bytes",
+                "requires": [],
+                "ensures": [],
+                "ensures_props": [],
+                "invariant": [],
+            }],
+        });
+        std::fs::write(
+            root.join(&spec_relative),
+            serde_json::to_string_pretty(&scaffolded).unwrap(),
+        )
+        .unwrap();
+
+        // The method also runs spec.format which spawns x07. The test
+        // only asserts the in-memory invocation appended a record and
+        // mutated the on-disk file's ensures — the spec.format
+        // subprocess may noisily fail in environments without x07 but
+        // the merge itself already wrote the JSON file.
+        let _ = kernel
+            .architect_promote_predicates_after_impl(session.session_id)
+            .await;
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(&spec_relative)).unwrap())
+                .unwrap();
+        let ensures = on_disk["operations"][0]["ensures"]
+            .as_array()
+            .expect("ensures array");
+        assert_eq!(
+            ensures.len(),
+            1,
+            "expected one promoted predicate, got: {ensures:?}"
+        );
+        assert_eq!(ensures[0]["id"].as_str(), Some("result_nonempty"));
+
+        let snapshot = kernel.get_session(session.session_id).expect("snapshot");
+        let enrich_op = snapshot
+            .op_log
+            .iter()
+            .rev()
+            .find(|op| op.op == "architect.enrich_spec")
+            .expect("predicate-promotion op recorded");
+        let rj = enrich_op.report_json.as_ref().expect("report_json present");
+        assert_eq!(
+            rj.get("ensures_added").and_then(serde_json::Value::as_u64),
+            Some(1),
+        );
+        assert_eq!(
+            rj.get("doc_added").and_then(serde_json::Value::as_bool),
+            Some(false),
+            "promote-predicates is ensures-only by design"
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn architect_promote_predicates_after_impl_skips_when_archetype_has_no_predicates() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("normalize post-impl", TaskType::NewBehavior)
+            .expect("create session");
+        // text-normalize archetype is doc-only — no Tier-1.5b predicate.
+        let (intent, _, _) = kernel
+            .formalize_intent(
+                session.session_id,
+                "Build a normalize-and-casefold UTF-8 helper.",
+                IntentInputMode::Text,
+                &[],
+            )
+            .expect("formalize");
+        assert_eq!(intent.targets[0].module_id, "app.text");
+
+        let promoted = kernel
+            .architect_promote_predicates_after_impl(session.session_id)
+            .await
+            .expect("promote is non-fatal when archetype has no predicates");
+        assert!(!promoted);
 
         std::fs::remove_dir_all(root).ok();
     }
