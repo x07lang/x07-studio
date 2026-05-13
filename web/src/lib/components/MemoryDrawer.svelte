@@ -9,6 +9,11 @@
 	let defaultTrustProfile = '';
 	let namingStyle = '';
 	let verbosity = '';
+	let defaultArchitect = '';
+	let defaultCoder = '';
+	let defaultReviewer = '';
+	let allowSelfReview = true;
+	let maxReviewRounds = 2;
 
 	const dispatch = createEventDispatcher<{ close: void; save: Partial<StudioMemory> }>();
 
@@ -17,6 +22,11 @@
 		defaultTrustProfile = memory.preferences.default_trust_profile ?? '';
 		namingStyle = memory.preferences.naming_style ?? '';
 		verbosity = memory.preferences.verbosity ?? '';
+		defaultArchitect = memory.role_preferences?.default_architect ?? 'claude-code';
+		defaultCoder = memory.role_preferences?.default_coder ?? 'openai-codex';
+		defaultReviewer = memory.role_preferences?.default_reviewer ?? 'claude-code';
+		allowSelfReview = memory.role_preferences?.allow_self_review ?? true;
+		maxReviewRounds = memory.role_preferences?.default_max_review_rounds ?? 2;
 	}
 
 	function save() {
@@ -26,6 +36,14 @@
 				default_trust_profile: defaultTrustProfile || null,
 				naming_style: namingStyle || null,
 				verbosity: verbosity || null
+			},
+			role_preferences: {
+				schema_version: 'x07.studio.role_preferences@0.1.0',
+				default_architect: defaultArchitect || null,
+				default_coder: defaultCoder || null,
+				default_reviewer: defaultReviewer || null,
+				allow_self_review: allowSelfReview,
+				default_max_review_rounds: Number(maxReviewRounds) || 2
 			}
 		});
 	}
@@ -65,6 +83,38 @@
 				<option value="detailed">Detailed</option>
 			</select>
 		</label>
+		<section class="role-memory" data-testid="memory-agent-roles">
+			<h3>Agent roles</h3>
+			<label>
+				<span>Architect</span>
+				<select bind:value={defaultArchitect}>
+					<option value="claude-code">Claude Code</option>
+					<option value="openai-codex">OpenAI Codex</option>
+				</select>
+			</label>
+			<label>
+				<span>Coder</span>
+				<select bind:value={defaultCoder}>
+					<option value="openai-codex">OpenAI Codex</option>
+					<option value="claude-code">Claude Code</option>
+				</select>
+			</label>
+			<label>
+				<span>Reviewer</span>
+				<select bind:value={defaultReviewer}>
+					<option value="claude-code">Claude Code</option>
+					<option value="openai-codex">OpenAI Codex</option>
+				</select>
+			</label>
+			<label class="inline">
+				<input type="checkbox" bind:checked={allowSelfReview} />
+				<span>Allow self-review</span>
+			</label>
+			<label>
+				<span>Review rounds</span>
+				<input type="number" min="1" max="5" bind:value={maxReviewRounds} />
+			</label>
+		</section>
 		<button type="button" class="command-button primary" on:click={save}>Save memory</button>
 	</aside>
 {/if}
@@ -94,10 +144,24 @@
 	.memory-drawer h2 {
 		margin: 0;
 	}
+	.role-memory {
+		display: grid;
+		gap: 0.75rem;
+		border-top: 1px solid rgba(148, 163, 184, 0.22);
+		padding-top: 0.85rem;
+	}
+	.role-memory h3 {
+		margin: 0;
+		font-size: 0.9rem;
+	}
 	.memory-drawer label {
 		display: flex;
 		flex-direction: column;
 		gap: 0.25rem;
+	}
+	.memory-drawer label.inline {
+		flex-direction: row;
+		align-items: center;
 	}
 	.memory-drawer input,
 	.memory-drawer select {

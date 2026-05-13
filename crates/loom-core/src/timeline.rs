@@ -4,7 +4,8 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use loom_types::api::{
-    AgentStreamEvent, RealizeQuorumRound, SessionTurn, TrustPosture, TurnEvidence, TurnQuestion,
+    AgentStreamEvent, RealizeQuorumRound, ReviewRound, SessionTurn, TrustPosture, TurnEvidence,
+    TurnQuestion,
 };
 use loom_types::artifacts::{IntentPacket, IntentSource, OpRecord, PlainEnglishSummary};
 use loom_types::session::SessionSnapshot;
@@ -17,7 +18,8 @@ pub fn project_session_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
     }
     turns.extend(op_turns(session));
     turns.sort_by(|left, right| turn_at(left).cmp(turn_at(right)));
-    collapse_duplicate_posture_turns(turns)
+    let turns = collapse_duplicate_posture_turns(turns);
+    collapse_verified_refinement_turns(turns)
 }
 
 fn intent_turn(session: &SessionSnapshot, intent: &IntentPacket) -> SessionTurn {
@@ -118,6 +120,16 @@ fn op_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
                     at: op.started_at.clone(),
                     summary,
                     op_ids,
+                    refined_from_scaffold: false,
+                });
+            }
+        } else if op.op == "review.round" {
+            if let Some(round) = review_round_from_op(op) {
+                turns.push(SessionTurn::Review {
+                    id: stable_turn_id(session.session_id, &format!("review:{}", op.id)),
+                    at: op.started_at.clone(),
+                    round,
+                    op_ids: vec![op.id],
                 });
             }
         } else if op.op.starts_with("agent.event.") && op.op.contains(".incident.") {
@@ -315,6 +327,7 @@ fn turn_at(turn: &SessionTurn) -> &str {
         | SessionTurn::UserApproved { at, .. }
         | SessionTurn::BuildStage { at, .. }
         | SessionTurn::Verified { at, .. }
+        | SessionTurn::Review { at, .. }
         | SessionTurn::Incident { at, .. }
         | SessionTurn::Repair { at, .. }
         | SessionTurn::AgentRealize { at, .. }
@@ -354,6 +367,13 @@ fn realize_quorum_from_op(op: &OpRecord) -> Option<RealizeQuorumRound> {
         .and_then(|value| serde_json::from_value(value).ok())
 }
 
+fn review_round_from_op(op: &OpRecord) -> Option<ReviewRound> {
+    op.report_json
+        .as_ref()
+        .and_then(|value| value.get("round").cloned().or_else(|| Some(value.clone())))
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
 fn posture_from_op(op: &OpRecord) -> Option<TrustPosture> {
     op.report_json
         .as_ref()
@@ -387,6 +407,69 @@ fn collapse_duplicate_posture_turns(turns: Vec<SessionTurn>) -> Vec<SessionTurn>
         collapsed.push(turn);
     }
     collapsed
+}
+
+fn collapse_verified_refinement_turns(turns: Vec<SessionTurn>) -> Vec<SessionTurn> {
+    let mut collapsed = Vec::with_capacity(turns.len());
+    for turn in turns {
+        let should_merge = match (collapsed.last_mut(), &turn) {
+            (
+                Some(SessionTurn::Verified {
+                    summary: first,
+                    op_ids: first_ops,
+                    ..
+                }),
+                SessionTurn::Verified {
+                    summary: second,
+                    op_ids: second_ops,
+                    ..
+                },
+            ) if first.scaffold_only
+                && !second.scaffold_only
+                && summaries_match_except_scaffold(first, second) =>
+            {
+                first.scaffold_only = false;
+                first.stub_paths = second.stub_paths.clone();
+                first.headline = second.headline.clone();
+                first.behavior_promises = second.behavior_promises.clone();
+                first.behavior_promise_ids = second.behavior_promise_ids.clone();
+                first.boundaries = second.boundaries.clone();
+                first.evidence = second.evidence.clone();
+                first.run_invocation = second.run_invocation.clone();
+                first.followups = second.followups.clone();
+                for op_id in second_ops {
+                    if !first_ops.contains(op_id) {
+                        first_ops.push(*op_id);
+                    }
+                }
+                true
+            }
+            _ => false,
+        };
+        if should_merge {
+            if let Some(SessionTurn::Verified {
+                refined_from_scaffold,
+                ..
+            }) = collapsed.last_mut()
+            {
+                *refined_from_scaffold = true;
+            }
+        } else {
+            collapsed.push(turn);
+        }
+    }
+    collapsed
+}
+
+fn summaries_match_except_scaffold(
+    first: &PlainEnglishSummary,
+    second: &PlainEnglishSummary,
+) -> bool {
+    first.headline == second.headline
+        && first.behavior_promises == second.behavior_promises
+        && first.behavior_promise_ids == second.behavior_promise_ids
+        && first.boundaries == second.boundaries
+        && first.run_invocation == second.run_invocation
 }
 
 fn stable_turn_id(session_id: Uuid, key: &str) -> Uuid {

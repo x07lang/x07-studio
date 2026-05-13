@@ -17,6 +17,7 @@
 	import AgentStreamCard from './AgentStreamCard.svelte';
 	import RealizePreview from './RealizePreview.svelte';
 	import QuorumRealize from './QuorumRealize.svelte';
+	import ReviewRound from './ReviewRound.svelte';
 	import QuickfixCard from './QuickfixCard.svelte';
 	import McpCallCard from './McpCallCard.svelte';
 	import PostureBadge from './PostureBadge.svelte';
@@ -163,6 +164,9 @@
 						<span>Verified</span>
 						<time>{turn.at}</time>
 					</header>
+					{#if turn.refined_from_scaffold}
+						<p class="hint">Refined from scaffold.</p>
+					{/if}
 					<ResultPreview
 						summary={turn.summary}
 						{tryResult}
@@ -179,6 +183,15 @@
 						on:pbt={() => dispatch('pbt')}
 						on:pbtRegression={(event) => dispatch('pbtRegression', event.detail)}
 					/>
+					<button class="command-button" type="button" disabled={busy} on:click={() => dispatch('quorum')}>
+						Second opinion
+					</button>
+				{:else if turn.kind === 'review'}
+					<header>
+						<span>Review</span>
+						<time>{turn.at}</time>
+					</header>
+					<ReviewRound round={turn.round} />
 				{:else if turn.kind === 'incident'}
 					<header>
 						<span>Incident</span>
@@ -230,12 +243,17 @@
 									{busy ? 'Claude Code is implementing...' : 'Try Claude Code again'}
 								</button>
 								<button class="command-button" type="button" disabled={busy} on:click={() => dispatch('quorum')}>
-									Compare both agents
+									Second opinion
 								</button>
 							</div>
 						{/if}
 					{/if}
 					<RealizePreview events={streamEvents.filter((event) => 'agent_id' in event && event.agent_id === turn.agent_id)} />
+					{#if turn.ok || turn.wrote_files.length}
+						<button class="command-button" type="button" disabled={busy} on:click={() => dispatch('quorum')}>
+							Second opinion
+						</button>
+					{/if}
 				{:else if turn.kind === 'agent_stream'}
 					<header>
 						<span>{turn.agent_id}</span>

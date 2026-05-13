@@ -1,15 +1,17 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import type {
+		AgentProfile,
+		AgentRole,
 		AskAnswer,
 		AutopilotState,
-		CassetteEntry,
 		CassetteRibbon as CassetteRibbonType,
 		ArchCheckReport,
 		HealthResponse,
 		LadderState,
 		PkgProvidesResult,
 		ReleaseStatus,
+		RoleOverrides,
 		SessionSnapshot,
 		TrustPosture,
 		TryItRequest,
@@ -35,8 +37,9 @@
 	export let releaseStatus: ReleaseStatus | null = null;
 	export let pkgProvidesResult: PkgProvidesResult | null = null;
 	export let archCheckReport: ArchCheckReport | null = null;
-	export let cassettes: CassetteEntry[] = [];
 	export let cassetteRibbon: CassetteRibbonType | null = null;
+	export let agents: AgentProfile[] = [];
+	export let roleOverrides: RoleOverrides | null = null;
 	export let trustPosture: TrustPosture | null = null;
 	export let visualParseResult: VisualResponse | null = null;
 	export let visualEmitResult: VisualResponse | null = null;
@@ -59,16 +62,11 @@
 		release: string;
 		certificate: void;
 		exportReplay: void;
-		cassetteLoad: void;
-		cassetteBranch: { idx: number; title: string };
 		visualParse: { kind: VisualKind; source: unknown };
 		visualEmit: { kind: VisualKind; graph: unknown };
 		pkgSearch: string;
+		roleOverrides: RoleOverrides;
 	}>();
-
-	function branchTitle(entry: CassetteEntry) {
-		return `Replay ${entry.key}`;
-	}
 
 	function componentAvailable(id: string) {
 		return (health?.components ?? []).some((component) => component.id === id && component.status === 'available');
@@ -80,10 +78,23 @@
 		{ id: 'try', title: 'Try It', open: false },
 		{ id: 'ladder', title: 'Shipping Ladder', open: true },
 		{ id: 'cassette', title: 'Cassette ribbon', open: false },
-		{ id: 'time', title: 'Time travel', open: false },
 		{ id: 'ask', title: 'Ask the project', open: false },
 		{ id: 'visual', title: 'Visual editor', open: false }
 	];
+
+	function resolved(role: AgentRole) {
+		const override = roleOverrides?.[role];
+		if (override) return override;
+		return agents.find((agent) => agent.default_role === role || agent.eligible_roles.includes(role))?.id ?? '';
+	}
+
+	function updateOverride(role: AgentRole, agentId: string) {
+		dispatch('roleOverrides', {
+			schema_version: 'x07.studio.role_overrides@0.1.0',
+			...(roleOverrides ?? {}),
+			[role]: agentId || null
+		});
+	}
 </script>
 
 <aside class="now-panel" data-testid="now-panel">
@@ -115,8 +126,29 @@
 				<button type="button" class="command-button" disabled={busy || !syncClaim.trim()} on:click={() => dispatch('claimSync', syncClaim)}>Claim</button>
 			</div>
 			<button type="button" class="command-button" disabled={!session || busy || !compareAvailable} on:click={() => dispatch('quorum')} data-testid="run-quorum">
-				Compare both agents
+				Second opinion
 			</button>
+			<section class="role-overrides" data-testid="role-overrides">
+				<header>
+					<h3>Roles</h3>
+					<span>Session routing</span>
+				</header>
+				{#each ['architect', 'coder', 'reviewer'] as role}
+					<label>
+						<span>{role}</span>
+						<select
+							value={resolved(role as AgentRole)}
+							disabled={!session || busy}
+							on:change={(event) => updateOverride(role as AgentRole, (event.currentTarget as HTMLSelectElement).value)}
+						>
+							<option value="">Default</option>
+							{#each agents as agent}
+								<option value={agent.id}>{agent.label}</option>
+							{/each}
+						</select>
+					</label>
+				{/each}
+			</section>
 			<button type="button" class="command-button" disabled={!session || busy} on:click={() => dispatch('exportReplay')}>Export replay</button>
 		</section>
 
@@ -139,25 +171,6 @@
 		<div slot="cassette">
 			<CassetteRibbon ribbon={cassetteRibbon} />
 		</div>
-
-		<section slot="time" class="now-card cassette-card">
-			<header>
-				<h2>Time travel</h2>
-				<span>{cassettes.length} entries</span>
-			</header>
-			<button type="button" class="command-button" disabled={!session || busy} on:click={() => dispatch('cassetteLoad')}>Load cassettes</button>
-			{#if cassettes.length}
-				<div class="cassette-list" data-testid="cassette-list">
-					{#each cassettes.slice(0, 5) as entry}
-						<div>
-							<span><code>#{entry.idx}</code> {entry.key}</span>
-							<button type="button" class="command-button" disabled={busy} on:click={() => dispatch('cassetteBranch', { idx: entry.idx, title: branchTitle(entry) })}>Branch</button>
-							<small>{entry.kind} - {entry.size_bytes} bytes</small>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</section>
 
 		<section slot="ask" class="now-card ask-card">
 			<header>
@@ -188,3 +201,42 @@
 		</div>
 	</DrawerRail>
 </aside>
+
+<style>
+	.role-overrides {
+		display: grid;
+		gap: 8px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		padding: 9px;
+		background: rgba(255, 255, 255, 0.03);
+	}
+	.role-overrides header {
+		display: flex;
+		justify-content: space-between;
+		gap: 8px;
+	}
+	.role-overrides h3 {
+		margin: 0;
+		font-size: 13px;
+	}
+	.role-overrides label {
+		display: grid;
+		grid-template-columns: 86px minmax(0, 1fr);
+		gap: 8px;
+		align-items: center;
+	}
+	.role-overrides span {
+		color: var(--muted);
+		font-size: 11px;
+		text-transform: uppercase;
+	}
+	.role-overrides select {
+		min-width: 0;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: rgba(15, 23, 42, 0.8);
+		color: var(--text);
+		padding: 6px 8px;
+	}
+</style>

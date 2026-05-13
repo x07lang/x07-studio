@@ -12,6 +12,8 @@ use crate::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescr
 use crate::ops::SessionEvent;
 use crate::session::SessionSnapshot;
 
+pub use crate::artifacts::AgentRole;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub ok: bool,
@@ -108,6 +110,14 @@ pub enum SessionTurn {
         at: String,
         summary: PlainEnglishSummary,
         op_ids: Vec<Uuid>,
+        #[serde(default)]
+        refined_from_scaffold: bool,
+    },
+    Review {
+        id: Uuid,
+        at: String,
+        round: ReviewRound,
+        op_ids: Vec<Uuid>,
     },
     Incident {
         id: Uuid,
@@ -181,6 +191,84 @@ pub struct TurnEvidence {
     pub label: String,
     pub op_id: Option<Uuid>,
     pub artifact: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StepStatus {
+    Pending,
+    Running,
+    Done,
+    Stalled,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessLane {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub steps: Vec<CanonicalStep>,
+    pub current_index: Option<usize>,
+    pub next_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanonicalStep {
+    pub schema_version: String,
+    pub id: String,
+    pub label: String,
+    pub actor: AgentRole,
+    pub status: StepStatus,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub elapsed_ms: Option<u64>,
+    pub op_id: Option<Uuid>,
+    pub narration: String,
+    pub next_actor: Option<AgentRole>,
+    #[serde(default)]
+    pub budget: Option<StepBudget>,
+    #[serde(default)]
+    pub round: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StepEvidence {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub step_id: String,
+    pub op: Option<OpRecord>,
+    pub stream_events: Vec<AgentStreamEvent>,
+    pub artifacts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct RoleOverrides {
+    pub schema_version: String,
+    pub architect: Option<String>,
+    pub coder: Option<String>,
+    pub reviewer: Option<String>,
+    pub conductor: Option<String>,
+}
+
+impl RoleOverrides {
+    pub fn empty() -> Self {
+        Self {
+            schema_version: "x07.studio.role_overrides@0.1.0".to_string(),
+            architect: None,
+            coder: None,
+            reviewer: None,
+            conductor: None,
+        }
+    }
+
+    pub fn get(&self, role: &AgentRole) -> Option<&str> {
+        match role {
+            AgentRole::Architect => self.architect.as_deref(),
+            AgentRole::Coder => self.coder.as_deref(),
+            AgentRole::Reviewer => self.reviewer.as_deref(),
+            AgentRole::Conductor => self.conductor.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -443,6 +531,55 @@ pub struct ProofCitation {
     pub clause_id: String,
     pub proof_report: Option<String>,
     pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RolePipeline {
+    pub schema_version: String,
+    pub stages: Vec<PipelineStage>,
+    pub max_review_rounds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineStage {
+    pub role: AgentRole,
+    pub action: String,
+    pub budget: Option<StepBudget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StepBudget {
+    pub wall_clock_ms: Option<u64>,
+    pub prover_seconds: Option<u64>,
+    pub on_exhaust: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewRound {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub round: u32,
+    pub reviewer: String,
+    pub verdict: String,
+    pub concerns: Vec<ReviewConcern>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewConcern {
+    pub kind: String,
+    pub message: String,
+    pub citation: Option<ProofCitation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhatIfForecast {
+    pub schema_version: String,
+    pub step_id: String,
+    pub predicted_delta: Option<SemanticDiff>,
+    pub estimated_duration_ms: u64,
+    pub confidence: f32,
+    pub assumptions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -878,6 +1015,8 @@ pub struct SyncCode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StudioMemory {
     pub preferences: MemoryPreferences,
+    #[serde(default)]
+    pub role_preferences: Option<RolePreferences>,
     pub recent_projects: Vec<MemoryProject>,
     pub reusable_specs: Vec<MemoryReusableSpec>,
 }
@@ -888,6 +1027,29 @@ pub struct MemoryPreferences {
     pub default_trust_profile: Option<String>,
     pub naming_style: Option<String>,
     pub verbosity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RolePreferences {
+    pub schema_version: String,
+    pub default_architect: Option<String>,
+    pub default_coder: Option<String>,
+    pub default_reviewer: Option<String>,
+    pub allow_self_review: bool,
+    pub default_max_review_rounds: u32,
+}
+
+impl Default for RolePreferences {
+    fn default() -> Self {
+        Self {
+            schema_version: "x07.studio.role_preferences@0.1.0".to_string(),
+            default_architect: Some("claude-code".to_string()),
+            default_coder: Some("openai-codex".to_string()),
+            default_reviewer: Some("claude-code".to_string()),
+            allow_self_review: true,
+            default_max_review_rounds: 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -983,6 +1145,24 @@ pub struct AutopilotStartRequest {
 pub struct AutopilotResponse {
     pub state: AutopilotState,
     pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhatIfRequest {
+    pub step_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewRequest {
+    #[serde(default)]
+    pub reviewer_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRolePatchRequest {
+    pub default_role: AgentRole,
+    #[serde(default)]
+    pub eligible_roles: Vec<AgentRole>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

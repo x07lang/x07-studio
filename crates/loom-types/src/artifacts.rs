@@ -192,6 +192,19 @@ pub enum AgentStatus {
     Disabled,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRole {
+    Conductor,
+    Architect,
+    Coder,
+    Reviewer,
+}
+
+fn default_agent_role() -> AgentRole {
+    AgentRole::Coder
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentProfile {
     pub schema_version: String,
@@ -204,6 +217,10 @@ pub struct AgentProfile {
     pub write_roots: Vec<String>,
     pub approval_required: bool,
     pub status: AgentStatus,
+    #[serde(default = "default_agent_role")]
+    pub default_role: AgentRole,
+    #[serde(default)]
+    pub eligible_roles: Vec<AgentRole>,
     pub notes: String,
 }
 
@@ -277,6 +294,8 @@ impl AgentProfile {
             ],
             approval_required: true,
             status: AgentStatus::NeedsInstall,
+            default_role: AgentRole::Coder,
+            eligible_roles: vec![AgentRole::Coder, AgentRole::Reviewer],
             notes: "Remote coding-agent runner gated by x07 session contract.".to_string(),
         }
     }
@@ -301,6 +320,8 @@ impl AgentProfile {
             write_roots: vec!["src/".to_string(), "tests/".to_string()],
             approval_required: true,
             status: AgentStatus::NeedsInstall,
+            default_role: AgentRole::Architect,
+            eligible_roles: vec![AgentRole::Architect, AgentRole::Reviewer, AgentRole::Coder],
             notes: "Alternate coding-agent runner for implementation and review lanes.".to_string(),
         }
     }

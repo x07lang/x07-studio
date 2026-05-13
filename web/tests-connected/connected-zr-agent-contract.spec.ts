@@ -24,7 +24,7 @@ test('connected AGENT.md drawer saves and folds into handoff prompts', async ({ 
 	const session = await startSession(page, prompt);
 	const constraint = `Cycle 5 contract constraint ${Date.now()}`;
 
-	await page.getByRole('button', { name: 'AGENT.md' }).click();
+	await page.getByRole('button', { name: 'AGENT.md', exact: true }).click();
 	await expect(page.getByTestId('agent-contract-editor')).toBeVisible();
 	const editor = page.getByLabel('AGENT.md markdown');
 	await editor.fill(`# AGENT.md

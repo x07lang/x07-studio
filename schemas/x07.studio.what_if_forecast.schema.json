@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.what_if_forecast@0.1.0",
+  "title": "WhatIfForecast",
+  "type": "object",
+  "required": ["schema_version", "step_id", "estimated_duration_ms", "confidence", "assumptions"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.what_if_forecast@0.1.0" },
+    "step_id": { "type": "string" },
+    "predicted_delta": { "type": ["object", "null"] },
+    "estimated_duration_ms": { "type": "integer", "minimum": 0 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "assumptions": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

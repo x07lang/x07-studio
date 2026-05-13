@@ -93,6 +93,7 @@ mod tests {
                 default_trust_profile: None,
                 verbosity: None,
             },
+            role_preferences: None,
             recent_projects: Vec::new(),
             reusable_specs: Vec::new(),
         };

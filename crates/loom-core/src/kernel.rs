@@ -22,16 +22,20 @@ use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::{ProviderIntentPolishRequest, ProviderProber};
 use loom_adapters::x07_cli::{validate_xtal_verify_vars, CliAdapter, ExecutedBinding, InputSpec};
 use loom_store::FsStore;
-use loom_types::api::{AgentRunMode, ApprovalDecision, AutopilotPolicy, IntentInputMode};
+use loom_types::api::{
+    AgentRole, AgentRolePatchRequest, AgentRunMode, ApprovalDecision, AutopilotPolicy,
+    IntentInputMode,
+};
 use loom_types::api::{
     AnswerCitation, ArtifactPreviewResponse, AskAnswer, AskRequest, AutopilotResponse,
     AutopilotState, CassetteEntry, CassetteRibbon, CertificateSummary, DocPreviewEntry,
     DocPreviewResponse, LadderState, LiveDiff, PatchsetPreview, PatchsetTargetPreview,
-    PickRealizeProposalResponse, ProofCitation, ProofEvidence, QuickfixRecord, QuorumAgent,
-    QuorumDiff, QuorumRound, RealizeProposal, RealizeQuorumRound, ReleaseRequest, ReleaseStatus,
-    ReplayCapsule, ReplayExportResponse, SemanticDiff, SemanticDiffRequest, SessionTurn,
-    StudioMemory, SyncCode, TrustPosture, TryItInputKind, TryItRequest, TryItResult, TurnQuestion,
-    VisualResponse, VoiceTranscript, WorkspacePathState, WorkspaceRadarResponse,
+    PickRealizeProposalResponse, ProcessLane, ProofCitation, ProofEvidence, QuickfixRecord,
+    QuorumAgent, QuorumDiff, QuorumRound, RealizeProposal, RealizeQuorumRound, ReleaseRequest,
+    ReleaseStatus, ReplayCapsule, ReplayExportResponse, ReviewRound, RoleOverrides,
+    RolePreferences, SemanticDiff, SemanticDiffRequest, SessionTurn, StepEvidence, StudioMemory,
+    SyncCode, TrustPosture, TryItInputKind, TryItRequest, TryItResult, TurnQuestion,
+    VisualResponse, VoiceTranscript, WhatIfForecast, WorkspacePathState, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
@@ -1091,6 +1095,217 @@ impl WorkspaceKernel {
         Ok(memory.clone())
     }
 
+    pub fn load_role_preferences(&self) -> anyhow::Result<RolePreferences> {
+        Ok(self
+            .store
+            .load_memory()?
+            .role_preferences
+            .unwrap_or_default())
+    }
+
+    pub fn save_role_preferences(
+        &self,
+        preferences: RolePreferences,
+    ) -> anyhow::Result<RolePreferences> {
+        let mut memory = self.store.load_memory()?;
+        memory.role_preferences = Some(preferences.clone());
+        self.store.save_memory(&memory)?;
+        Ok(preferences)
+    }
+
+    pub fn process_lane_for_session(&self, session_id: Uuid) -> anyhow::Result<ProcessLane> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let lane = crate::process_lane::project(session);
+        let _forecast = crate::process_lane::forecast_next(&lane, &AutopilotPolicy::default());
+        Ok(lane)
+    }
+
+    pub fn step_evidence(&self, session_id: Uuid, op_id: Uuid) -> anyhow::Result<StepEvidence> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let op = session.op_log.iter().find(|op| op.id == op_id).cloned();
+        let step_id = op
+            .as_ref()
+            .and_then(|op| {
+                crate::process_lane::project(session)
+                    .steps
+                    .into_iter()
+                    .find(|step| step.op_id == Some(op.id))
+                    .map(|step| step.id)
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        let artifacts = op
+            .as_ref()
+            .map(|op| op.artifacts.clone())
+            .unwrap_or_default();
+        let stream_events = session
+            .op_log
+            .iter()
+            .filter(|candidate| candidate.op.starts_with("agent.event."))
+            .filter_map(|candidate| candidate.report_json.as_ref())
+            .filter_map(|value| value.get("event").cloned())
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect();
+        Ok(StepEvidence {
+            schema_version: "x07.studio.step_evidence@0.1.0".to_string(),
+            session_id,
+            step_id,
+            op,
+            stream_events,
+            artifacts,
+        })
+    }
+
+    pub fn what_if_forecast(
+        &self,
+        session_id: Uuid,
+        step_id: &str,
+    ) -> anyhow::Result<WhatIfForecast> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(crate::whatif::forecast(session, step_id))
+    }
+
+    pub async fn run_role_pipeline(
+        &mut self,
+        session_id: Uuid,
+        _policy: &AutopilotPolicy,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let memory = self.store.load_memory().unwrap_or_else(|_| StudioMemory {
+            preferences: Default::default(),
+            role_preferences: Some(RolePreferences::default()),
+            recent_projects: Vec::new(),
+            reusable_specs: Vec::new(),
+        });
+        let preferences = memory.role_preferences.as_ref();
+        let pipeline = crate::roles::default_routing(preferences);
+        self.append_op(
+            session_id,
+            role_pipeline_op(session_id, &pipeline, "started"),
+        )?;
+        let agents = self.list_agent_profiles()?;
+        let overrides = self.load_role_overrides(session_id)?;
+        let coder_id =
+            crate::roles::resolve_actor(AgentRole::Coder, &agents, &overrides, preferences)
+                .unwrap_or_else(|| "openai-codex".to_string());
+        let reviewer_id = crate::roles::select_reviewer(
+            Some(coder_id.as_str()),
+            &agents,
+            &overrides,
+            preferences,
+        )
+        .unwrap_or_else(|| "baseline-review".to_string());
+
+        self.append_op(
+            session_id,
+            pipeline_stage_op(
+                session_id,
+                AgentRole::Architect,
+                "confirm_spec",
+                "Spec is already approved; architect lane confirmed the contract boundary.",
+            ),
+        )?;
+
+        let writer_budget = pipeline
+            .stages
+            .iter()
+            .find(|stage| stage.action == "write_impl")
+            .and_then(|stage| stage.budget.as_ref())
+            .and_then(|budget| budget.wall_clock_ms)
+            .map(|ms| (ms / 1_000).max(1));
+        let prepared = self
+            .start_intent_realize(session_id, &coder_id, writer_budget)
+            .await?;
+        let run_op_id = prepared.op.id;
+        self.execute_prepared_agent_run(prepared).await?;
+        let (mut current, ok, _) = self.finalize_realize(session_id, run_op_id).await?;
+        if !ok {
+            self.append_op(
+                session_id,
+                pipeline_budget_or_pause_op(
+                    session_id,
+                    "impl",
+                    pipeline
+                        .stages
+                        .iter()
+                        .find(|stage| stage.action == "write_impl")
+                        .and_then(|stage| stage.budget.clone()),
+                    "Implementation did not reach verified evidence.",
+                ),
+            )?;
+            current = self
+                .model
+                .get_session(session_id)
+                .cloned()
+                .unwrap_or(current);
+            return Ok(current);
+        }
+
+        for round_idx in 1..=pipeline.max_review_rounds {
+            let review = crate::review::baseline_review(&current, &reviewer_id, round_idx);
+            self.append_op(session_id, review_round_op(session_id, &review))?;
+            if review.verdict == "accept" {
+                self.append_op(
+                    session_id,
+                    role_pipeline_op(session_id, &pipeline, "accepted"),
+                )?;
+                break;
+            }
+            if review.verdict == "block" || round_idx == pipeline.max_review_rounds {
+                self.append_op(
+                    session_id,
+                    role_pipeline_op(session_id, &pipeline, "paused"),
+                )?;
+                break;
+            }
+            let prepared = self
+                .start_intent_realize(session_id, &coder_id, writer_budget)
+                .await?;
+            let run_op_id = prepared.op.id;
+            self.execute_prepared_agent_run(prepared).await?;
+            let (next, _, _) = self.finalize_realize(session_id, run_op_id).await?;
+            current = next;
+        }
+
+        Ok(self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .unwrap_or(current))
+    }
+
+    async fn execute_prepared_agent_run(
+        &mut self,
+        prepared: PreparedAgentRun,
+    ) -> anyhow::Result<()> {
+        if let Some(command) = prepared.command {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let execution = WorkspaceKernel::execute_agent_command_streaming(command, tx);
+            tokio::pin!(execution);
+            loop {
+                tokio::select! {
+                    update = rx.recv() => {
+                        if let Some(update) = update {
+                            self.complete_agent_run(update)?;
+                        }
+                    }
+                    final_op = &mut execution => {
+                        self.complete_agent_run(final_op.clone())?;
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn run_autopilot(
         &mut self,
         session_id: Uuid,
@@ -1153,43 +1368,7 @@ impl WorkspaceKernel {
                         .await?;
                 }
                 crate::autopilot::AutopilotAction::AutoRealize => {
-                    if policy.allow_quorum {
-                        let round = self
-                            .run_realize_quorum(
-                                session_id,
-                                &["claude-code".to_string(), "openai-codex".to_string()],
-                                Some(240),
-                            )
-                            .await?;
-                        if round.agreed && !round.proposals.is_empty() {
-                            self.pick_quorum_proposal(session_id, round, 0).await?;
-                        }
-                    } else {
-                        let prepared = self
-                            .start_intent_realize(session_id, "claude-code", Some(240))
-                            .await?;
-                        let run_op_id = prepared.op.id;
-                        if let Some(command) = prepared.command {
-                            let (tx, mut rx) = mpsc::unbounded_channel();
-                            let execution =
-                                WorkspaceKernel::execute_agent_command_streaming(command, tx);
-                            tokio::pin!(execution);
-                            loop {
-                                tokio::select! {
-                                    update = rx.recv() => {
-                                        if let Some(update) = update {
-                                            self.complete_agent_run(update)?;
-                                        }
-                                    }
-                                    final_op = &mut execution => {
-                                        self.complete_agent_run(final_op.clone())?;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        self.finalize_realize(session_id, run_op_id).await?;
-                    }
+                    self.run_role_pipeline(session_id, &policy).await?;
                 }
                 crate::autopilot::AutopilotAction::AutoClimb => {
                     if let Some(target) = policy.auto_climb_to.as_deref() {
@@ -2294,6 +2473,97 @@ impl WorkspaceKernel {
 
     pub fn save_agent_profile(&self, profile: &AgentProfile) -> anyhow::Result<()> {
         self.store.save_agent_profile(profile)
+    }
+
+    pub fn patch_agent_role(
+        &self,
+        agent_id: &str,
+        patch: AgentRolePatchRequest,
+    ) -> anyhow::Result<AgentProfile> {
+        let mut profile = self
+            .list_agent_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        profile.default_role = patch.default_role;
+        profile.eligible_roles = if patch.eligible_roles.is_empty() {
+            vec![patch.default_role]
+        } else {
+            patch.eligible_roles
+        };
+        self.store.save_agent_profile(&profile)?;
+        Ok(profile)
+    }
+
+    pub fn load_role_overrides(&self, session_id: Uuid) -> anyhow::Result<RoleOverrides> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(session
+            .op_log
+            .iter()
+            .rev()
+            .find(|op| op.op == "role.overrides")
+            .and_then(|op| op.report_json.clone())
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_else(RoleOverrides::empty))
+    }
+
+    pub fn save_role_overrides(
+        &mut self,
+        session_id: Uuid,
+        mut overrides: RoleOverrides,
+    ) -> anyhow::Result<RoleOverrides> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if overrides.schema_version.trim().is_empty() {
+            overrides.schema_version = "x07.studio.role_overrides@0.1.0".to_string();
+        }
+        let op = role_overrides_op(session_id, &overrides);
+        self.append_op(session_id, op)?;
+        Ok(overrides)
+    }
+
+    pub fn review_session(
+        &mut self,
+        session_id: Uuid,
+        reviewer_id: Option<&str>,
+    ) -> anyhow::Result<ReviewRound> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let agents = self.list_agent_profiles()?;
+        let overrides = self.load_role_overrides(session_id)?;
+        let preferences = self
+            .store
+            .load_memory()
+            .ok()
+            .and_then(|memory| memory.role_preferences);
+        let writer = latest_writer_id(&session);
+        let reviewer = reviewer_id
+            .map(str::to_string)
+            .or_else(|| {
+                crate::roles::select_reviewer(
+                    writer.as_deref(),
+                    &agents,
+                    &overrides,
+                    preferences.as_ref(),
+                )
+            })
+            .unwrap_or_else(|| "baseline-review".to_string());
+        let round_number = session
+            .op_log
+            .iter()
+            .filter(|op| op.op == "review.round")
+            .count() as u32
+            + 1;
+        let round = crate::review::baseline_review(&session, &reviewer, round_number);
+        self.append_op(session_id, review_round_op(session_id, &round))?;
+        Ok(round)
     }
 
     pub async fn create_agent_handoff(
@@ -3653,6 +3923,184 @@ fn preferences_apply_op(session_id: Uuid, applied: &crate::memory::AppliedPrefer
         })),
         report_path: None,
     }
+}
+
+fn role_overrides_op(session_id: Uuid, overrides: &RoleOverrides) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "role.overrides".to_string(),
+        backend: "studio-roles".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "roles".to_string(),
+            "override".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: Vec::new(),
+        notes: Some("Saved per-session role overrides.".to_string()),
+        stdout: serde_json::to_string(overrides).ok(),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: serde_json::to_value(overrides).ok(),
+        report_path: None,
+    }
+}
+
+fn role_pipeline_op(
+    session_id: Uuid,
+    pipeline: &loom_types::api::RolePipeline,
+    status: &str,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("role.pipeline.{status}"),
+        backend: "studio-roles".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "roles".to_string(),
+            "pipeline".to_string(),
+            status.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: Vec::new(),
+        notes: Some(format!("Role pipeline {status}.")),
+        stdout: serde_json::to_string(pipeline).ok(),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.role_pipeline_record@0.1.0",
+            "status": status,
+            "pipeline": pipeline,
+        })),
+        report_path: None,
+    }
+}
+
+fn pipeline_stage_op(session_id: Uuid, role: AgentRole, action: &str, note: &str) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("role.stage.{action}"),
+        backend: "studio-roles".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "roles".to_string(),
+            action.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: Vec::new(),
+        notes: Some(note.to_string()),
+        stdout: Some(note.to_string()),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.pipeline_stage@0.1.0",
+            "role": role,
+            "action": action,
+        })),
+        report_path: None,
+    }
+}
+
+fn review_round_op(session_id: Uuid, round: &ReviewRound) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "review.round".to_string(),
+        backend: "studio-review".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "review".to_string(),
+            round.reviewer.clone(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: if round.verdict == "block" {
+            OperationStatus::Failed
+        } else {
+            OperationStatus::Succeeded
+        },
+        exit_code: Some(if round.verdict == "block" { 1 } else { 0 }),
+        artifacts: Vec::new(),
+        notes: Some(format!("Review verdict: {}", round.verdict)),
+        stdout: serde_json::to_string(round).ok(),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({ "round": round })),
+        report_path: None,
+    }
+}
+
+fn pipeline_budget_or_pause_op(
+    session_id: Uuid,
+    step_id: &str,
+    budget: Option<loom_types::api::StepBudget>,
+    reason: &str,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "pipeline.budget_exhausted".to_string(),
+        backend: "studio-roles".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "roles".to_string(),
+            "budget-exhausted".to_string(),
+            step_id.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Failed,
+        exit_code: Some(124),
+        artifacts: Vec::new(),
+        notes: Some(format!(
+            "Step '{step_id}' exceeded its budget. The partial work is preserved; pick a continuation. {reason}"
+        )),
+        stdout: None,
+        stderr: Some(reason.to_string()),
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.step_budget_exhausted@0.1.0",
+            "step_id": step_id,
+            "budget": budget,
+            "reason": reason,
+        })),
+        report_path: None,
+    }
+}
+
+fn latest_writer_id(session: &SessionSnapshot) -> Option<String> {
+    session
+        .op_log
+        .iter()
+        .rev()
+        .find_map(|op| op.op.strip_prefix("agent.realize.").map(str::to_string))
 }
 
 fn autopilot_answers(
@@ -8026,7 +8474,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use uuid::Uuid;
 
-    use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
+    use loom_types::api::{AgentRole, AgentRunMode, ApprovalDecision, IntentInputMode};
     use loom_types::artifacts::{
         AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
         OperationStatus, ProviderProfile, TaskType, Witness, WitnessKind,
@@ -8084,6 +8532,8 @@ mod tests {
             write_roots: vec!["src/".to_string(), "tests/".to_string()],
             approval_required: false,
             status: AgentStatus::Available,
+            default_role: AgentRole::Coder,
+            eligible_roles: vec![AgentRole::Coder, AgentRole::Reviewer],
             notes: "test agent".to_string(),
         };
         let prompt = render_agent_realize_prompt(
@@ -8723,6 +9173,8 @@ mod tests {
             write_roots: vec!["src/".to_string()],
             approval_required: true,
             status: AgentStatus::Available,
+            default_role: AgentRole::Coder,
+            eligible_roles: vec![AgentRole::Coder, AgentRole::Reviewer],
             notes: "test agent".to_string(),
         };
         kernel.save_agent_profile(&agent).expect("save agent");
@@ -8892,6 +9344,8 @@ mod tests {
             write_roots: vec!["src/".to_string()],
             approval_required: false,
             status: AgentStatus::Available,
+            default_role: AgentRole::Coder,
+            eligible_roles: vec![AgentRole::Coder],
             notes: "test agent".to_string(),
         };
         kernel.save_agent_profile(&agent).expect("save agent");
@@ -8947,6 +9401,8 @@ mod tests {
             write_roots: vec!["src/".to_string()],
             approval_required: false,
             status: AgentStatus::Available,
+            default_role: AgentRole::Coder,
+            eligible_roles: vec![AgentRole::Coder],
             notes: "test agent".to_string(),
         };
         kernel

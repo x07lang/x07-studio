@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.role_pipeline@0.1.0",
+  "title": "RolePipeline",
+  "type": "object",
+  "required": ["schema_version", "stages", "max_review_rounds"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.role_pipeline@0.1.0" },
+    "stages": { "type": "array", "items": { "type": "object" } },
+    "max_review_rounds": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": false
+}

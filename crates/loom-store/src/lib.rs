@@ -243,6 +243,7 @@ impl FsStore {
 fn default_memory() -> StudioMemory {
     StudioMemory {
         preferences: Default::default(),
+        role_preferences: None,
         recent_projects: Vec::new(),
         reusable_specs: Vec::new(),
     }

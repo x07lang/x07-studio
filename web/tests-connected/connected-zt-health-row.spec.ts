@@ -6,8 +6,9 @@ test('connected health row renders doctor lockfile and migrate status', async ({
 	await page.getByRole('button', { name: 'Refresh' }).click();
 	const health = page.getByTestId('health-row');
 	await expect(health).toContainText('Doctor');
-	await expect(health).toContainText('ok');
+	await expect(health).toContainText('ready');
 	await expect(health).toContainText('Lockfile');
+	await expect(health).toContainText('verified');
 	await expect(health).toContainText('Migrate');
-	await expect(health).toContainText('clean');
+	await expect(health).toContainText('up to date');
 });

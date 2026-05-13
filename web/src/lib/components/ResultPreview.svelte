@@ -105,7 +105,7 @@
 				disabled={busy || implementationReady}
 				data-testid="realize-quorum-button"
 			>
-				Compare both agents
+				Second opinion
 			</button>
 		</section>
 	{/if}
@@ -266,6 +266,79 @@
 	.promise-button {
 		text-align: left;
 		line-height: 1.45;
+		width: 100%;
+		padding: 8px 10px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: rgba(255, 255, 255, 0.02);
+		color: var(--text);
+		font-family: var(--font-mono);
+		font-size: 12px;
+		cursor: pointer;
+		transition: border-color var(--motion-fast, 120ms) var(--ease-out, ease-out),
+			background var(--motion-fast, 120ms) var(--ease-out, ease-out),
+			transform var(--motion-fast, 120ms) var(--ease-out, ease-out);
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+	}
+	.promise-button::before {
+		content: '✓';
+		color: var(--accent-pure);
+		font-size: 11px;
+		flex-shrink: 0;
+		margin-top: 2px;
+	}
+	.promise-button:hover,
+	.promise-button:focus-visible {
+		border-color: var(--accent-pure);
+		background: rgba(114, 228, 180, 0.06);
+		transform: translateX(2px);
+		outline: none;
+	}
+	:global(.result-preview .result-block ul) {
+		list-style: none;
+		padding-left: 0;
+		display: grid;
+		gap: 6px;
+	}
+	:global(.result-preview .followups div) {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	:global(.result-preview .followups button) {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		padding: 6px 12px;
+		background: rgba(255, 255, 255, 0.03);
+		color: var(--text);
+		font-size: 12px;
+		font-family: var(--font-mono);
+		cursor: pointer;
+		transition: border-color var(--motion-fast, 120ms) var(--ease-out, ease-out),
+			background var(--motion-fast, 120ms) var(--ease-out, ease-out);
+	}
+	:global(.result-preview .followups button::before) {
+		content: '→';
+		color: var(--cyan);
+		font-weight: 600;
+	}
+	:global(.result-preview .followups button:hover) {
+		border-color: var(--cyan);
+		background: rgba(85, 214, 231, 0.08);
+	}
+	:global(.result-preview .result-block h3),
+	:global(.result-preview .run-it h3),
+	:global(.result-preview .followups h3),
+	:global(.result-preview .try-output h3) {
+		font-size: 10px;
+		letter-spacing: 0.1em;
+		color: var(--muted);
+		margin: 0;
 	}
 	@media (prefers-color-scheme: light) {
 		.realize-cta {

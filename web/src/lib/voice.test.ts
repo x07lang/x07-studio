@@ -49,6 +49,8 @@ describe('createVoiceCapture', () => {
 		const final = vi.fn();
 		capture.onPartial(partial);
 		capture.onFinal(final);
+		const stop = vi.fn();
+		capture.onMatch(['wait stop', 'pause autopilot'], stop);
 		capture.start();
 
 		expect(capture.supported).toBe(true);
@@ -67,5 +69,26 @@ describe('createVoiceCapture', () => {
 
 		expect(partial).toHaveBeenCalledWith('draft text', 0.42);
 		expect(final).toHaveBeenCalledWith('final text', 0.75);
+		expect(stop).not.toHaveBeenCalled();
+		lastRecognition?.onresult?.({
+			resultIndex: 0,
+			results: [{ isFinal: false, 0: { transcript: ' wait stop ', confidence: 0.91 } }]
+		});
+		expect(stop).toHaveBeenCalledOnce();
+	});
+
+	it('can keep recognition continuous for passive interrupt listening', () => {
+		const ctor = vi.fn(() => {
+			lastRecognition = new FakeRecognition();
+			return lastRecognition;
+		});
+		Object.defineProperty(window, 'SpeechRecognition', {
+			value: ctor,
+			configurable: true
+		});
+
+		createVoiceCapture('en-US', true);
+
+		expect(lastRecognition?.continuous).toBe(true);
 	});
 });

@@ -86,6 +86,9 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions`
 - `GET /sessions/{session_id}`
 - `GET /sessions/{session_id}/stream` *(SSE; see below)*
+- `GET /sessions/{session_id}/process-lane`
+- `POST /sessions/{session_id}/process-lane/whatif`
+- `GET /sessions/{session_id}/process-lane/evidence/{op_id}`
 - `GET /sessions/{session_id}/turns`
 - `POST /sessions/{session_id}/events`
 - `POST /sessions/{session_id}/intent/formalize`
@@ -127,6 +130,9 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions/{session_id}/docs/preview`
 - `POST /sessions/{session_id}/xtal/run`
 - `POST /sessions/{session_id}/build`
+- `POST /sessions/{session_id}/review`
+- `GET /sessions/{session_id}/role-overrides`
+- `POST /sessions/{session_id}/role-overrides`
 - `GET /pkg/provides?module=<module-id>`
 
 Create session request:
@@ -195,6 +201,58 @@ For `input_mode: "spec"`, the kernel keeps the provided spec as the auditable
 source and derives the target module/entry from `module_id` and the first
 operation name or id. Browser clients should use this endpoint instead of
 inventing their own connected-mode intent packet.
+
+Process Lane endpoints expose the current x07 lifecycle as
+`x07.studio.process_lane@0.1.0`. The lane is recomputed from
+`SessionSnapshot.op_log`; it is not separately persisted.
+
+```json
+{
+  "schema_version": "x07.studio.process_lane@0.1.0",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "current_index": 5,
+  "next_index": 6,
+  "steps": [
+    {
+      "schema_version": "x07.studio.canonical_step@0.1.0",
+      "id": "impl",
+      "label": "Write implementation",
+      "actor": "coder",
+      "status": "running",
+      "started_at": "1778500750",
+      "finished_at": null,
+      "elapsed_ms": null,
+      "op_id": "00000000-0000-0000-0000-000000000000",
+      "narration": "Coder worked on `agent.realize.openai-codex`.",
+      "next_actor": "reviewer",
+      "budget": {"wall_clock_ms": 60000, "prover_seconds": null, "on_exhaust": "pause"},
+      "round": null
+    }
+  ]
+}
+```
+
+`POST /process-lane/whatif` accepts `{"step_id":"verify"}` and returns
+`x07.studio.what_if_forecast@0.1.0`. Evidence drilldown by op id returns
+`x07.studio.step_evidence@0.1.0` with the linked `OpRecord`, stream events, and
+artifacts for the selected step.
+
+Role overrides are session-local operation records:
+
+```json
+{
+  "schema_version": "x07.studio.role_overrides@0.1.0",
+  "architect": "claude-code",
+  "coder": "openai-codex",
+  "reviewer": "claude-code",
+  "conductor": null
+}
+```
+
+`POST /review` records a `review.round` turn. The deterministic baseline review
+checks generated tests, latest `xtal.verify`, and scaffold-only summaries; a
+client may pass `{"reviewer_id":"claude-code"}` to attribute the review to a
+configured reviewer role.
 
 Agent contract endpoints expose `x07.studio.agent_contract@0.1.0`. `POST`
 accepts:
@@ -401,6 +459,7 @@ Provider probe request:
 
 - `GET /agents`
 - `POST /agents`
+- `PATCH /agents/{agent_id}`
 - `POST /sessions/{session_id}/agents/{agent_id}/handoff`
 - `POST /sessions/{session_id}/agents/{agent_id}/run`
 - `POST /sessions/{session_id}/agents/{agent_id}/approval`
@@ -420,9 +479,25 @@ Agent profile response:
   "write_roots": ["spec/", "src/", "tests/"],
   "approval_required": true,
   "status": "available",
+  "default_role": "coder",
+  "eligible_roles": ["coder", "reviewer"],
   "notes": "Remote coding-agent runner gated by x07 session contract."
 }
 ```
+
+`PATCH /agents/{agent_id}` accepts role metadata without replacing the rest of
+the agent profile:
+
+```json
+{
+  "default_role": "coder",
+  "eligible_roles": ["coder", "reviewer"]
+}
+```
+
+Roles are `conductor`, `architect`, `coder`, and `reviewer`. Studio's built-in
+routing treats Studio as the conductor, Claude Code as architect/reviewer by
+default, and OpenAI Codex as coder/reviewer by default.
 
 Agent handoff response:
 
@@ -740,6 +815,8 @@ Visual parse/emit endpoints normalize graph payloads for `streampipe`,
 - `POST /v1/sync/{code}/claim`
 - `GET /v1/memory`
 - `POST /v1/memory`
+- `GET /v1/memory/role-preferences`
+- `POST /v1/memory/role-preferences`
 
 Sync codes point at the daemon's current first session, expire after their
 timestamp, and are persisted under `.x07/studio/sync_codes.json` so a restarted
@@ -749,6 +826,19 @@ append-only JSONL at `~/.x07-studio/memory.jsonl` unless
 `POST /v1/memory` accepts a JSON merge-style patch and returns the projected
 memory state, which contains preferences, recent projects, and reusable spec
 references.
+
+Role preferences are persisted in that same memory stream:
+
+```json
+{
+  "schema_version": "x07.studio.role_preferences@0.1.0",
+  "default_architect": "claude-code",
+  "default_coder": "openai-codex",
+  "default_reviewer": "claude-code",
+  "allow_self_review": true,
+  "default_max_review_rounds": 2
+}
+```
 
 ## Session stream (Server-Sent Events)
 
@@ -826,7 +916,9 @@ Call tool request:
 ## Cycle 3 endpoints
 
 - `POST /v1/sessions/{session_id}/realize/quorum` runs Claude Code and Codex
-  realization in staged workspaces and returns `RealizeQuorumRound`.
+  realization in staged workspaces and returns `RealizeQuorumRound`. Cycle 6
+  keeps this as a manual Second opinion action; autopilot no longer fires it by
+  default.
   `schema_version` defaults to `x07.studio.realize_quorum_request@0.1.0` when
   older clients omit it.
 - `POST /v1/sessions/{session_id}/realize/pick` applies the chosen quorum

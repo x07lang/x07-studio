@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.process_lane@0.1.0",
+  "title": "ProcessLane",
+  "type": "object",
+  "required": ["schema_version", "session_id", "steps"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.process_lane@0.1.0" },
+    "session_id": { "type": "string" },
+    "steps": { "type": "array", "items": { "$ref": "x07.studio.canonical_step@0.1.0" } },
+    "current_index": { "type": ["integer", "null"], "minimum": 0 },
+    "next_index": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "additionalProperties": false
+}

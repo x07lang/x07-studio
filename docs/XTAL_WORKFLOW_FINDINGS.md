@@ -1085,3 +1085,25 @@ This document records friction found while implementing the Studio web surface.
    DrawerRail, collapses posture noise into PostureBadge, and makes compare a
    contextual menu. The result keeps evidence available without making every
    operation equal visual weight.
+
+99. Current work needs a first-class process lane.
+
+   The operation log is complete but too retrospective for autopilot. Cycle 6
+   projects the same op log into canonical x07 steps with actor, status,
+   elapsed time, next step, and evidence backlink. This gives users a stable
+   "what is happening now" surface without duplicating persisted state.
+
+100. Parallel quorum should be a tool, not the default collaboration model.
+
+   Running Claude and Codex in parallel on every realize step burns budget and
+   leaves the user to arbitrate too early. Cycle 6 routes by role instead:
+   architect confirms the spec, coder implements, reviewer records a review
+   round. Quorum stays available as the manual Second opinion button.
+
+101. Role preferences belong in user memory, but session overrides must be
+     auditable.
+
+   User-level defaults live in `~/.x07-studio/memory.jsonl` as
+   `role_preferences`; per-session routing changes are `role.overrides`
+   operations inside the session. That keeps personal defaults reusable while
+   preserving the exact routing used for a given artifact trail.

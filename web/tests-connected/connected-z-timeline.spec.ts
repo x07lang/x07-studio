@@ -140,9 +140,9 @@ test('connected no-write realize failure exposes recovery actions', async ({ pag
 	});
 	await expect(realizeTurn).toContainText('No file changes recorded by the write audit.');
 	await expect(realizeTurn.getByRole('button', { name: 'Try Claude Code again' })).toBeEnabled();
-	await expect(realizeTurn.getByRole('button', { name: 'Compare both agents' })).toBeEnabled();
+	await expect(realizeTurn.getByRole('button', { name: 'Second opinion' })).toBeEnabled();
 
-	await realizeTurn.getByRole('button', { name: 'Compare both agents' }).click();
+	await realizeTurn.getByRole('button', { name: 'Second opinion' }).click();
 	await expect(page.getByTestId('turn-quorum_realize')).toBeVisible({ timeout: 60_000 });
 	await expect(page.getByTestId('timeline')).toContainText('openai-codex', { timeout: 30_000 });
 });
@@ -216,7 +216,7 @@ test('connected handoff embeds detected service genpack schema', async ({ page }
 	expect(handoff.handoff.prompt).toContain('api-cell ::= service operations policy');
 });
 
-test('connected continuity tools run quorum, sync claims, cassette branches, and visual emit', async ({
+test('connected continuity tools run quorum, sync claims, cassette ribbon, and visual emit', async ({
 	page
 }) => {
 	const prompt = 'Build an API gateway service with a replay cassette and visual task flow.';
@@ -243,13 +243,9 @@ test('connected continuity tools run quorum, sync claims, cassette branches, and
 	await page.getByRole('button', { name: 'Claim' }).click();
 	await expect(page.getByText(`Claimed sync code ${code}`)).toBeVisible({ timeout: 10_000 });
 
-	await openDrawer(page, /Time travel/);
-	await page.getByRole('button', { name: 'Load cassettes' }).click();
-	await expect(page.getByTestId('cassette-list')).toContainText('001-request.json', {
-		timeout: 10_000
-	});
-	await page.getByTestId('cassette-list').getByRole('button', { name: 'Branch' }).first().click();
-	await expect(page.locator('.session-radar')).toContainText('Replay .x07_rr/http/001-request.json', {
+	await expect(page.getByRole('button', { name: /Time travel/ })).toHaveCount(0);
+	await openDrawer(page, /Cassette ribbon/);
+	await expect(page.getByTestId('cassette-ribbon')).toContainText('001-request.json', {
 		timeout: 10_000
 	});
 

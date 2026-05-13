@@ -37,7 +37,7 @@
 
 <section class="quorum-realize" data-testid="quorum-realize">
 	<header>
-		<h3>Compare both agents</h3>
+		<h3>Second opinion</h3>
 		<span>{round.agreed ? 'agreed' : 'different proposals'}</span>
 	</header>
 	<SemanticDiff diff={localDiff} />

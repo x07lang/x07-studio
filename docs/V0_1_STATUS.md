@@ -83,6 +83,7 @@
 - Cycle 3 live realization surfaces are wired: normalized Claude Code / Codex stream events, persisted live diffs, side-by-side realize quorum, proposal picking, autopilot decisions, voice composer transcripts, sync state blobs, memory preference application, x07lp release status, replay capsule export/import, and canvas-based visual graph editing
 - Cycle 4 trust surfaces are wired: Trust Card, captured posture timeline turns, semantic diff lens, Proof Explorer, Quickfix Card, Cassette Ribbon, rung gates, certificate viewer, welcome recipes, optimistic user-intent turns, and `Cmd/Ctrl+K` command palette
 - Cycle 5 canonical-loop surfaces are wired: AGENT.md contract editing and handoff folding, lint report and quickfix loop, health snapshot row, PBT counterexample locking, arch-check/lockfile ladder gates, package-provides lookup, canonical agent-gate recipes, TrustCard hero layout, DrawerRail, PostureBadge, CompareMenu, QuickfixThreePane, and posture/motion transitions
+- Cycle 6 process/collaboration surfaces are wired: Process Lane projection, current/next actor status, per-step evidence drawer, what-if forecasts, role metadata on agent profiles, per-session role overrides, role preferences in memory, review round turns, self-review fallback, step budget pause records, passive verbal interrupt hook, and manual Second opinion quorum
 - Session creation accepts `{title, task_type}` plus browser-compatible `{intent_text, mode}` aliases, and request schema versions for realize quorum and ladder release default at the API boundary
 - MCP calls parsed from coding-agent tool streams are preserved as transparent timeline turns instead of being collapsed into generic tool-use text
 
@@ -96,6 +97,7 @@
 - no persisted audio capture or local STT model selection yet
 - visual graph editors cover the current `streampipe`, `statemachine`, and `tasks` graph exchange layer; future domain-specific editors can build on the same API
 - replay capsule signing is currently a deterministic local manifest digest, not an external key-management system
+- Process Lane forecasts are heuristic in v0.1; completed `OpRecord` evidence remains authoritative.
 
 ## Validation done here
 

@@ -4,10 +4,10 @@
 	import { StudioApi } from '$lib/api';
 	import type {
 		AgentContract,
+		AgentProfile,
 		AskAnswer,
 		ArchCheckReport,
 		AutopilotState,
-		CassetteEntry,
 		CassetteRibbon,
 		CertificateSummary,
 		HealthResponse,
@@ -18,25 +18,31 @@
 		LintReport,
 		PbtRound,
 		PkgProvidesResult,
+		ProcessLane as ProcessLaneType,
 		ProofEvidence,
 		QuickfixRecord,
 		ReleaseStatus,
 		ReplayExportResponse,
+		RoleOverrides,
 		SemanticDiff,
 		SessionSnapshot,
 		SessionStreamEvent,
 		SessionTurn,
+		StepEvidence,
 		StudioMemory,
 		SyncCode,
 		TrustPosture,
 		TryItRequest,
 		TryItResult,
+		WhatIfForecast,
 		VoiceTranscript,
 		VisualKind,
 		VisualResponse
 	} from '$lib/studio';
 	import { demoHealth } from '$lib/studio';
 	import Timeline from '$lib/components/Timeline.svelte';
+	import ProcessLane from '$lib/components/ProcessLane.svelte';
+	import StepDrawer from '$lib/components/StepDrawer.svelte';
 	import Composer from '$lib/components/Composer.svelte';
 	import NowPanel from '$lib/components/NowPanel.svelte';
 	import Header from '$lib/components/Header.svelte';
@@ -66,14 +72,19 @@
 	let sessions: SessionSnapshot[] = [];
 	let selected: SessionSnapshot | null = null;
 	let turns: SessionTurn[] = [];
+	let processLane: ProcessLaneType | null = null;
+	let stepEvidence: StepEvidence | null = null;
+	let stepDrawerOpen = false;
+	let forecasts: Record<string, WhatIfForecast | null> = {};
 	let ladder: LadderState | null = null;
 	let tryResult: TryItResult | null = null;
 	let askAnswer: AskAnswer | null = null;
-	let cassettes: CassetteEntry[] = [];
 	let cassetteRibbon: CassetteRibbon | null = null;
 	let visualParseResult: VisualResponse | null = null;
 	let visualEmitResult: VisualResponse | null = null;
 	let memory: StudioMemory | null = null;
+	let agents: AgentProfile[] = [];
+	let roleOverrides: RoleOverrides | null = null;
 	let syncCode: SyncCode | null = null;
 	let autopilot: AutopilotState | null = null;
 	let releaseStatus: ReleaseStatus | null = null;
@@ -95,6 +106,7 @@
 	let incidentNotice = 0;
 	let memoryOpen = false;
 	let busy = false;
+	let autopilotRunning = false;
 	let realizeBusy = false;
 	let invokeBusy = false;
 	let status = 'Starting Studio';
@@ -136,6 +148,7 @@
 		health = await api.health();
 		healthSnapshot = await api.healthSnapshot().catch(() => null);
 		sessions = await api.listSessions();
+		agents = await api.listAgents().catch(() => []);
 		selected = selected
 			? sessions.find((session) => session.session_id === selected?.session_id) ?? sessions[0] ?? null
 			: sessions[0] ?? null;
@@ -151,11 +164,13 @@
 			return;
 		}
 		turns = await api.listTurns(selected.session_id);
+		processLane = await api.getProcessLane(selected).catch(() => null);
 		for (const turn of turns) optimisticTurns = reconcile(optimisticTurns, turn);
 		if (optimisticTurns.length) turns = [...turns, ...optimisticTurns.filter((turn) => turn.optimistic)];
 		ladder = await api.ladderState(selected).catch(() => null);
 		trustPosture = await api.trustPosture(selected).catch(() => null);
 		cassetteRibbon = await api.cassetteRibbon(selected).catch(() => null);
+		roleOverrides = await api.getRoleOverrides(selected).catch(() => null);
 	}
 
 	function subscribe(sessionId: string) {
@@ -217,13 +232,18 @@
 			replaceSelected(formalized.session);
 			status = 'Intent captured';
 			if (detail.auto) {
-				const response = await api.startAutopilot(formalized.session, {
-					allow_quorum: false,
-					auto_climb_to: 'local_preview'
-				});
-				if (response) {
-					autopilot = response.state;
-					replaceSelected(response.session);
+				autopilotRunning = true;
+				try {
+					const response = await api.startAutopilot(formalized.session, {
+						allow_quorum: false,
+						auto_climb_to: 'local_preview'
+					});
+					if (response) {
+						autopilot = response.state;
+						replaceSelected(response.session);
+					}
+				} finally {
+					autopilotRunning = false;
 				}
 			} else {
 				await api.clarifyIntent(formalized.session, 'claude-code', { timeoutSeconds: 90 }).catch(() => null);
@@ -526,6 +546,7 @@
 	async function startAutopilot() {
 		if (!selected) return;
 		busy = true;
+		autopilotRunning = true;
 		try {
 			const response = await api.startAutopilot(selected, {
 				allow_quorum: false,
@@ -539,6 +560,7 @@
 				status = response.state.last_decision?.reason ?? 'Autopilot stopped';
 			}
 		} finally {
+			autopilotRunning = false;
 			busy = false;
 		}
 	}
@@ -551,24 +573,6 @@
 			replaceSelected(response.session);
 			await refreshDerived();
 			status = 'Autopilot paused';
-		}
-	}
-
-	async function loadCassettes() {
-		if (!selected) return;
-		cassettes = await api.cassetteEntries(selected);
-		status = cassettes.length ? `Loaded ${cassettes.length} cassette entries` : 'No cassettes recorded';
-	}
-
-	async function branchCassette(detail: { idx: number; title: string }) {
-		if (!selected) return;
-		const branchId = await api.branchCassette(selected, detail.idx, detail.title);
-		if (branchId) {
-			sessions = await api.listSessions();
-			selected = await api.getSession(branchId);
-			subscribe(branchId);
-			await refreshDerived();
-			status = `Branched cassette entry ${detail.idx}`;
 		}
 	}
 
@@ -638,6 +642,39 @@
 		memoryOpen = false;
 		status = 'Memory updated';
 	}
+
+	async function openStep(step: ProcessLaneType['steps'][number]) {
+		if (!selected || !step.op_id) return;
+		stepEvidence = await api.getStepEvidence(selected, step.op_id);
+		stepDrawerOpen = Boolean(stepEvidence);
+	}
+
+	async function loadForecast(stepId: string) {
+		if (!selected || forecasts[stepId]) return;
+		forecasts = {
+			...forecasts,
+			[stepId]: await api.getWhatIf(selected, stepId).catch(() => null)
+		};
+	}
+
+	async function saveRoleOverrides(overrides: RoleOverrides) {
+		if (!selected) return;
+		roleOverrides = await api.setRoleOverrides(selected, overrides);
+		status = 'Role overrides saved';
+		await refreshDerived();
+	}
+
+	async function saveAgentRole(detail: {
+		agentId: string;
+		defaultRole: AgentProfile['default_role'];
+		eligibleRoles: AgentProfile['eligible_roles'];
+	}) {
+		const saved = await api.setAgentRole(detail.agentId, detail.defaultRole, detail.eligibleRoles);
+		if (saved) {
+			agents = agents.map((agent) => (agent.id === saved.id ? saved : agent));
+			status = `${saved.label} is now ${saved.default_role}`;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -692,31 +729,39 @@
 	{/if}
 
 	<div class="main-grid">
-		<Timeline
-			{turns}
-			session={selected}
-			{detailsOpen}
-			{tryResult}
-			{busy}
-			{realizeBusy}
-			{invokeBusy}
-			{quickfix}
-			{trustPosture}
-			{pbtRound}
-			on:answer={(event) => answer(event.detail)}
-			on:followup={(event) => followup(event.detail)}
-			on:repair={(event) => repairIncident(event.detail)}
-			on:quickfix={(event) => loadQuickfix(event.detail)}
-			on:proof={(event) => openProof(event.detail)}
-			on:lint={openLintReport}
-			on:pbt={runPbt}
-			on:pbtRegression={(event) => pbtRegression(event.detail)}
-			on:compare={(event) => compareTurn(event.detail)}
-			on:invoke={(event) => invoke(event.detail)}
-			on:realize={realize}
-			on:quorum={runQuorum}
-			on:pickProposal={(event) => pickProposal(event.detail)}
-		/>
+		<div class="left-stack">
+			<ProcessLane
+				lane={processLane}
+				{forecasts}
+				on:step={(event) => openStep(event.detail)}
+				on:forecast={(event) => loadForecast(event.detail)}
+			/>
+			<Timeline
+				{turns}
+				session={selected}
+				{detailsOpen}
+				{tryResult}
+				{busy}
+				{realizeBusy}
+				{invokeBusy}
+				{quickfix}
+				{trustPosture}
+				{pbtRound}
+				on:answer={(event) => answer(event.detail)}
+				on:followup={(event) => followup(event.detail)}
+				on:repair={(event) => repairIncident(event.detail)}
+				on:quickfix={(event) => loadQuickfix(event.detail)}
+				on:proof={(event) => openProof(event.detail)}
+				on:lint={openLintReport}
+				on:pbt={runPbt}
+				on:pbtRegression={(event) => pbtRegression(event.detail)}
+				on:compare={(event) => compareTurn(event.detail)}
+				on:invoke={(event) => invoke(event.detail)}
+				on:realize={realize}
+				on:quorum={runQuorum}
+				on:pickProposal={(event) => pickProposal(event.detail)}
+			/>
+		</div>
 		<div class="right-rail">
 			<HealthRow
 				snapshot={healthSnapshot}
@@ -730,8 +775,9 @@
 				{ladder}
 				{tryResult}
 				{askAnswer}
-				{cassettes}
 				{cassetteRibbon}
+				{agents}
+				{roleOverrides}
 				{trustPosture}
 				{visualParseResult}
 				{visualEmitResult}
@@ -751,11 +797,10 @@
 				on:quorum={runQuorum}
 				on:autopilot={startAutopilot}
 				on:pauseAutopilot={pauseAutopilot}
+				on:roleOverrides={(event) => saveRoleOverrides(event.detail)}
 				on:release={(event) => submitRelease(event.detail)}
 				on:certificate={openCertificate}
 				on:exportReplay={exportReplay}
-				on:cassetteLoad={loadCassettes}
-				on:cassetteBranch={(event) => branchCassette(event.detail)}
 				on:visualParse={(event) => visualParse(event.detail)}
 				on:visualEmit={(event) => visualEmit(event.detail)}
 			/>
@@ -764,17 +809,22 @@
 
 	<Composer
 		{busy}
+		autopilotActive={autopilotRunning}
 		incidentCount={incidentNotice}
 		on:compose={(event) => compose(event.detail)}
 		on:image={(event) => uploadImage(event.detail)}
+		on:pauseAutopilot={pauseAutopilot}
 	/>
 	<MemoryDrawer {memory} open={memoryOpen} on:close={() => (memoryOpen = false)} on:save={(event) => saveMemory(event.detail)} />
+	<StepDrawer evidence={stepEvidence} open={stepDrawerOpen} on:close={() => (stepDrawerOpen = false)} />
 	<AgentContractEditor
 		contract={agentContract}
 		open={agentContractOpen}
 		{busy}
+		{agents}
 		on:close={() => (agentContractOpen = false)}
 		on:save={(event) => saveAgentContract(event.detail)}
+		on:role={(event) => saveAgentRole(event.detail)}
 	/>
 	{#if lintOpen}
 		<div class="modal-sheet">

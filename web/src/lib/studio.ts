@@ -33,6 +33,8 @@ export type SessionPhase =
 	| 'human_intervention_required';
 
 export type OperationStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+export type AgentRole = 'conductor' | 'architect' | 'coder' | 'reviewer';
+export type StepStatus = 'pending' | 'running' | 'done' | 'stalled' | 'skipped';
 export type IntentInputMode = 'text' | 'voice' | 'spec' | 'incident';
 export type IntentWitnessKind =
 	| 'desired_behavior'
@@ -136,6 +138,36 @@ export interface PlainEnglishSummary {
 	stub_paths?: string[];
 }
 
+export interface StepBudget {
+	wall_clock_ms?: number | null;
+	prover_seconds?: number | null;
+	on_exhaust: 'escalate' | 'pause' | 'skip' | string;
+}
+
+export interface CanonicalStep {
+	schema_version: 'x07.studio.canonical_step@0.1.0';
+	id: string;
+	label: string;
+	actor: AgentRole;
+	status: StepStatus;
+	started_at?: string | null;
+	finished_at?: string | null;
+	elapsed_ms?: number | null;
+	op_id?: string | null;
+	narration: string;
+	next_actor?: AgentRole | null;
+	budget?: StepBudget | null;
+	round?: number | null;
+}
+
+export interface ProcessLane {
+	schema_version: 'x07.studio.process_lane@0.1.0';
+	session_id: string;
+	steps: CanonicalStep[];
+	current_index?: number | null;
+	next_index?: number | null;
+}
+
 export type AgentStreamEvent =
 	| { kind: 'reasoning'; id: string; at: string; text: string }
 	| {
@@ -197,6 +229,40 @@ export interface RealizeQuorumRound {
 	judge?: string | null;
 }
 
+export interface ReviewConcern {
+	kind: string;
+	message: string;
+	citation?: { clause_id: string; proof_report?: string | null; summary: string } | null;
+}
+
+export interface ReviewRound {
+	schema_version: 'x07.studio.review_round@0.1.0';
+	session_id: string;
+	round: number;
+	reviewer: string;
+	verdict: 'accept' | 'revise' | 'block' | string;
+	concerns: ReviewConcern[];
+	created_at: string;
+}
+
+export interface WhatIfForecast {
+	schema_version: 'x07.studio.what_if_forecast@0.1.0';
+	step_id: string;
+	predicted_delta?: SemanticDiff | null;
+	estimated_duration_ms: number;
+	confidence: number;
+	assumptions: string[];
+}
+
+export interface StepEvidence {
+	schema_version: 'x07.studio.step_evidence@0.1.0';
+	session_id: string;
+	step_id: string;
+	op?: OpRecord | null;
+	stream_events: AgentStreamEvent[];
+	artifacts: string[];
+}
+
 export interface PickRealizeProposalResponse {
 	round: RealizeQuorumRound;
 	session: SessionSnapshot;
@@ -209,7 +275,15 @@ export type SessionTurn =
 	| { kind: 'agent_draft'; id: string; at: string; agent_id: string; summary: string; evidence: TurnEvidence[] }
 	| { kind: 'user_approved'; id: string; at: string; by: string }
 	| { kind: 'build_stage'; id: string; at: string; stage: string; op_ids: string[] }
-	| { kind: 'verified'; id: string; at: string; summary: PlainEnglishSummary; op_ids: string[] }
+	| {
+			kind: 'verified';
+			id: string;
+			at: string;
+			summary: PlainEnglishSummary;
+			op_ids: string[];
+			refined_from_scaffold?: boolean;
+	  }
+	| { kind: 'review'; id: string; at: string; round: ReviewRound; op_ids: string[] }
 	| { kind: 'incident'; id: string; at: string; incident_id: string; summary: string; repair_available: boolean }
 	| { kind: 'repair'; id: string; at: string; incident_id: string; op_ids: string[] }
 	| {
@@ -670,8 +744,26 @@ export interface StudioMemory {
 		naming_style?: string | null;
 		verbosity?: string | null;
 	};
+	role_preferences?: RolePreferences | null;
 	recent_projects: Array<{ root: string; last_session_id?: string | null; label: string }>;
 	reusable_specs: Array<{ module_id: string; path: string; summary: string }>;
+}
+
+export interface RolePreferences {
+	schema_version: 'x07.studio.role_preferences@0.1.0';
+	default_architect?: string | null;
+	default_coder?: string | null;
+	default_reviewer?: string | null;
+	allow_self_review: boolean;
+	default_max_review_rounds: number;
+}
+
+export interface RoleOverrides {
+	schema_version: 'x07.studio.role_overrides@0.1.0';
+	architect?: string | null;
+	coder?: string | null;
+	reviewer?: string | null;
+	conductor?: string | null;
 }
 
 export interface OpRecord {
@@ -1065,6 +1157,8 @@ export interface AgentProfile {
 	write_roots: string[];
 	approval_required: boolean;
 	status: AgentStatus;
+	default_role: AgentRole;
+	eligible_roles: AgentRole[];
 	notes: string;
 }
 
@@ -1353,6 +1447,8 @@ export const defaultAgentProfiles: AgentProfile[] = [
 		write_roots: ['spec/', 'src/', 'tests/'],
 		approval_required: true,
 		status: 'needs_install',
+		default_role: 'coder',
+		eligible_roles: ['coder', 'reviewer'],
 		notes: 'Remote coding-agent runner gated by x07 session contract.'
 	},
 	{
@@ -1366,6 +1462,8 @@ export const defaultAgentProfiles: AgentProfile[] = [
 		write_roots: ['src/', 'tests/'],
 		approval_required: true,
 		status: 'needs_install',
+		default_role: 'architect',
+		eligible_roles: ['architect', 'reviewer', 'coder'],
 		notes: 'Alternate coding-agent runner for implementation and review lanes.'
 	}
 ];

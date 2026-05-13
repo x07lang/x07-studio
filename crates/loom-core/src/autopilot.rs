@@ -27,6 +27,14 @@ pub fn decide_next(state: &SessionSnapshot, policy: &AutopilotPolicy) -> Autopil
             "intent",
             "No intent has been formalized for this session.",
         )
+    } else if let Some(op) = latest_budget_exhaustion(state) {
+        (
+            AutopilotAction::Pause,
+            "budget_exhausted",
+            op.notes
+                .as_deref()
+                .unwrap_or("A pipeline step exceeded its budget. The partial work is preserved; pick a continuation."),
+        )
     } else if needs_initial_clarify(state) {
         (
             AutopilotAction::AutoClarify,
@@ -61,11 +69,19 @@ pub fn decide_next(state: &SessionSnapshot, policy: &AutopilotPolicy) -> Autopil
             "The session has not produced verified evidence yet.",
         )
     } else if scaffold_summary(state) {
-        (
-            AutopilotAction::AutoRealize,
-            "realize",
-            "Verified evidence still points at a scaffold-only implementation.",
-        )
+        if realize_progress_stalled(state) {
+            (
+                AutopilotAction::Pause,
+                "realize_stalled",
+                "Two consecutive realize attempts did not clear the scaffold-only flag; pausing for human review.",
+            )
+        } else {
+            (
+                AutopilotAction::AutoRealize,
+                "realize",
+                "Verified evidence still points at a scaffold-only implementation.",
+            )
+        }
     } else if policy.auto_climb_to.is_some() && !certified_or_climbed(state, policy) {
         (
             AutopilotAction::AutoClimb,
@@ -93,6 +109,14 @@ pub fn decide_next(state: &SessionSnapshot, policy: &AutopilotPolicy) -> Autopil
             reason: reason.to_string(),
         },
     }
+}
+
+fn latest_budget_exhaustion(state: &SessionSnapshot) -> Option<&loom_types::artifacts::OpRecord> {
+    state
+        .op_log
+        .iter()
+        .rev()
+        .find(|op| op.op == "pipeline.budget_exhausted")
 }
 
 pub fn score_clarify_question(question: &TurnQuestion) -> f32 {
@@ -146,15 +170,41 @@ fn verified(state: &SessionSnapshot) -> bool {
 }
 
 fn scaffold_summary(state: &SessionSnapshot) -> bool {
-    state.op_log.iter().rev().any(|op| {
-        op.op == "summary.plain_english"
-            && op
+    state
+        .op_log
+        .iter()
+        .rev()
+        .find(|op| op.op == "summary.plain_english")
+        .and_then(|op| op.report_json.as_ref())
+        .and_then(|value| value.get("scaffold_only"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+const MAX_REALIZE_WITHOUT_PROGRESS: usize = 2;
+
+fn realize_progress_stalled(state: &SessionSnapshot) -> bool {
+    let mut consecutive_no_progress: usize = 0;
+    let mut realize_since_last_summary = false;
+    for op in &state.op_log {
+        if op.op.starts_with("agent.realize.") && op.status == OperationStatus::Succeeded {
+            realize_since_last_summary = true;
+        } else if op.op == "summary.plain_english" && realize_since_last_summary {
+            realize_since_last_summary = false;
+            let scaffold = op
                 .report_json
                 .as_ref()
                 .and_then(|value| value.get("scaffold_only"))
                 .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-    })
+                .unwrap_or(false);
+            if scaffold {
+                consecutive_no_progress += 1;
+            } else {
+                consecutive_no_progress = 0;
+            }
+        }
+    }
+    consecutive_no_progress >= MAX_REALIZE_WITHOUT_PROGRESS
 }
 
 fn certified_or_climbed(state: &SessionSnapshot, policy: &AutopilotPolicy) -> bool {
@@ -250,6 +300,105 @@ mod tests {
 
         assert_eq!(plan.action, AutopilotAction::AutoClarify);
         assert_eq!(plan.decision.stage, "clarify");
+    }
+
+    fn op_record(
+        session_id: Uuid,
+        op: &str,
+        report_json: Option<serde_json::Value>,
+    ) -> loom_types::artifacts::OpRecord {
+        loom_types::artifacts::OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id,
+            op: op.to_string(),
+            backend: "test".to_string(),
+            command: Vec::new(),
+            started_at: "1".to_string(),
+            finished_at: Some("1".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: Vec::new(),
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json,
+            report_path: None,
+        }
+    }
+
+    #[test]
+    fn cleared_scaffold_after_first_summary_does_not_loop() {
+        let mut session =
+            SessionSnapshot::new(Uuid::new_v4(), "demo", "/tmp/demo", TaskType::NewBehavior);
+        session.phase = SessionPhase::TrustReview;
+        session.intent = Some(IntentPacket::demo(session.session_id, "/tmp/demo"));
+        let sid = session.session_id;
+        session.op_log.extend([
+            op_record(sid, "xtal.verify", None),
+            op_record(
+                sid,
+                "summary.plain_english",
+                Some(serde_json::json!({ "scaffold_only": true })),
+            ),
+            op_record(sid, "agent.realize.claude-code", None),
+            op_record(
+                sid,
+                "summary.plain_english",
+                Some(serde_json::json!({ "scaffold_only": false })),
+            ),
+        ]);
+
+        let plan = decide_next(&session, &AutopilotPolicy::default());
+
+        // Most-recent summary cleared scaffold_only — autopilot must move on,
+        // not keep firing realize because an earlier summary had scaffold_only=true.
+        assert_ne!(plan.action, AutopilotAction::AutoRealize);
+    }
+
+    #[test]
+    fn two_stalled_realize_attempts_pause_autopilot() {
+        let mut session =
+            SessionSnapshot::new(Uuid::new_v4(), "demo", "/tmp/demo", TaskType::NewBehavior);
+        session.phase = SessionPhase::TrustReview;
+        session.intent = Some(IntentPacket::demo(session.session_id, "/tmp/demo"));
+        let sid = session.session_id;
+        let scaffold_report = serde_json::json!({ "scaffold_only": true });
+        session.op_log.extend([
+            op_record(sid, "xtal.verify", None),
+            op_record(sid, "agent.realize.claude-code", None),
+            op_record(sid, "summary.plain_english", Some(scaffold_report.clone())),
+            op_record(sid, "agent.realize.claude-code", None),
+            op_record(sid, "summary.plain_english", Some(scaffold_report)),
+        ]);
+
+        let plan = decide_next(&session, &AutopilotPolicy::default());
+
+        assert_eq!(plan.action, AutopilotAction::Pause);
+        assert_eq!(plan.decision.stage, "realize_stalled");
+    }
+
+    #[test]
+    fn single_scaffold_summary_still_attempts_realize() {
+        let mut session =
+            SessionSnapshot::new(Uuid::new_v4(), "demo", "/tmp/demo", TaskType::NewBehavior);
+        session.phase = SessionPhase::TrustReview;
+        session.intent = Some(IntentPacket::demo(session.session_id, "/tmp/demo"));
+        let sid = session.session_id;
+        session.op_log.extend([
+            op_record(sid, "xtal.verify", None),
+            op_record(
+                sid,
+                "summary.plain_english",
+                Some(serde_json::json!({ "scaffold_only": true })),
+            ),
+        ]);
+
+        let plan = decide_next(&session, &AutopilotPolicy::default());
+
+        assert_eq!(plan.action, AutopilotAction::AutoRealize);
     }
 
     #[test]

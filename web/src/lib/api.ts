@@ -48,6 +48,7 @@ import {
 	type PbtRound,
 	type PkgProvidesResult,
 	type PlainEnglishSummary,
+	type ProcessLane,
 	type ProofEvidence,
 	type ProviderProbeResponse,
 	type ProviderProfile,
@@ -56,14 +57,18 @@ import {
 	type PickRealizeProposalResponse,
 	type RealizeQuorumRound,
 	type ReleaseStatus,
+	type ReviewRound,
 	type ReplayCapsule,
 	type ReplayExportResponse,
 	type RequestIntentRevisionResponse,
+	type RoleOverrides,
+	type RolePreferences,
 	type SemanticDiff,
 	type SemanticDiffRequest,
 	type SessionSnapshot,
 	type SessionStreamEvent,
 	type SessionTurn,
+	type StepEvidence,
 	type StudioMemory,
 	type SyncClaimResponse,
 	type SyncCode,
@@ -74,6 +79,7 @@ import {
 	type VoiceTranscript,
 	type VisualKind,
 	type VisualResponse,
+	type WhatIfForecast,
 	type RepairRunOptions,
 	type VerifyRunOptions,
 	type WorkspaceRadarResponse
@@ -241,6 +247,47 @@ export class StudioApi {
 		return session ? projectDemoTurns(session) : [];
 	}
 
+	async getProcessLane(session: SessionSnapshot): Promise<ProcessLane> {
+		if (!this.demoMode) {
+			return await request<ProcessLane>(`/v1/sessions/${session.session_id}/process-lane`);
+		}
+		return demoProcessLane(session);
+	}
+
+	async getStepEvidence(session: SessionSnapshot, opId: string): Promise<StepEvidence | null> {
+		if (!this.demoMode) {
+			return await request<StepEvidence>(
+				`/v1/sessions/${session.session_id}/process-lane/evidence/${encodeURIComponent(opId)}`
+			);
+		}
+		const op = session.op_log.find((item) => item.id === opId) ?? null;
+		return {
+			schema_version: 'x07.studio.step_evidence@0.1.0',
+			session_id: session.session_id,
+			step_id: op?.op ?? 'demo',
+			op,
+			stream_events: [],
+			artifacts: op?.artifacts ?? []
+		};
+	}
+
+	async getWhatIf(session: SessionSnapshot, stepId: string): Promise<WhatIfForecast> {
+		if (!this.demoMode) {
+			return await request<WhatIfForecast>(`/v1/sessions/${session.session_id}/process-lane/whatif`, {
+				method: 'POST',
+				body: JSON.stringify({ step_id: stepId })
+			});
+		}
+		return {
+			schema_version: 'x07.studio.what_if_forecast@0.1.0',
+			step_id: stepId,
+			predicted_delta: null,
+			estimated_duration_ms: stepId === 'verify' ? 1800 : 10000,
+			confidence: 0.8,
+			assumptions: ['Demo forecast uses the canonical step order.']
+		};
+	}
+
 	async listBindings(): Promise<BindingDescriptor[]> {
 		if (!this.demoMode) {
 			try {
@@ -261,6 +308,24 @@ export class StudioApi {
 			}
 		}
 		return defaultAgentProfiles;
+	}
+
+	async setAgentRole(
+		agentId: string,
+		defaultRole: AgentProfile['default_role'],
+		eligibleRoles: AgentProfile['eligible_roles']
+	): Promise<AgentProfile | null> {
+		if (!this.demoMode) {
+			return await request<AgentProfile>(`/v1/agents/${encodeURIComponent(agentId)}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ default_role: defaultRole, eligible_roles: eligibleRoles })
+			});
+		}
+		const agent = defaultAgentProfiles.find((profile) => profile.id === agentId);
+		if (!agent) return null;
+		agent.default_role = defaultRole;
+		agent.eligible_roles = eligibleRoles;
+		return agent;
 	}
 
 	async listProviders(): Promise<ProviderProfile[]> {
@@ -864,6 +929,41 @@ export class StudioApi {
 		return response;
 	}
 
+	async reviewSession(session: SessionSnapshot, reviewerId?: string | null): Promise<ReviewRound | null> {
+		if (!this.demoMode) {
+			return await request<ReviewRound>(`/v1/sessions/${session.session_id}/review`, {
+				method: 'POST',
+				body: JSON.stringify({ reviewer_id: reviewerId ?? null })
+			});
+		}
+		return {
+			schema_version: 'x07.studio.review_round@0.1.0',
+			session_id: session.session_id,
+			round: 1,
+			reviewer: reviewerId ?? 'demo-reviewer',
+			verdict: 'accept',
+			concerns: [],
+			created_at: new Date().toISOString()
+		};
+	}
+
+	async getRoleOverrides(session: SessionSnapshot): Promise<RoleOverrides> {
+		if (!this.demoMode) {
+			return await request<RoleOverrides>(`/v1/sessions/${session.session_id}/role-overrides`);
+		}
+		return { schema_version: 'x07.studio.role_overrides@0.1.0' };
+	}
+
+	async setRoleOverrides(session: SessionSnapshot, overrides: RoleOverrides): Promise<RoleOverrides> {
+		if (!this.demoMode) {
+			return await request<RoleOverrides>(`/v1/sessions/${session.session_id}/role-overrides`, {
+				method: 'POST',
+				body: JSON.stringify(overrides)
+			});
+		}
+		return overrides;
+	}
+
 	async climbRung(session: SessionSnapshot, toRung: string): Promise<SessionSnapshot> {
 		if (!this.demoMode) {
 			const next = await request<SessionSnapshot>(`/v1/sessions/${session.session_id}/ladder/climb`, {
@@ -1036,6 +1136,26 @@ export class StudioApi {
 		return await request<StudioMemory>('/v1/memory', {
 			method: 'POST',
 			body: JSON.stringify(patch)
+		});
+	}
+
+	async loadRolePreferences(): Promise<RolePreferences> {
+		if (!this.demoMode) return await request<RolePreferences>('/v1/memory/role-preferences');
+		return {
+			schema_version: 'x07.studio.role_preferences@0.1.0',
+			default_architect: 'claude-code',
+			default_coder: 'openai-codex',
+			default_reviewer: 'claude-code',
+			allow_self_review: true,
+			default_max_review_rounds: 2
+		};
+	}
+
+	async saveRolePreferences(preferences: RolePreferences): Promise<RolePreferences | null> {
+		if (this.demoMode) return preferences;
+		return await request<RolePreferences>('/v1/memory/role-preferences', {
+			method: 'POST',
+			body: JSON.stringify(preferences)
 		});
 	}
 
@@ -1791,10 +1911,67 @@ function projectDemoTurns(session: SessionSnapshot): SessionTurn[] {
 			id: `${session.session_id}-verified`,
 			at: summaryOp.started_at,
 			summary: summaryOp.report_json as PlainEnglishSummary,
-			op_ids: [summaryOp.id]
+			op_ids: [summaryOp.id],
+			refined_from_scaffold: false
 		});
 	}
 	return turns;
+}
+
+function demoProcessLane(session: SessionSnapshot): ProcessLane {
+	const ids = ['intent', 'agent_md', 'clarify', 'spec', 'tests', 'impl', 'verify', 'review'];
+	const labels: Record<string, string> = {
+		intent: 'Capture intent',
+		agent_md: 'Sync AGENT.md',
+		clarify: 'Clarify assumptions',
+		spec: 'Draft and check spec',
+		tests: 'Generate tests',
+		impl: 'Write implementation',
+		verify: 'Verify behavior',
+		review: 'Review implementation'
+	};
+	const actors: Record<string, ProcessLane['steps'][number]['actor']> = {
+		intent: 'conductor',
+		agent_md: 'architect',
+		clarify: 'architect',
+		spec: 'architect',
+		tests: 'conductor',
+		impl: 'coder',
+		verify: 'conductor',
+		review: 'reviewer'
+	};
+	const done = new Set<string>();
+	for (const op of session.op_log) {
+		if (op.op.startsWith('intent.')) done.add('intent');
+		else if (op.op.includes('clarify')) done.add('clarify');
+		else if (op.op.startsWith('spec.')) done.add('spec');
+		else if (op.op.startsWith('tests.')) done.add('tests');
+		else if (op.op.startsWith('impl.') || op.op.startsWith('agent.realize') || op.op === 'synthesis.template') done.add('impl');
+		else if (op.op.startsWith('xtal.verify')) done.add('verify');
+		else if (op.op === 'review.round') done.add('review');
+	}
+	const currentIndex = ids.findIndex((id) => !done.has(id));
+	return {
+		schema_version: 'x07.studio.process_lane@0.1.0',
+		session_id: session.session_id,
+		current_index: currentIndex >= 0 ? currentIndex : null,
+		next_index: currentIndex >= 0 && currentIndex + 1 < ids.length ? currentIndex + 1 : null,
+		steps: ids.map((id, index) => ({
+			schema_version: 'x07.studio.canonical_step@0.1.0',
+			id,
+			label: labels[id],
+			actor: actors[id],
+			status: done.has(id) ? 'done' : index === currentIndex ? 'running' : 'pending',
+			started_at: null,
+			finished_at: null,
+			elapsed_ms: null,
+			op_id: session.op_log[index]?.id ?? null,
+			narration: `${actors[id]} handles ${id}.`,
+			next_actor: null,
+			budget: id === 'impl' ? { wall_clock_ms: 60000, prover_seconds: null, on_exhaust: 'pause' } : null,
+			round: null
+		}))
+	};
 }
 
 const atlasDemoWorkflowBindings = [

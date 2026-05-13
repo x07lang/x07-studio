@@ -18,6 +18,7 @@ intent -> spec -> realization -> verify -> repair -> trust/certify -> ingest -> 
 - **Real x07 CLI execution** using the documented machine-output contract (`--json`, `--report-out`, `--quiet-json`) through the canonical x07 / x07-wasm / x07lp CLIs.
 - **Binding-first lifecycle commands** for XTAL authoring, test generation, implementation sync, verify/repair/certify, incident ingest/improve, x07 core checks, x07-wasm web/device/workload/deploy lanes, and selected platform query/control reads.
 - **Unified Timeline browser surface** over typed session turns, plain-English verified summaries, runnable `x07 run` invocations, follow-up refinements, Try-It execution, shipping ladder state, trust posture, semantic diffs, proof evidence, incident quickfixes, cassette replay branches, persistent sync codes with state blobs, local memory, live agent stream and MCP call events, realize quorum comparison, autopilot, release submission, certificate review, replay export, and visual canvas editors.
+- **Process Lane + role collaboration** over the same session op log: canonical x07 steps, live actor attribution, current/next forecast, per-step evidence drilldown, Architect/Coder/Reviewer routing, role overrides, self-review fallback, step budgets, and manual Second opinion quorum.
 - **Canonical x07 agent loop surfaces** for `AGENT.md`, `x07 lint`/`x07 fix`, `x07 doctor`, `x07 pkg lock --check`, migration checks, `x07 test --pbt`, `x07 arch check`, `x07 pkg provides`, and the ten official agent-gate recipes.
 - **Genpack-aware agent handoffs** that embed local x07 service archetype schema and grammar for service-shaped intents before Codex or Claude drafts artifacts.
 - **Real MCP transport** for both:
@@ -48,7 +49,12 @@ x07-studio/
 │   ├── CYCLE_3_NOTES.md
 │   ├── CYCLE_4_NOTES.md
 │   ├── CYCLE_5_NOTES.md
+│   ├── CYCLE_6_NOTES.md
 │   ├── AGENT_CONTRACT.md
+│   ├── AGENT_ROLES.md
+│   ├── PROCESS_LANE.md
+│   ├── WHAT_IF.md
+│   ├── STEP_BUDGETS.md
 │   ├── LINT_LOOP.md
 │   ├── HEALTH_ROW.md
 │   ├── PBT_FLOW.md
@@ -78,6 +84,13 @@ x07-studio/
 │   ├── x07.studio.proof_evidence.schema.json
 │   ├── x07.studio.quickfix_record.schema.json
 │   ├── x07.studio.cassette_ribbon.schema.json
+│   ├── x07.studio.canonical_step.schema.json
+│   ├── x07.studio.process_lane.schema.json
+│   ├── x07.studio.review_round.schema.json
+│   ├── x07.studio.role_pipeline.schema.json
+│   ├── x07.studio.role_preferences.schema.json
+│   ├── x07.studio.step_budget.schema.json
+│   ├── x07.studio.what_if_forecast.schema.json
 │   ├── x07.studio.certificate_summary.schema.json
 │   ├── x07.studio.provider_probe_report.schema.json
 │   ├── x07.studio.provider_profile.schema.json
@@ -173,3 +186,4 @@ bundled `x07-wasm` bootstrap status.
 - Studio is a sibling ecosystem repo. X07 language semantics, XTAL artifact schemas, package management, and canonical docs stay in `x07`.
 - Cycle 4 UX surfaces are artifact-first. Trust cards, diffs, proof drawers, quickfixes, cassette ribbons, and certificates are projections over operation logs and canonical workspace files, not browser-only state.
 - Cycle 5 surfaces speak the documented x07 agent loop directly: health, lint, fix, PBT, arch-check, package discovery, and `AGENT.md` are daemon-backed projections over canonical x07 commands.
+- Cycle 6 makes the active process visible. The Process Lane is reproducible from the operation log, while role preferences live in `~/.x07-studio/memory.jsonl` and per-session overrides are recorded as session operations.

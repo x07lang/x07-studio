@@ -152,6 +152,12 @@ pub fn parse_sections(markdown: &str) -> Vec<ContractSection> {
             body: current_body.join("\n").trim().to_string(),
         });
     }
+    if sections.is_empty() && !markdown.trim().is_empty() {
+        sections.push(ContractSection {
+            title: "Body".to_string(),
+            body: markdown.trim().to_string(),
+        });
+    }
     sections
 }
 

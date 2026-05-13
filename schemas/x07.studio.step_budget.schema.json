@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.step_budget@0.1.0",
+  "title": "StepBudget",
+  "type": "object",
+  "required": ["on_exhaust"],
+  "properties": {
+    "wall_clock_ms": { "type": ["integer", "null"], "minimum": 1 },
+    "prover_seconds": { "type": ["integer", "null"], "minimum": 1 },
+    "on_exhaust": { "enum": ["escalate", "pause", "skip"] }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.canonical_step@0.1.0",
+  "title": "CanonicalStep",
+  "type": "object",
+  "required": ["schema_version", "id", "label", "actor", "status", "narration"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.canonical_step@0.1.0" },
+    "id": { "type": "string" },
+    "label": { "type": "string" },
+    "actor": { "enum": ["conductor", "architect", "coder", "reviewer"] },
+    "status": { "enum": ["pending", "running", "done", "stalled", "skipped"] },
+    "started_at": { "type": ["string", "null"] },
+    "finished_at": { "type": ["string", "null"] },
+    "elapsed_ms": { "type": ["integer", "null"], "minimum": 0 },
+    "op_id": { "type": ["string", "null"] },
+    "narration": { "type": "string" },
+    "next_actor": { "enum": ["conductor", "architect", "coder", "reviewer", null] },
+    "budget": { "type": ["object", "null"] },
+    "round": { "type": ["integer", "null"], "minimum": 1 }
+  },
+  "additionalProperties": false
+}

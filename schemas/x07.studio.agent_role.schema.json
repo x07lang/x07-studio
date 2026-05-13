@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.agent_role@0.1.0",
+  "title": "AgentRole",
+  "enum": ["conductor", "architect", "coder", "reviewer"]
+}

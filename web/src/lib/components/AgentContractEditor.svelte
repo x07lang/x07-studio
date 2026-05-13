@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { AgentContract } from '$lib/studio';
+	import type { AgentContract, AgentProfile, AgentRole } from '$lib/studio';
+	import AgentRoleSettings from './AgentRoleSettings.svelte';
 
 	export let open = false;
 	export let contract: AgentContract | null = null;
 	export let busy = false;
+	export let agents: AgentProfile[] = [];
 
 	let draft = '';
 	let lastHash: string | null = null;
@@ -15,7 +17,11 @@
 	}
 	$: unsaved = Boolean(contract && draft !== contract.markdown);
 
-	const dispatch = createEventDispatcher<{ close: void; save: { markdown: string; priorHash: string | null } }>();
+	const dispatch = createEventDispatcher<{
+		close: void;
+		save: { markdown: string; priorHash: string | null };
+		role: { agentId: string; defaultRole: AgentRole; eligibleRoles: AgentRole[] };
+	}>();
 </script>
 
 {#if open}
@@ -41,6 +47,7 @@
 				</nav>
 				<textarea bind:value={draft} spellcheck="false" aria-label="AGENT.md markdown"></textarea>
 				<div class="preview">
+					<AgentRoleSettings {agents} on:save={(event) => dispatch('role', event.detail)} />
 					{#each draft.split('\n') as line}
 						{#if line.startsWith('## ')}
 							<h3 id={`contract-${line.slice(3).toLowerCase().replaceAll(' ', '-')}`}>{line.slice(3)}</h3>

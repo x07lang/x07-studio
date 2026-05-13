@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::extract::{Multipart, Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{http::StatusCode, Json, Router};
 use camino::{Utf8Path, Utf8PathBuf};
 use futures::stream::{Stream, StreamExt};
@@ -24,7 +24,7 @@ use uuid::Uuid;
 use loom_core::WorkspaceKernel;
 use loom_types::api::{
     AgentApprovalRequest, AgentApprovalResponse, AgentContract, AgentHandoffResponse,
-    AgentRunRequest, AgentRunResponse, ApplyMigrateRequest, ArchCheckReport,
+    AgentRolePatchRequest, AgentRunRequest, AgentRunResponse, ApplyMigrateRequest, ArchCheckReport,
     ArtifactPreviewRequest, ArtifactPreviewResponse, AutopilotPolicy, AutopilotResponse,
     AutopilotStartRequest, BindingDescriptor, CallMcpToolRequest, CassetteBranchRequest,
     CassetteEntry, CassetteRibbon, CertificateSummary, ClimbRungRequest, ConnectMcpRequest,
@@ -33,16 +33,17 @@ use loom_types::api::{
     HealthSnapshot, IntentAnswerRequest, IntentAnswerResponse, IntentClarifyRequest,
     IntentClarifyResponse, IntentImageUploadResponse, IntentInputMode, LadderState, LintReport,
     LiveDiff, McpCallResponse, MigrateStatus, PbtRound, PickRealizeProposalRequest,
-    PickRealizeProposalResponse, PkgProvidesResult, ProbeProviderRequest, ProofEvidence,
-    ProviderProbeResponse, QuickfixRecord, QuorumRequest, QuorumRound, RealizeQuorumRequest,
-    RealizeQuorumRound, RealizeRequest, RealizeResponse, ReleaseRequest, ReleaseStatus,
-    ReplayExportResponse, ReplayImportRequest, RequestIntentRevisionRequest,
-    RequestIntentRevisionResponse, ResolveApprovalRequest, RunBindingRequest, RunBuildRequest,
-    RunXtalWorkflowRequest, RuntimeComponentState, RuntimeComponentStatus,
-    SaveAgentContractRequest, SaveAgentProfileRequest, SaveProviderProfileRequest, SemanticDiff,
-    SemanticDiffRequest, SessionTurn, StudioDefaults, StudioMemory, SyncClaimResponse, SyncCode,
+    PickRealizeProposalResponse, PkgProvidesResult, ProbeProviderRequest, ProcessLane,
+    ProofEvidence, ProviderProbeResponse, QuickfixRecord, QuorumRequest, QuorumRound,
+    RealizeQuorumRequest, RealizeQuorumRound, RealizeRequest, RealizeResponse, ReleaseRequest,
+    ReleaseStatus, ReplayExportResponse, ReplayImportRequest, RequestIntentRevisionRequest,
+    RequestIntentRevisionResponse, ResolveApprovalRequest, ReviewRequest, RoleOverrides,
+    RolePreferences, RunBindingRequest, RunBuildRequest, RunXtalWorkflowRequest,
+    RuntimeComponentState, RuntimeComponentStatus, SaveAgentContractRequest,
+    SaveAgentProfileRequest, SaveProviderProfileRequest, SemanticDiff, SemanticDiffRequest,
+    SessionTurn, StepEvidence, StudioDefaults, StudioMemory, SyncClaimResponse, SyncCode,
     SyncStateRequest, TrustPosture, TryItRequest, TryItResult, VisualEmitRequest,
-    VisualParseRequest, VisualResponse, WorkspaceRadarResponse,
+    VisualParseRequest, VisualResponse, WhatIfForecast, WhatIfRequest, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -63,6 +64,15 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/sessions", get(list_sessions).post(create_session))
         .route("/v1/sessions/{session_id}", get(get_session))
         .route("/v1/sessions/{session_id}/stream", get(stream_session))
+        .route("/v1/sessions/{session_id}/process-lane", get(process_lane))
+        .route(
+            "/v1/sessions/{session_id}/process-lane/whatif",
+            post(process_lane_whatif),
+        )
+        .route(
+            "/v1/sessions/{session_id}/process-lane/evidence/{op_id}",
+            get(process_lane_evidence),
+        )
         .route(
             "/v1/sessions/{session_id}/diffs/live",
             get(stream_live_diffs),
@@ -125,6 +135,11 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/v1/sessions/{session_id}/realize/pick",
             post(pick_realize_proposal),
+        )
+        .route("/v1/sessions/{session_id}/review", post(run_review))
+        .route(
+            "/v1/sessions/{session_id}/role-overrides",
+            get(get_role_overrides).post(save_role_overrides),
         )
         .route(
             "/v1/sessions/{session_id}/autopilot/start",
@@ -232,8 +247,13 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/v1/replay/import", post(import_replay))
         .route("/v1/memory", get(load_memory).post(save_memory))
+        .route(
+            "/v1/memory/role-preferences",
+            get(load_role_preferences).post(save_role_preferences),
+        )
         .route("/v1/providers/probe", post(probe_provider))
         .route("/v1/agents", get(list_agents).post(save_agent))
+        .route("/v1/agents/{agent_id}", patch(patch_agent_role))
         .route(
             "/v1/sessions/{session_id}/agents/{agent_id}/handoff",
             post(create_agent_handoff),
@@ -544,6 +564,40 @@ async fn list_turns(
     let kernel = state.kernel.lock().await;
     let turns = kernel.session_turns(session_id).map_err(conflict_error)?;
     Ok(Json(turns))
+}
+
+async fn process_lane(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<ProcessLane>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let lane = kernel
+        .process_lane_for_session(session_id)
+        .map_err(conflict_error)?;
+    Ok(Json(lane))
+}
+
+async fn process_lane_whatif(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<WhatIfRequest>,
+) -> Result<Json<WhatIfForecast>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let forecast = kernel
+        .what_if_forecast(session_id, &request.step_id)
+        .map_err(conflict_error)?;
+    Ok(Json(forecast))
+}
+
+async fn process_lane_evidence(
+    Path((session_id, op_id)): Path<(Uuid, Uuid)>,
+    State(state): State<ApiState>,
+) -> Result<Json<StepEvidence>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let evidence = kernel
+        .step_evidence(session_id, op_id)
+        .map_err(conflict_error)?;
+    Ok(Json(evidence))
 }
 
 async fn stream_session(
@@ -1094,6 +1148,42 @@ async fn realize_with_agent(
     }))
 }
 
+async fn run_review(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    request: Option<Json<ReviewRequest>>,
+) -> Result<Json<loom_types::api::ReviewRound>, (StatusCode, String)> {
+    let reviewer = request.and_then(|Json(body)| body.reviewer_id);
+    let mut kernel = state.kernel.lock().await;
+    let round = kernel
+        .review_session(session_id, reviewer.as_deref())
+        .map_err(internal_error)?;
+    Ok(Json(round))
+}
+
+async fn get_role_overrides(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<RoleOverrides>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let overrides = kernel
+        .load_role_overrides(session_id)
+        .map_err(conflict_error)?;
+    Ok(Json(overrides))
+}
+
+async fn save_role_overrides(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(overrides): Json<RoleOverrides>,
+) -> Result<Json<RoleOverrides>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let overrides = kernel
+        .save_role_overrides(session_id, overrides)
+        .map_err(internal_error)?;
+    Ok(Json(overrides))
+}
+
 async fn realize_quorum(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -1609,6 +1699,25 @@ async fn save_memory(
     Ok(Json(memory))
 }
 
+async fn load_role_preferences(
+    State(state): State<ApiState>,
+) -> Result<Json<RolePreferences>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let preferences = kernel.load_role_preferences().map_err(internal_error)?;
+    Ok(Json(preferences))
+}
+
+async fn save_role_preferences(
+    State(state): State<ApiState>,
+    Json(preferences): Json<RolePreferences>,
+) -> Result<Json<RolePreferences>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let preferences = kernel
+        .save_role_preferences(preferences)
+        .map_err(internal_error)?;
+    Ok(Json(preferences))
+}
+
 fn merge_json(target: &mut Value, patch: Value) {
     match (target, patch) {
         (Value::Object(target), Value::Object(patch)) => {
@@ -1661,6 +1770,18 @@ async fn save_agent(
         .save_agent_profile(&request.profile)
         .map_err(internal_error)?;
     Ok(Json(request.profile))
+}
+
+async fn patch_agent_role(
+    Path(agent_id): Path<String>,
+    State(state): State<ApiState>,
+    Json(request): Json<AgentRolePatchRequest>,
+) -> Result<Json<AgentProfile>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let profile = kernel
+        .patch_agent_role(&agent_id, request)
+        .map_err(conflict_error)?;
+    Ok(Json(profile))
 }
 
 async fn create_agent_handoff(

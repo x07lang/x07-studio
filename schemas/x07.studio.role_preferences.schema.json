@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.role_preferences@0.1.0",
+  "title": "RolePreferences",
+  "type": "object",
+  "required": ["schema_version", "allow_self_review", "default_max_review_rounds"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.role_preferences@0.1.0" },
+    "default_architect": { "type": ["string", "null"] },
+    "default_coder": { "type": ["string", "null"] },
+    "default_reviewer": { "type": ["string", "null"] },
+    "allow_self_review": { "type": "boolean" },
+    "default_max_review_rounds": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": false
+}

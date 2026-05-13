@@ -3,6 +3,7 @@ export interface VoiceCapture {
 	stop(): void;
 	onPartial(callback: (text: string, confidence: number) => void): void;
 	onFinal(callback: (text: string, confidence: number) => void): void;
+	onMatch(words: string[], handler: () => void): void;
 	supported: boolean;
 }
 
@@ -24,29 +25,32 @@ interface SpeechRecognitionEventLike {
 	}>;
 }
 
-export function createVoiceCapture(language = 'en-US'): VoiceCapture {
+export function createVoiceCapture(language = 'en-US', continuous = false): VoiceCapture {
 	const ctor = recognitionCtor();
 	const partials: Array<(text: string, confidence: number) => void> = [];
 	const finals: Array<(text: string, confidence: number) => void> = [];
+	const matchers: Array<{ words: string[]; handler: () => void }> = [];
 	if (!ctor) {
 		return {
 			supported: false,
 			start: () => undefined,
 			stop: () => undefined,
 			onPartial: (cb) => partials.push(cb),
-			onFinal: (cb) => finals.push(cb)
+			onFinal: (cb) => finals.push(cb),
+			onMatch: (words, handler) => matchers.push({ words, handler })
 		};
 	}
 	const recognition = new ctor();
 	recognition.lang = language;
 	recognition.interimResults = true;
-	recognition.continuous = false;
+	recognition.continuous = continuous;
 	recognition.onresult = (event) => {
 		for (let index = event.resultIndex; index < event.results.length; index += 1) {
 			const result = event.results[index];
 			const item = result[0];
 			const text = item.transcript.trim();
 			const confidence = Number.isFinite(item.confidence) ? item.confidence : 0.75;
+			notifyMatches(text, matchers);
 			if (result.isFinal) finals.forEach((cb) => cb(text, confidence));
 			else partials.forEach((cb) => cb(text, confidence));
 		}
@@ -56,8 +60,21 @@ export function createVoiceCapture(language = 'en-US'): VoiceCapture {
 		start: () => recognition.start(),
 		stop: () => recognition.stop(),
 		onPartial: (cb) => partials.push(cb),
-		onFinal: (cb) => finals.push(cb)
+		onFinal: (cb) => finals.push(cb),
+		onMatch: (words, handler) => matchers.push({ words, handler })
 	};
+}
+
+function notifyMatches(
+	text: string,
+	matchers: Array<{ words: string[]; handler: () => void }>
+) {
+	const normalized = ` ${text.toLowerCase().replace(/\s+/g, ' ')} `;
+	for (const matcher of matchers) {
+		if (matcher.words.some((word) => normalized.includes(` ${word.toLowerCase()} `))) {
+			matcher.handler();
+		}
+	}
 }
 
 function recognitionCtor(): SpeechRecognitionCtor | null {
