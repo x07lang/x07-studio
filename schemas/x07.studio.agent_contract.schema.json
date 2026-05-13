@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.agent_contract@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "session_id", "path", "exists", "markdown", "sections", "hash"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.agent_contract@0.1.0" },
+    "session_id": { "type": "string" },
+    "path": { "type": "string" },
+    "exists": { "type": "boolean" },
+    "markdown": { "type": "string" },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "body"],
+        "properties": {
+          "title": { "type": "string" },
+          "body": { "type": "string" }
+        }
+      }
+    },
+    "last_modified": { "type": ["string", "null"] },
+    "hash": { "type": "string" }
+  }
+}

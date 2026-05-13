@@ -3,15 +3,21 @@
 	import './+page.css';
 	import { StudioApi } from '$lib/api';
 	import type {
+		AgentContract,
 		AskAnswer,
+		ArchCheckReport,
 		AutopilotState,
 		CassetteEntry,
 		CassetteRibbon,
 		CertificateSummary,
 		HealthResponse,
+		HealthSnapshot,
 		IntentAnswer,
 		IntentInputMode,
 		LadderState,
+		LintReport,
+		PbtRound,
+		PkgProvidesResult,
 		ProofEvidence,
 		QuickfixRecord,
 		ReleaseStatus,
@@ -40,6 +46,9 @@
 	import CompareLens from '$lib/components/CompareLens.svelte';
 	import CertificateView from '$lib/components/CertificateView.svelte';
 	import Welcome from '$lib/components/Welcome.svelte';
+	import HealthRow from '$lib/components/HealthRow.svelte';
+	import AgentContractEditor from '$lib/components/AgentContractEditor.svelte';
+	import LintReportDrawer from '$lib/components/LintReport.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { insertOptimistic, reconcile, type OptimisticTurn } from '$lib/store/optimistic';
 	import {
@@ -48,10 +57,12 @@
 		openCommandPalette
 	} from '$lib/store/commandPalette';
 	import type { Recipe } from '$lib/studio';
+	import { recipes } from '$lib/recipes';
 
 	const api = new StudioApi();
 
 	let health: HealthResponse = demoHealth();
+	let healthSnapshot: HealthSnapshot | null = null;
 	let sessions: SessionSnapshot[] = [];
 	let selected: SessionSnapshot | null = null;
 	let turns: SessionTurn[] = [];
@@ -70,6 +81,13 @@
 	let trustPosture: TrustPosture | null = null;
 	let proofEvidence: ProofEvidence | null = null;
 	let quickfix: QuickfixRecord | null = null;
+	let lintReport: LintReport | null = null;
+	let lintOpen = false;
+	let pbtRound: PbtRound | null = null;
+	let archCheckReport: ArchCheckReport | null = null;
+	let pkgProvidesResult: PkgProvidesResult | null = null;
+	let agentContract: AgentContract | null = null;
+	let agentContractOpen = false;
 	let semanticDiff: SemanticDiff | null = null;
 	let certificate: CertificateSummary | null = null;
 	let certificateOpen = false;
@@ -83,12 +101,19 @@
 	let detailsOpen = false;
 	let unsubscribe: (() => void) | null = null;
 	let optimisticTurns: OptimisticTurn[] = [];
+	let recipeStartInFlight: string | null = null;
 
 	onMount(() => {
 		void (async () => {
 			const params = new URLSearchParams(window.location.search);
 			detailsOpen = params.get('mode') === 'expert' || params.get('details') === 'open';
 			await refresh();
+			const recipeId = params.get('recipe');
+			const recipe = recipes.find((item) => item.id === recipeId);
+			if (recipe && !selected) {
+				window.history.replaceState(null, '', window.location.pathname);
+				await startRecipe(recipe);
+			}
 			const claim = params.get('claim');
 			if (claim) await claimSync(claim);
 			if (selected) subscribe(selected.session_id);
@@ -109,6 +134,7 @@
 
 	async function refresh() {
 		health = await api.health();
+		healthSnapshot = await api.healthSnapshot().catch(() => null);
 		sessions = await api.listSessions();
 		selected = selected
 			? sessions.find((session) => session.session_id === selected?.session_id) ?? sessions[0] ?? null
@@ -210,7 +236,24 @@
 	}
 
 	async function startRecipe(recipe: Recipe) {
-		await compose({ text: recipe.intent_text, auto: true, voiceTranscript: null });
+		if (recipeStartInFlight) return;
+		recipeStartInFlight = recipe.id;
+		try {
+			await compose({ text: recipe.intent_text, auto: true, voiceTranscript: null });
+			if (selected) {
+				agentContract = await api.getAgentContract(selected.session_id).catch(() => null);
+				agentContractOpen = Boolean(agentContract);
+			}
+		} finally {
+			recipeStartInFlight = null;
+		}
+	}
+
+	function startRecipeFromWelcome(event: MouseEvent) {
+		const target = event.target instanceof Element ? event.target : null;
+		const button = target?.closest<HTMLElement>('[data-recipe-id]');
+		const recipe = recipes.find((item) => item.id === button?.dataset.recipeId);
+		if (recipe) void startRecipe(recipe);
 	}
 
 	async function runBindingShortcut(text: string) {
@@ -260,6 +303,8 @@
 			replaceSelected(current);
 			status = 'Built and verified';
 			await refreshDerived();
+			lintReport = await api.getLintReport(current).catch(() => null);
+			pbtRound = await api.runPbt(current).catch(() => null);
 		} finally {
 			busy = false;
 		}
@@ -304,6 +349,9 @@
 		if (!selected) return;
 		busy = true;
 		try {
+			if (['shareable', 'team', 'production'].includes(rung)) {
+				archCheckReport = await api.archCheck(selected).catch(() => null);
+			}
 			const next = await api.climbRung(selected, rung);
 			replaceSelected(next);
 			await refreshDerived();
@@ -339,6 +387,63 @@
 		if (!selected) return;
 		quickfix = await api.incidentQuickfix(selected, incidentId);
 		status = `Quickfix ${quickfix.diagnostic_code}`;
+	}
+
+	async function openLintReport() {
+		if (!selected) return;
+		lintReport = await api.getLintReport(selected);
+		lintOpen = true;
+		status = `Lint loaded (${lintReport.diagnostics.length} diagnostics)`;
+	}
+
+	async function applyLintQuickfix(diagnosticId: string) {
+		if (!selected) return;
+		quickfix = await api.applyLintQuickfix(selected, diagnosticId);
+		lintReport = await api.getLintReport(selected).catch(() => lintReport);
+		status = `Quickfix ${quickfix.diagnostic_code}`;
+	}
+
+	async function runPbt() {
+		if (!selected) return;
+		pbtRound = await api.runPbt(selected);
+		status = `PBT ran ${pbtRound.properties_run} properties`;
+	}
+
+	async function pbtRegression(reproId: string) {
+		if (!selected) return;
+		quickfix = await api.pbtRegressionFrom(selected, reproId);
+		status = `Locked ${reproId} as regression`;
+		await refreshDerived();
+	}
+
+	async function runArchCheck() {
+		if (!selected) return;
+		archCheckReport = await api.archCheck(selected);
+		status = archCheckReport.passed ? 'Architecture check passed' : 'Architecture check has violations';
+		await refreshDerived();
+	}
+
+	async function searchPackage(moduleId: string) {
+		pkgProvidesResult = await api.pkgProvides(moduleId);
+		status = `Package search ${pkgProvidesResult.module_id}`;
+	}
+
+	async function applyHealthMigrate() {
+		await api.applyMigrate(healthSnapshot?.migrate.to_schema ?? '0.5');
+		healthSnapshot = await api.healthSnapshot().catch(() => null);
+		status = 'Migration check refreshed';
+	}
+
+	async function openAgentContract() {
+		if (!selected) return;
+		agentContract = await api.getAgentContract(selected.session_id);
+		agentContractOpen = true;
+	}
+
+	async function saveAgentContract(detail: { markdown: string; priorHash: string | null }) {
+		if (!selected) return;
+		agentContract = await api.saveAgentContract(selected.session_id, detail.markdown, detail.priorHash);
+		status = 'AGENT.md saved';
 	}
 
 	async function openProof(behaviorId: string) {
@@ -551,6 +656,7 @@
 		on:command={openCommandPalette}
 		on:refresh={refresh}
 		on:sync={mintSync}
+		on:agentContract={openAgentContract}
 	/>
 
 	<section class="session-radar" aria-label="Session radar">
@@ -579,8 +685,10 @@
 	</section>
 	<MemoryChip ops={selected?.op_log ?? []} on:edit={() => (memoryOpen = true)} />
 
-	{#if !selected?.intent}
-		<Welcome on:start={(event) => startRecipe(event.detail)} />
+	{#if sessions.length === 0 && selected === null}
+		<div role="presentation" on:click={startRecipeFromWelcome}>
+			<Welcome recipeStart={startRecipe} />
+		</div>
 	{/if}
 
 	<div class="main-grid">
@@ -593,48 +701,65 @@
 			{realizeBusy}
 			{invokeBusy}
 			{quickfix}
+			{trustPosture}
+			{pbtRound}
 			on:answer={(event) => answer(event.detail)}
 			on:followup={(event) => followup(event.detail)}
 			on:repair={(event) => repairIncident(event.detail)}
 			on:quickfix={(event) => loadQuickfix(event.detail)}
 			on:proof={(event) => openProof(event.detail)}
+			on:lint={openLintReport}
+			on:pbt={runPbt}
+			on:pbtRegression={(event) => pbtRegression(event.detail)}
 			on:compare={(event) => compareTurn(event.detail)}
 			on:invoke={(event) => invoke(event.detail)}
 			on:realize={realize}
 			on:quorum={runQuorum}
 			on:pickProposal={(event) => pickProposal(event.detail)}
 		/>
-		<NowPanel
-			session={selected}
-			{ladder}
-			{tryResult}
-			{askAnswer}
-			{cassettes}
-			{cassetteRibbon}
-			{trustPosture}
-			{visualParseResult}
-			{visualEmitResult}
-			{autopilot}
-			{releaseStatus}
-			{busy}
-			on:build={build}
-			on:invoke={(event) => invoke(event.detail)}
-			on:climb={(event) => climb(event.detail)}
-			on:scan={scanIncidents}
-			on:ask={(event) => ask(event.detail)}
-			on:sync={mintSync}
-			on:claimSync={(event) => claimSync(event.detail)}
-			on:quorum={runQuorum}
-			on:autopilot={startAutopilot}
-			on:pauseAutopilot={pauseAutopilot}
-			on:release={(event) => submitRelease(event.detail)}
-			on:certificate={openCertificate}
-			on:exportReplay={exportReplay}
-			on:cassetteLoad={loadCassettes}
-			on:cassetteBranch={(event) => branchCassette(event.detail)}
-			on:visualParse={(event) => visualParse(event.detail)}
-			on:visualEmit={(event) => visualEmit(event.detail)}
-		/>
+		<div class="right-rail">
+			<HealthRow
+				snapshot={healthSnapshot}
+				{busy}
+				on:refresh={refresh}
+				on:migrate={applyHealthMigrate}
+			/>
+			<NowPanel
+				session={selected}
+				{health}
+				{ladder}
+				{tryResult}
+				{askAnswer}
+				{cassettes}
+				{cassetteRibbon}
+				{trustPosture}
+				{visualParseResult}
+				{visualEmitResult}
+				{autopilot}
+				{releaseStatus}
+				{pkgProvidesResult}
+				{archCheckReport}
+				{busy}
+				on:build={build}
+				on:invoke={(event) => invoke(event.detail)}
+				on:climb={(event) => climb(event.detail)}
+				on:scan={scanIncidents}
+				on:ask={(event) => ask(event.detail)}
+				on:pkgSearch={(event) => searchPackage(event.detail)}
+				on:sync={mintSync}
+				on:claimSync={(event) => claimSync(event.detail)}
+				on:quorum={runQuorum}
+				on:autopilot={startAutopilot}
+				on:pauseAutopilot={pauseAutopilot}
+				on:release={(event) => submitRelease(event.detail)}
+				on:certificate={openCertificate}
+				on:exportReplay={exportReplay}
+				on:cassetteLoad={loadCassettes}
+				on:cassetteBranch={(event) => branchCassette(event.detail)}
+				on:visualParse={(event) => visualParse(event.detail)}
+				on:visualEmit={(event) => visualEmit(event.detail)}
+			/>
+		</div>
 	</div>
 
 	<Composer
@@ -644,6 +769,24 @@
 		on:image={(event) => uploadImage(event.detail)}
 	/>
 	<MemoryDrawer {memory} open={memoryOpen} on:close={() => (memoryOpen = false)} on:save={(event) => saveMemory(event.detail)} />
+	<AgentContractEditor
+		contract={agentContract}
+		open={agentContractOpen}
+		{busy}
+		on:close={() => (agentContractOpen = false)}
+		on:save={(event) => saveAgentContract(event.detail)}
+	/>
+	{#if lintOpen}
+		<div class="modal-sheet">
+			<LintReportDrawer
+				report={lintReport}
+				{quickfix}
+				{busy}
+				on:quickfix={(event) => applyLintQuickfix(event.detail)}
+				on:close={() => (lintOpen = false)}
+			/>
+		</div>
+	{/if}
 	<ProofExplorer evidence={proofEvidence} open={Boolean(proofEvidence)} on:close={() => (proofEvidence = null)} />
 	<CompareLens diff={semanticDiff} open={compareOpen}>
 		<button slot="actions" type="button" class="command-button" on:click={() => (compareOpen = false)}>Close</button>

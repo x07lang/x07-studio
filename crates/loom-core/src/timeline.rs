@@ -17,7 +17,7 @@ pub fn project_session_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
     }
     turns.extend(op_turns(session));
     turns.sort_by(|left, right| turn_at(left).cmp(turn_at(right)));
-    turns
+    collapse_duplicate_posture_turns(turns)
 }
 
 fn intent_turn(session: &SessionSnapshot, intent: &IntentPacket) -> SessionTurn {
@@ -168,6 +168,21 @@ fn op_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
                     op_ids: vec![op.id],
                 });
             }
+        } else if op.op == "lint.report" {
+            if let Some(report) = lint_report_from_op(op) {
+                let mut count_by_severity = BTreeMap::new();
+                let mut diagnostic_ids = Vec::new();
+                for diagnostic in report.diagnostics {
+                    *count_by_severity.entry(diagnostic.severity).or_insert(0) += 1;
+                    diagnostic_ids.push(diagnostic.id);
+                }
+                turns.push(SessionTurn::Lint {
+                    id: stable_turn_id(session.session_id, &format!("lint:{}", op.id)),
+                    at: op.started_at.clone(),
+                    count_by_severity,
+                    diagnostic_ids,
+                });
+            }
         } else if op.op.starts_with("agent.realize.") {
             let agent_id = op
                 .op
@@ -305,6 +320,7 @@ fn turn_at(turn: &SessionTurn) -> &str {
         | SessionTurn::AgentRealize { at, .. }
         | SessionTurn::AgentStream { at, .. }
         | SessionTurn::QuorumRealize { at, .. }
+        | SessionTurn::Lint { at, .. }
         | SessionTurn::TrustPostureChanged { at, .. }
         | SessionTurn::McpCall { at, .. } => at,
     }
@@ -344,6 +360,33 @@ fn posture_from_op(op: &OpRecord) -> Option<TrustPosture> {
         .and_then(|value| value.get("posture"))
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
+}
+
+fn lint_report_from_op(op: &OpRecord) -> Option<loom_types::api::LintReport> {
+    let value = op.report_json.as_ref()?;
+    value
+        .get("lint_report")
+        .cloned()
+        .or_else(|| Some(value.clone()))
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
+fn collapse_duplicate_posture_turns(turns: Vec<SessionTurn>) -> Vec<SessionTurn> {
+    let mut collapsed: Vec<SessionTurn> = Vec::with_capacity(turns.len());
+    for turn in turns {
+        let should_replace = matches!(
+            (collapsed.last(), &turn),
+            (
+                Some(SessionTurn::TrustPostureChanged { posture: old, .. }),
+                SessionTurn::TrustPostureChanged { posture: new, .. }
+            ) if old.posture_color == new.posture_color && old.worlds == new.worlds
+        );
+        if should_replace {
+            collapsed.pop();
+        }
+        collapsed.push(turn);
+    }
+    collapsed
 }
 
 fn stable_turn_id(session_id: Uuid, key: &str) -> Uuid {

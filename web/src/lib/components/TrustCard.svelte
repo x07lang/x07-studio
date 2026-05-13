@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { TrustPosture } from '$lib/studio';
+	import { colorMorph } from '$lib/motion';
 	import PostureChip from './PostureChip.svelte';
 
 	export let posture: TrustPosture | null = null;
@@ -9,7 +10,7 @@
 		: 'Trust posture pending';
 </script>
 
-<section class="now-card trust-card {posture?.posture_color ?? 'amber'}" data-testid="trust-card">
+<section class="now-card trust-card {posture?.posture_color ?? 'amber'}" data-testid="trust-card" use:colorMorph>
 	<header>
 		<h2>Trust Card</h2>
 		<PostureChip color={posture?.posture_color ?? 'amber'} label={posture?.trust_profile ?? 'pending'} />
@@ -51,7 +52,8 @@
 
 <style>
 	.trust-card {
-		border-left-width: 4px;
+		border-left-width: 8px;
+		padding: 16px;
 	}
 	.trust-card.green {
 		border-left-color: var(--accent-pure, var(--mint));
@@ -63,12 +65,12 @@
 		border-left-color: var(--accent-danger, var(--rose));
 	}
 	.trust-card strong {
-		font-size: 15px;
+		font-size: 18px;
 		line-height: 1.35;
 	}
 	.posture-grid {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 8px;
 	}
 	.posture-grid div,

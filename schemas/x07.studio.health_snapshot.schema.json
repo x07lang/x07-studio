@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.health_snapshot@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "captured_at", "doctor", "lockfile", "migrate", "overall_color"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.health_snapshot@0.1.0" },
+    "captured_at": { "type": "string" },
+    "doctor": {
+      "type": "object",
+      "required": ["ok", "blockers", "warnings"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "blockers": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "lockfile": {
+      "type": "object",
+      "required": ["ok", "stale", "yanked", "advisories"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "stale": { "type": "boolean" },
+        "yanked": { "type": "array", "items": { "type": "string" } },
+        "advisories": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "migrate": {
+      "type": "object",
+      "required": ["needs_migration", "from_schema", "to_schema", "project_schema_legacy"],
+      "properties": {
+        "needs_migration": { "type": "boolean" },
+        "from_schema": { "type": ["string", "null"] },
+        "to_schema": { "type": ["string", "null"] },
+        "project_schema_legacy": { "type": "boolean" }
+      }
+    },
+    "overall_color": { "enum": ["green", "amber", "red"] }
+  }
+}

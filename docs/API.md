@@ -5,6 +5,8 @@ Base path: `/v1`
 ## Health
 
 - `GET /health`
+- `GET /health/snapshot`
+- `POST /health/migrate`
 
 Response:
 
@@ -13,6 +15,21 @@ Response:
   "ok": true,
   "workspace_root": "/path/to/workspace"
 }
+```
+
+`GET /health/snapshot` runs `x07 doctor`, `x07 pkg lock --project x07.json --check`,
+`x07 migrate --check --to 0.5`, and
+`x07 project migrate --check --project x07.json`, then projects the result into
+`x07.studio.health_snapshot@0.1.0`. `POST /health/migrate` accepts
+`{"target":"0.5"}` and creates a `.x07/studio/migrate-backup-*` copy before
+write-mode migrations.
+
+## Pointing Vite at a non-default daemon
+
+The Svelte dev server proxies `/v1/**` through `LOOM_DAEMON_ORIGIN`. Example:
+
+```bash
+LOOM_DAEMON_ORIGIN=http://127.0.0.1:7729 npm run dev
 ```
 
 ## Workspace Radar
@@ -77,6 +94,13 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions/{session_id}/intent/answer`
 - `POST /sessions/{session_id}/intent/quorum`
 - `POST /sessions/{session_id}/intent/image`
+- `GET /sessions/{session_id}/agent-contract`
+- `POST /sessions/{session_id}/agent-contract`
+- `GET /sessions/{session_id}/lint`
+- `POST /sessions/{session_id}/lint/{diag_id}/quickfix`
+- `POST /sessions/{session_id}/pbt/run`
+- `POST /sessions/{session_id}/pbt/regression-from/{repro_id}`
+- `GET /sessions/{session_id}/arch-check`
 - `POST /sessions/{session_id}/bindings/run`
 - `POST /sessions/{session_id}/invoke`
 - `GET /sessions/{session_id}/ladder`
@@ -103,6 +127,7 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions/{session_id}/docs/preview`
 - `POST /sessions/{session_id}/xtal/run`
 - `POST /sessions/{session_id}/build`
+- `GET /pkg/provides?module=<module-id>`
 
 Create session request:
 
@@ -170,6 +195,23 @@ For `input_mode: "spec"`, the kernel keeps the provided spec as the auditable
 source and derives the target module/entry from `module_id` and the first
 operation name or id. Browser clients should use this endpoint instead of
 inventing their own connected-mode intent packet.
+
+Agent contract endpoints expose `x07.studio.agent_contract@0.1.0`. `POST`
+accepts:
+
+```json
+{
+  "markdown": "# AGENT.md\n\n## Purpose\n...",
+  "prior_hash": "sha256-from-last-read"
+}
+```
+
+Lint endpoints expose `x07.studio.lint_report@0.1.0` and quickfix records
+generated through `x07 fix`. PBT endpoints expose
+`x07.studio.pbt_round@0.1.0` and turn counterexamples into regression tests via
+`x07 fix --from-pbt`. `arch-check` wraps `x07 arch check` for Shareable and
+stricter ladder gates. `/pkg/provides` wraps `x07 pkg provides <module>` for
+module discovery in Ask-the-project and ModuleSearch.
 
 Request revision:
 

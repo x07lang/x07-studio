@@ -4,9 +4,11 @@
 	import type {
 		IntentWitnessKind,
 		OpRecord,
+		PbtRound,
 		QuickfixRecord,
 		SessionSnapshot,
 		SessionTurn,
+		TrustPosture,
 		TryItRequest,
 		TryItResult
 	} from '$lib/studio';
@@ -17,6 +19,8 @@
 	import QuorumRealize from './QuorumRealize.svelte';
 	import QuickfixCard from './QuickfixCard.svelte';
 	import McpCallCard from './McpCallCard.svelte';
+	import PostureBadge from './PostureBadge.svelte';
+	import CompareMenu from './CompareMenu.svelte';
 
 	export let turns: SessionTurn[] = [];
 	export let session: SessionSnapshot | null = null;
@@ -26,6 +30,8 @@
 	export let realizeBusy = false;
 	export let invokeBusy = false;
 	export let quickfix: QuickfixRecord | null = null;
+	export let trustPosture: TrustPosture | null = null;
+	export let pbtRound: PbtRound | null = null;
 
 	const dispatch = createEventDispatcher<{
 		answer: { questionId: string; text: string; witnessKind: IntentWitnessKind };
@@ -36,6 +42,9 @@
 		quorum: void;
 		pickProposal: number;
 		proof: string;
+		lint: void;
+		pbt: void;
+		pbtRegression: string;
 		quickfix: string;
 		compare: string;
 	}>();
@@ -57,9 +66,19 @@
 	$: streamEvents = turns
 		.filter((turn): turn is Extract<SessionTurn, { kind: 'agent_stream' }> => turn.kind === 'agent_stream')
 		.map((turn) => turn.event);
+	$: latestPosture =
+		trustPosture ??
+		[...turns].reverse().find((turn): turn is Extract<SessionTurn, { kind: 'trust_posture_changed' }> => turn.kind === 'trust_posture_changed')?.posture ??
+		null;
+	$: visibleTurns = turns.filter(
+		(turn): turn is Exclude<SessionTurn, { kind: 'trust_posture_changed' }> =>
+			turn.kind !== 'trust_posture_changed'
+	);
 </script>
 
 <section class="timeline" aria-label="Session timeline" data-testid="timeline">
+	<PostureBadge posture={latestPosture} />
+
 	{#if turns.length === 0}
 		<div class="empty-turn" data-testid="timeline-empty">
 			<h2>Start a session</h2>
@@ -67,7 +86,7 @@
 		</div>
 	{/if}
 
-	{#each turns as turn (turn.id)}
+	{#each visibleTurns as turn (turn.id)}
 		<article class="turn {turn.kind}" data-testid={`turn-${turn.kind}`}>
 			<div class="turn-marker"></div>
 			<div class="turn-body">
@@ -151,11 +170,14 @@
 						{realizeBusy}
 						{invokeBusy}
 						implementationInPlace={implementationDone()}
+						{pbtRound}
 						on:followup={(event) => dispatch('followup', event.detail)}
 						on:invoke={(event) => dispatch('invoke', event.detail)}
 						on:realize={() => dispatch('realize')}
 						on:quorum={() => dispatch('quorum')}
 						on:proof={(event) => dispatch('proof', event.detail)}
+						on:pbt={() => dispatch('pbt')}
+						on:pbtRegression={(event) => dispatch('pbtRegression', event.detail)}
 					/>
 				{:else if turn.kind === 'incident'}
 					<header>
@@ -232,18 +254,29 @@
 						<time>{turn.at}</time>
 					</header>
 					<QuorumRealize round={turn.round} {busy} on:pick={(event) => dispatch('pickProposal', event.detail)} />
-				{:else if turn.kind === 'trust_posture_changed'}
+				{:else if turn.kind === 'lint'}
 					<header>
-						<span>Trust posture</span>
+						<span>Lint</span>
 						<time>{turn.at}</time>
 					</header>
-					<p>{turn.posture.worlds.join(', ')} · {Math.round(turn.posture.proof_coverage.proved_pct)}% proof coverage</p>
+					<h2>x07 lint</h2>
+					<p>{Object.entries(turn.count_by_severity).map(([key, value]) => `${value} ${key}`).join(', ') || 'no diagnostics'}</p>
+					{#if turn.diagnostic_ids.length}
+						<ul class="evidence-list">
+							{#each turn.diagnostic_ids.slice(0, 5) as diagnosticId}
+								<li><code>{diagnosticId}</code></li>
+							{/each}
+						</ul>
+					{/if}
+					<button class="command-button" type="button" on:click={() => dispatch('lint')}>Open lint report</button>
 				{/if}
 
 				<div class="turn-actions">
-					<button type="button" class="link-button" on:click={() => dispatch('compare', turn.id)}>
-						Compare to…
-					</button>
+					<CompareMenu
+						turnId={turn.id}
+						compareTurn={(turnId) => dispatch('compare', turnId)}
+						on:compare={(event) => dispatch('compare', event.detail)}
+					/>
 				</div>
 
 				{#if detailsOpen}

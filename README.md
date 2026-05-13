@@ -18,6 +18,7 @@ intent -> spec -> realization -> verify -> repair -> trust/certify -> ingest -> 
 - **Real x07 CLI execution** using the documented machine-output contract (`--json`, `--report-out`, `--quiet-json`) through the canonical x07 / x07-wasm / x07lp CLIs.
 - **Binding-first lifecycle commands** for XTAL authoring, test generation, implementation sync, verify/repair/certify, incident ingest/improve, x07 core checks, x07-wasm web/device/workload/deploy lanes, and selected platform query/control reads.
 - **Unified Timeline browser surface** over typed session turns, plain-English verified summaries, runnable `x07 run` invocations, follow-up refinements, Try-It execution, shipping ladder state, trust posture, semantic diffs, proof evidence, incident quickfixes, cassette replay branches, persistent sync codes with state blobs, local memory, live agent stream and MCP call events, realize quorum comparison, autopilot, release submission, certificate review, replay export, and visual canvas editors.
+- **Canonical x07 agent loop surfaces** for `AGENT.md`, `x07 lint`/`x07 fix`, `x07 doctor`, `x07 pkg lock --check`, migration checks, `x07 test --pbt`, `x07 arch check`, `x07 pkg provides`, and the ten official agent-gate recipes.
 - **Genpack-aware agent handoffs** that embed local x07 service archetype schema and grammar for service-shaped intents before Codex or Claude drafts artifacts.
 - **Real MCP transport** for both:
   - HTTP JSON-RPC over `/mcp` with `initialize`, `notifications/initialized`, session headers, and `tools/list` / `tools/call`
@@ -46,6 +47,12 @@ x07-studio/
 │   ├── CYCLE_2_NOTES.md
 │   ├── CYCLE_3_NOTES.md
 │   ├── CYCLE_4_NOTES.md
+│   ├── CYCLE_5_NOTES.md
+│   ├── AGENT_CONTRACT.md
+│   ├── LINT_LOOP.md
+│   ├── HEALTH_ROW.md
+│   ├── PBT_FLOW.md
+│   ├── CANONICAL_RECIPES.md
 │   ├── TRUST_CARD.md
 │   ├── SEMANTIC_DIFF.md
 │   ├── PROOF_EXPLORER.md
@@ -58,6 +65,12 @@ x07-studio/
 ├── schemas/
 │   ├── index.json
 │   ├── x07.studio.intent_packet.schema.json
+│   ├── x07.studio.agent_contract.schema.json
+│   ├── x07.studio.lint_report.schema.json
+│   ├── x07.studio.health_snapshot.schema.json
+│   ├── x07.studio.pbt_round.schema.json
+│   ├── x07.studio.arch_check_report.schema.json
+│   ├── x07.studio.pkg_provides_result.schema.json
 │   ├── x07.studio.lineage_graph.schema.json
 │   ├── x07.studio.op_record.schema.json
 │   ├── x07.studio.trust_posture.schema.json
@@ -159,3 +172,4 @@ bundled `x07-wasm` bootstrap status.
 - Provider probing is intentionally low-cost. Deep probes are optional and bounded.
 - Studio is a sibling ecosystem repo. X07 language semantics, XTAL artifact schemas, package management, and canonical docs stay in `x07`.
 - Cycle 4 UX surfaces are artifact-first. Trust cards, diffs, proof drawers, quickfixes, cassette ribbons, and certificates are projections over operation logs and canonical workspace files, not browser-only state.
+- Cycle 5 surfaces speak the documented x07 agent loop directly: health, lint, fix, PBT, arch-check, package discovery, and `AGENT.md` are daemon-backed projections over canonical x07 commands.

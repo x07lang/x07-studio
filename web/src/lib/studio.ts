@@ -236,6 +236,13 @@ export type SessionTurn =
 			round: RealizeQuorumRound;
 			op_ids: string[];
 	  }
+	| {
+			kind: 'lint';
+			id: string;
+			at: string;
+			count_by_severity: Record<string, number>;
+			diagnostic_ids: string[];
+	  }
 	| { kind: 'trust_posture_changed'; id: string; at: string; posture: TrustPosture }
 	| { kind: 'mcp_call'; id: string; at: string; call: AgentStreamEvent; op_id: string };
 
@@ -408,6 +415,114 @@ export interface QuickfixRecord {
 	summary: string;
 	patch_ast: unknown;
 	citations: ProofEvidenceCitation[];
+	before_snippet?: string | null;
+	after_snippet?: string | null;
+}
+
+export interface ContractSection {
+	title: string;
+	body: string;
+}
+
+export interface AgentContract {
+	schema_version: 'x07.studio.agent_contract@0.1.0';
+	session_id: string;
+	path: string;
+	exists: boolean;
+	markdown: string;
+	sections: ContractSection[];
+	last_modified?: string | null;
+	hash: string;
+}
+
+export interface LintDiagnostic {
+	id: string;
+	severity: string;
+	file: string;
+	line: number;
+	column: number;
+	summary: string;
+	fixable: boolean;
+}
+
+export interface LintReport {
+	schema_version: 'x07.studio.lint_report@0.1.0';
+	session_id: string;
+	generated_at: string;
+	diagnostics: LintDiagnostic[];
+	raw: unknown;
+}
+
+export interface DoctorStatus {
+	ok: boolean;
+	blockers: string[];
+	warnings: string[];
+}
+
+export interface LockfileStatus {
+	ok: boolean;
+	stale: boolean;
+	yanked: string[];
+	advisories: string[];
+}
+
+export interface MigrateStatus {
+	needs_migration: boolean;
+	from_schema?: string | null;
+	to_schema?: string | null;
+	project_schema_legacy: boolean;
+}
+
+export interface HealthSnapshot {
+	schema_version: 'x07.studio.health_snapshot@0.1.0';
+	captured_at: string;
+	doctor: DoctorStatus;
+	lockfile: LockfileStatus;
+	migrate: MigrateStatus;
+	overall_color: 'green' | 'amber' | 'red' | string;
+}
+
+export interface PbtCounterexample {
+	repro_id: string;
+	property: string;
+	shrunk_input: unknown;
+	repro_path: string;
+}
+
+export interface PbtRound {
+	schema_version: 'x07.studio.pbt_round@0.1.0';
+	session_id: string;
+	started_at: string;
+	finished_at?: string | null;
+	properties_run: number;
+	counterexamples: PbtCounterexample[];
+	raw: unknown;
+}
+
+export interface ArchViolation {
+	rule: string;
+	file: string;
+	summary: string;
+}
+
+export interface ArchCheckReport {
+	schema_version: 'x07.studio.arch_check_report@0.1.0';
+	passed: boolean;
+	violations: ArchViolation[];
+	raw: unknown;
+}
+
+export interface PkgCandidate {
+	package: string;
+	version: string;
+	source: string;
+	install_command: string;
+}
+
+export interface PkgProvidesResult {
+	schema_version: 'x07.studio.pkg_provides_result@0.1.0';
+	module_id: string;
+	candidates: PkgCandidate[];
 }
 
 export interface BoundaryEntry {
@@ -443,6 +558,9 @@ export interface Recipe {
 	one_liner: string;
 	intent_text: string;
 	task_type: TaskType;
+	module_id?: string | null;
+	canonical_example_path?: string | null;
+	scenario_paths?: string[];
 	preview_posture: TrustPosture;
 }
 

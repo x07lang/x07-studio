@@ -18,10 +18,21 @@ The main timeline renders typed turns from the daemon, while the side panels
 cover Try-It invocation, trust posture, shipping ladder gates, incidents,
 quickfix records, cassette history, cassette boundary ribbons, project Q&A,
 sync codes, local memory, release status, certificate review, replay export,
-and visual canvas editors. Realize runs stream normalized Claude Code / Codex
+visual canvas editors, AGENT.md editing, lint quickfixes, health checks, PBT
+counterexamples, arch-check gates, and package discovery. Realize runs stream normalized Claude Code / Codex
 tool and MCP events into the timeline; Compare both agents runs a side-by-side
 quorum diff before applying a chosen proposal. Cycle 4 also adds a command
-palette (`Cmd/Ctrl+K`) and recipe cards for empty workspaces.
+palette (`Cmd/Ctrl+K`); Cycle 5 replaces invented recipe cards with the ten
+canonical x07 agent-gate recipes.
+
+## Pointing Vite at a non-default daemon
+
+The Svelte dev server proxies `/v1/**` to `LOOM_DAEMON_ORIGIN`. Use it when the
+daemon is not on `127.0.0.1:7719`:
+
+```bash
+LOOM_DAEMON_ORIGIN=http://127.0.0.1:7729 npm run dev
+```
 
 ## Local use
 

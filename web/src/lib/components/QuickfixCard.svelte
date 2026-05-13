@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import type { QuickfixRecord } from '$lib/studio';
+	import QuickfixThreePane from './QuickfixThreePane.svelte';
 
 	export let incidentId: string;
 	export let record: QuickfixRecord | null = null;
@@ -16,9 +17,8 @@
 	</header>
 	{#if record}
 		<p><strong>{record.severity}</strong> · {record.summary}</p>
-		<pre>{JSON.stringify(record.patch_ast, null, 2)}</pre>
+		<QuickfixThreePane {record} {busy} on:apply={() => dispatch('apply', incidentId)} />
 		<div class="button-row">
-			<button type="button" class="command-button primary" disabled={busy} on:click={() => dispatch('apply', incidentId)}>Apply</button>
 			{#each record.citations as citation}
 				<code>{citation.file}</code>
 			{/each}
@@ -51,12 +51,5 @@
 	.quickfix-card span,
 	.quickfix-card code {
 		color: var(--amber);
-	}
-	.quickfix-card pre {
-		max-height: 220px;
-		overflow: auto;
-		margin: 0;
-		font-size: 12px;
-		white-space: pre-wrap;
 	}
 </style>

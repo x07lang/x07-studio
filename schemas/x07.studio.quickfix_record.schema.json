@@ -9,6 +9,8 @@
     "severity": { "type": "string" },
     "summary": { "type": "string" },
     "patch_ast": {},
-    "citations": { "type": "array", "items": { "type": "object" } }
+    "citations": { "type": "array", "items": { "type": "object" } },
+    "before_snippet": { "type": ["string", "null"] },
+    "after_snippet": { "type": ["string", "null"] }
   }
 }

@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { LadderState, ReleaseStatus } from '$lib/studio';
+	import type { ArchCheckReport, LadderState, ReleaseStatus } from '$lib/studio';
 	import RungGates from './RungGates.svelte';
 
 	export let ladder: LadderState | null = null;
 	export let releaseStatus: ReleaseStatus | null = null;
+	export let archCheckReport: ArchCheckReport | null = null;
 	export let busy = false;
 
 	const dispatch = createEventDispatcher<{
@@ -30,7 +31,7 @@
 					{#if !rung.satisfied}
 						<small>{rung.missing[0]}</small>
 					{/if}
-					<RungGates gates={rung.gates ?? []} />
+					<RungGates gates={rung.gates ?? []} archCheckReport={archCheckReport} />
 				</div>
 			{/each}
 		</div>

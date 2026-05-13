@@ -96,6 +96,22 @@ def target_module_body(module_id: str, entry: str, stub: bool, agent: str = "age
     }
 
 
+def lint_diagnostics(cwd: Path) -> list[object]:
+    if (cwd / ".x07/studio/lint-fixed").exists():
+        return []
+    return [
+        {
+            "code": "X07-LINT-0042",
+            "severity": "warning",
+            "file": "src/main.x07.json",
+            "line": 1,
+            "column": 1,
+            "message": "connected-e2e lint quickfix fixture",
+            "quickfix": {"kind": "json_patch"},
+        }
+    ]
+
+
 def run_x07(args: list[str]) -> None:
     cwd = Path.cwd()
     if args[:3] == ["service", "genpack", "schema"]:
@@ -168,6 +184,119 @@ def run_x07(args: list[str]) -> None:
         write_json(
             cwd / "target/xtal/verify/summary.json",
             {"schema_version": "x07.xtal.verify.summary@0.1.0", "ok": True},
+        )
+        return
+
+    if args[:1] == ["doctor"]:
+        return
+
+    if args[:4] == ["pkg", "lock", "--project", "x07.json"]:
+        return
+
+    if args[:3] == ["migrate", "--check", "--to"] or args[:3] == ["migrate", "--write", "--to"]:
+        return
+
+    if args[:3] == ["project", "migrate", "--check"] or args[:3] == ["project", "migrate", "--write"]:
+        return
+
+    if args[:1] == ["lint"]:
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07diag.report@0.1.0",
+                    "diagnostics": lint_diagnostics(cwd),
+                }
+            )
+        )
+        return
+
+    if args[:1] == ["fix"]:
+        module_id, entry, target = intent_target(cwd)
+        if "--input" in args:
+            body = target_module_body(module_id, entry, stub=False)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            write_json(target, body)
+            write_json(cwd / ".x07/studio/lint-fixed", {"fixed": True})
+        if "--from-pbt" in args:
+            (cwd / "tests").mkdir(parents=True, exist_ok=True)
+            write_json(
+                cwd / "tests/pbt_regression.json",
+                {"schema_version": "x07.tests@0.1.0", "tests": [{"id": "pbt.regression"}]},
+            )
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07.patchset@0.1.0",
+                    "patches": [
+                        {
+                            "path": "src/main.x07.json",
+                            "patch": [
+                                {"op": "add", "path": "/metadata", "value": {"fixed": True}}
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+        return
+
+    if args[:2] == ["test", "--pbt"]:
+        repro = cwd / ".x07/cache/pbt/repros/connected-repro.json"
+        write_json(
+            repro,
+            {
+                "schema_version": "x07.pbt.repro@0.1.0",
+                "repro_id": "connected-repro",
+                "counterexample": {"case_bytes_b64": "AA=="},
+            },
+        )
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07.pbt.report@0.1.0",
+                    "properties_run": 47,
+                    "counterexamples": [
+                        {
+                            "repro_id": "connected-repro",
+                            "property": "connected property",
+                            "shrunk_input": [0],
+                            "repro_path": ".x07/cache/pbt/repros/connected-repro.json",
+                        }
+                    ],
+                }
+            )
+        )
+        return
+
+    if args[:2] == ["arch", "check"]:
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07.arch.check@0.1.0",
+                    "passed": True,
+                    "violations": [],
+                }
+            )
+        )
+        return
+
+    if args[:2] == ["pkg", "provides"]:
+        module_id = args[2] if len(args) > 2 else "text.normalize_v1"
+        print(
+            json.dumps(
+                {
+                    "schema_version": "x07.pkg.provides@0.1.0",
+                    "module_id": module_id,
+                    "candidates": [
+                        {
+                            "package": "ext-text",
+                            "version": "0.5.0",
+                            "source": "registry",
+                            "install_command": "x07 pkg add ext-text@0.5.0",
+                        }
+                    ],
+                }
+            )
         )
         return
 
@@ -300,6 +429,41 @@ def main() -> int:
     elif tool in {"codex", "claude"}:
         run_agent(tool, args)
     result = {"status": "ok", "time": int(time.time())}
+    if tool == "x07" and args[:1] == ["doctor"]:
+        result["ok"] = True
+        result["warnings"] = []
+        result["blockers"] = []
+    if tool == "x07" and args[:1] == ["lint"]:
+        result["diagnostics"] = lint_diagnostics(Path.cwd())
+    if tool == "x07" and args[:1] == ["fix"]:
+        result["patches"] = [
+            {
+                "path": "src/main.x07.json",
+                "patch": [{"op": "add", "path": "/metadata", "value": {"fixed": True}}],
+            }
+        ]
+    if tool == "x07" and args[:2] == ["test", "--pbt"]:
+        result["properties_run"] = 47
+        result["counterexamples"] = [
+            {
+                "repro_id": "connected-repro",
+                "property": "connected property",
+                "shrunk_input": [0],
+                "repro_path": ".x07/cache/pbt/repros/connected-repro.json",
+            }
+        ]
+    if tool == "x07" and args[:2] == ["arch", "check"]:
+        result["passed"] = True
+        result["violations"] = []
+    if tool == "x07" and args[:2] == ["pkg", "provides"]:
+        result["candidates"] = [
+            {
+                "package": "ext-text",
+                "version": "0.5.0",
+                "source": "registry",
+                "install_command": "x07 pkg add ext-text@0.5.0",
+            }
+        ]
     if tool == "x07lp" and args[:1] == ["accept"]:
         result["deployment_id"] = "connected-e2e-atlas"
         result["exec_id"] = "connected-e2e-atlas"

@@ -148,6 +148,12 @@ pub enum SessionTurn {
         round: RealizeQuorumRound,
         op_ids: Vec<Uuid>,
     },
+    Lint {
+        id: Uuid,
+        at: String,
+        count_by_severity: BTreeMap<String, u32>,
+        diagnostic_ids: Vec<String>,
+    },
     TrustPostureChanged {
         id: Uuid,
         at: String,
@@ -605,6 +611,142 @@ pub struct QuickfixRecord {
     pub summary: String,
     pub patch_ast: Value,
     pub citations: Vec<ProofEvidenceCitation>,
+    #[serde(default)]
+    pub before_snippet: Option<String>,
+    #[serde(default)]
+    pub after_snippet: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentContract {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub path: String,
+    pub exists: bool,
+    pub markdown: String,
+    pub sections: Vec<ContractSection>,
+    pub last_modified: Option<String>,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContractSection {
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveAgentContractRequest {
+    pub markdown: String,
+    #[serde(default)]
+    pub prior_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LintReport {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub generated_at: String,
+    pub diagnostics: Vec<LintDiagnostic>,
+    pub raw: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LintDiagnostic {
+    pub id: String,
+    pub severity: String,
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
+    pub summary: String,
+    pub fixable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthSnapshot {
+    pub schema_version: String,
+    pub captured_at: String,
+    pub doctor: DoctorStatus,
+    pub lockfile: LockfileStatus,
+    pub migrate: MigrateStatus,
+    pub overall_color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DoctorStatus {
+    pub ok: bool,
+    pub blockers: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LockfileStatus {
+    pub ok: bool,
+    pub stale: bool,
+    pub yanked: Vec<String>,
+    pub advisories: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MigrateStatus {
+    pub needs_migration: bool,
+    pub from_schema: Option<String>,
+    pub to_schema: Option<String>,
+    pub project_schema_legacy: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyMigrateRequest {
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PbtRound {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub properties_run: u32,
+    pub counterexamples: Vec<PbtCounterexample>,
+    pub raw: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PbtCounterexample {
+    pub repro_id: String,
+    pub property: String,
+    pub shrunk_input: Value,
+    pub repro_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchCheckReport {
+    pub schema_version: String,
+    pub passed: bool,
+    pub violations: Vec<ArchViolation>,
+    pub raw: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArchViolation {
+    pub rule: String,
+    pub file: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PkgProvidesResult {
+    pub schema_version: String,
+    pub module_id: String,
+    pub candidates: Vec<PkgCandidate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PkgCandidate {
+    pub package: String,
+    pub version: String,
+    pub source: String,
+    pub install_command: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -644,6 +786,12 @@ pub struct Recipe {
     pub one_liner: String,
     pub intent_text: String,
     pub task_type: TaskType,
+    #[serde(default)]
+    pub module_id: Option<String>,
+    #[serde(default)]
+    pub canonical_example_path: Option<String>,
+    #[serde(default)]
+    pub scenario_paths: Vec<String>,
     pub preview_posture: TrustPosture,
 }
 

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { PlainEnglishSummary, TryItRequest, TryItResult } from '$lib/studio';
+	import type { PbtRound, PlainEnglishSummary, TryItRequest, TryItResult } from '$lib/studio';
 	import { implementationActionLabel, implementationReadyForSummary } from './resultPreviewState';
+	import PbtPanel from './PbtPanel.svelte';
 
 	export let summary: PlainEnglishSummary;
 	export let tryResult: TryItResult | null = null;
@@ -9,6 +10,7 @@
 	export let realizeBusy = false;
 	export let invokeBusy = false;
 	export let implementationInPlace = false;
+	export let pbtRound: PbtRound | null = null;
 
 	let copied = false;
 	let showDetails = false;
@@ -23,6 +25,8 @@
 		realize: void;
 		quorum: void;
 		proof: string;
+		pbt: void;
+		pbtRegression: string;
 	}>();
 
 	async function copyInvocation() {
@@ -142,6 +146,13 @@
 			</ul>
 		</div>
 	{/if}
+
+	<PbtPanel
+		round={pbtRound}
+		{busy}
+		on:run={() => dispatch('pbt')}
+		on:regression={(event) => dispatch('pbtRegression', event.detail)}
+	/>
 
 	{#if summary.run_invocation}
 		<section class="run-it" data-testid="run-invocation">

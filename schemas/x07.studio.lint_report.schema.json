@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.lint_report@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "session_id", "generated_at", "diagnostics", "raw"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.lint_report@0.1.0" },
+    "session_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "file", "line", "column", "summary", "fixable"],
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 0 },
+          "column": { "type": "integer", "minimum": 0 },
+          "summary": { "type": "string" },
+          "fixable": { "type": "boolean" }
+        }
+      }
+    },
+    "raw": {}
+  }
+}

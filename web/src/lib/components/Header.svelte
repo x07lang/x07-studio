@@ -16,6 +16,7 @@
 		toggleDetails: void;
 		sync: void;
 		command: void;
+		agentContract: void;
 	}>();
 </script>
 
@@ -27,6 +28,9 @@
 	<div class="header-actions">
 		<button class="command-button" type="button" on:click={() => dispatch('toggleDetails')} aria-pressed={detailsOpen}>
 			Show details
+		</button>
+		<button class="command-button" type="button" on:click={() => dispatch('agentContract')}>
+			AGENT.md
 		</button>
 		<button
 			class="key-hint"

@@ -51,6 +51,28 @@ pub struct ExecutedBinding {
     pub report_path: Option<Utf8PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct X07JsonOptions {
+    pub report_file: bool,
+    pub timeout_seconds: Option<u64>,
+}
+
+impl X07JsonOptions {
+    pub fn report_file(timeout_seconds: Option<u64>) -> Self {
+        Self {
+            report_file: true,
+            timeout_seconds,
+        }
+    }
+
+    pub fn stdout(timeout_seconds: Option<u64>) -> Self {
+        Self {
+            report_file: false,
+            timeout_seconds,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum InputSpec {
     Text(String),
@@ -193,6 +215,67 @@ impl CliAdapter {
 
         Ok(ExecutedBinding {
             rendered,
+            execution,
+            report_json,
+            report_path,
+        })
+    }
+
+    pub async fn execute_x07_json(
+        &self,
+        id: &str,
+        category: &str,
+        mut args: Vec<String>,
+        artifacts: Vec<String>,
+        notes: &str,
+        options: X07JsonOptions,
+    ) -> anyhow::Result<ExecutedBinding> {
+        let mut report_path = None;
+        if options.report_file {
+            std::fs::create_dir_all(&self.reports_dir)?;
+            let path =
+                self.reports_dir
+                    .join(format!("{}-{}.json", now_string(), id.replace('/', "_")));
+            args.extend([
+                "--json".to_string(),
+                "--report-out".to_string(),
+                path.to_string(),
+                "--quiet-json".to_string(),
+            ]);
+            report_path = Some(path);
+        } else if !args.iter().any(|arg| arg == "--json") {
+            args.push("--json".to_string());
+        }
+
+        let program = resolve_program(ProgramKey::X07, self.root.as_path());
+        let execution = self
+            .runner
+            .run_with_timeout(
+                &self.root,
+                &program,
+                &args,
+                &BTreeMap::new(),
+                options.timeout_seconds,
+            )
+            .await
+            .with_context(|| format!("command `{id}` failed to spawn"))?;
+        let report_json = report_path
+            .as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .or_else(|| execution.stdout_json.clone())
+            .or_else(|| execution.stderr_json.clone())
+            .or_else(|| parse_first_json_value(&execution.stdout))
+            .or_else(|| parse_first_json_value(&execution.stderr));
+        Ok(ExecutedBinding {
+            rendered: RenderedCommand {
+                id: id.to_string(),
+                category: category.to_string(),
+                program: "x07".to_string(),
+                args,
+                artifacts,
+                notes: notes.to_string(),
+            },
             execution,
             report_json,
             report_path,

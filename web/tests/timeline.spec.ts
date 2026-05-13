@@ -22,9 +22,9 @@ test('timeline shell builds a prompt and exposes run/try surfaces in demo mode',
 	await expect(page.getByTestId('run-invocation')).toContainText('x07 run');
 	await expect(page.getByTestId('followups')).toBeVisible();
 
-	await page.getByTestId('try-it-panel').getByRole('textbox').first().fill('[3,1,2]');
-	await page.getByTestId('try-it-panel').getByRole('button', { name: 'Run it' }).click();
-	await expect(page.getByTestId('try-it-panel')).toContainText('demo output');
+	await page.getByTestId('try-inline-input').fill('[3,1,2]');
+	await page.getByTestId('try-inline-run').click();
+	await expect(page.getByTestId('turn-verified')).toContainText('demo output');
 });
 
 test('expert query opens evidence drawers without restoring mode toggle', async ({ page }) => {

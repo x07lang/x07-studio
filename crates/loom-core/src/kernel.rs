@@ -56,6 +56,70 @@ pub struct WorkspaceKernel {
 }
 
 #[derive(Debug, Clone)]
+pub struct WorkspaceCommandContext {
+    root: Utf8PathBuf,
+    cli: CliAdapter,
+}
+
+impl WorkspaceCommandContext {
+    pub async fn health_snapshot(&self) -> anyhow::Result<loom_types::api::HealthSnapshot> {
+        crate::health::snapshot(self.root.as_path(), &self.cli).await
+    }
+
+    pub async fn apply_migrate(
+        &self,
+        target: &str,
+    ) -> anyhow::Result<loom_types::api::MigrateStatus> {
+        crate::health::apply_migrate(self.root.as_path(), &self.cli, target).await
+    }
+
+    pub async fn pkg_provides(
+        &self,
+        module_id: &str,
+    ) -> anyhow::Result<loom_types::api::PkgProvidesResult> {
+        let (result, _) = crate::pkg_provides::run(module_id, &self.cli).await?;
+        Ok(result)
+    }
+
+    pub async fn ask_project(
+        &self,
+        session: &SessionSnapshot,
+        req: &AskRequest,
+    ) -> anyhow::Result<AskAnswer> {
+        let mut answer = answer_project_question(self.root.as_path(), session, req);
+        if let Some(module_id) = module_lookup_from_question(&req.question) {
+            let result = self.pkg_provides(&module_id).await?;
+            if !result.candidates.is_empty() {
+                let candidate_lines = result
+                    .candidates
+                    .iter()
+                    .map(|candidate| {
+                        format!(
+                            "- `{}` {} from {}: `{}`",
+                            candidate.package,
+                            candidate.version,
+                            candidate.source,
+                            candidate.install_command
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                answer.text = format!(
+                    "{}\n\nPackage resolver for `{}`:\n{}",
+                    answer.text, result.module_id, candidate_lines
+                );
+                answer.citations.push(AnswerCitation {
+                    kind: "pkg".to_string(),
+                    path: format!("x07 pkg provides {}", result.module_id),
+                    locator: "/candidates".to_string(),
+                });
+            }
+        }
+        Ok(answer)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PreparedAgentRun {
     pub handoff: AgentHandoff,
     pub op: OpRecord,
@@ -88,15 +152,7 @@ impl WorkspaceKernel {
         store.init()?;
         gc_stale_quorum_staging(root.as_path(), Duration::from_secs(7 * 24 * 60 * 60))?;
         let sessions = store.load_sessions()?;
-        let mut model = WorkspaceModel::from_sessions(root.to_string(), sessions);
-        if model.sessions.is_empty() {
-            let session_id = model.create_session("New session", TaskType::NewBehavior);
-            let snapshot = model
-                .get_session(session_id)
-                .cloned()
-                .context("new session should exist")?;
-            store.save_session(&snapshot)?;
-        }
+        let model = WorkspaceModel::from_sessions(root.to_string(), sessions);
 
         let cli = CliAdapter::new(root.as_path(), store.reports_dir());
         let sync_codes = store
@@ -153,6 +209,17 @@ impl WorkspaceKernel {
 
     pub fn workspace_root(&self) -> &Utf8Path {
         self.root.as_path()
+    }
+
+    pub fn cli_adapter(&self) -> CliAdapter {
+        self.cli.clone()
+    }
+
+    pub fn command_context(&self) -> WorkspaceCommandContext {
+        WorkspaceCommandContext {
+            root: self.root.clone(),
+            cli: self.cli.clone(),
+        }
     }
 
     pub fn workspace_radar(&self) -> WorkspaceRadarResponse {
@@ -375,6 +442,151 @@ impl WorkspaceKernel {
             session,
             behavior_id,
         ))
+    }
+
+    pub fn agent_contract(
+        &self,
+        session_id: Uuid,
+    ) -> anyhow::Result<loom_types::api::AgentContract> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        crate::agent_contract::read(self.root.as_path(), session_id, session.intent.as_ref())
+    }
+
+    pub fn save_agent_contract(
+        &mut self,
+        session_id: Uuid,
+        markdown: &str,
+        prior_hash: Option<&str>,
+    ) -> anyhow::Result<loom_types::api::AgentContract> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        crate::agent_contract::write(self.root.as_path(), markdown, prior_hash)?;
+        let contract = self.agent_contract(session_id)?;
+        let now = now_string();
+        let op = OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id,
+            op: "agent_contract.save".to_string(),
+            backend: "studio".to_string(),
+            command: vec!["write".to_string(), "AGENT.md".to_string()],
+            started_at: now.clone(),
+            finished_at: Some(now),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: vec!["AGENT.md".to_string()],
+            notes: Some("Saved AGENT.md architecture contract.".to_string()),
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: serde_json::to_value(&contract).ok(),
+            report_path: None,
+        };
+        self.append_op(session_id, op)?;
+        Ok(contract)
+    }
+
+    pub async fn lint_report(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<loom_types::api::LintReport> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let (report, executed) = crate::lint::run(session_id, &self.cli).await?;
+        let mut op = op_record_from_binding(session_id, "lint.report", executed);
+        op.report_json = Some(serde_json::json!({ "lint_report": report.clone() }));
+        self.append_op(session_id, op)?;
+        Ok(report)
+    }
+
+    pub async fn apply_lint_quickfix(
+        &mut self,
+        session_id: Uuid,
+        diag_id: &str,
+    ) -> anyhow::Result<QuickfixRecord> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let (record, executed) =
+            crate::lint::apply_quickfix(self.root.as_path(), session_id, diag_id, &self.cli)
+                .await?;
+        let mut op = op_record_from_binding(session_id, "lint.quickfix", executed);
+        op.report_json = Some(serde_json::json!({ "quickfix": record.clone() }));
+        self.append_op(session_id, op)?;
+        Ok(record)
+    }
+
+    pub async fn health_snapshot(&self) -> anyhow::Result<loom_types::api::HealthSnapshot> {
+        crate::health::snapshot(self.root.as_path(), &self.cli).await
+    }
+
+    pub async fn apply_migrate(
+        &self,
+        target: &str,
+    ) -> anyhow::Result<loom_types::api::MigrateStatus> {
+        crate::health::apply_migrate(self.root.as_path(), &self.cli, target).await
+    }
+
+    pub async fn pbt_round(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<loom_types::api::PbtRound> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let (round, executed) = crate::pbt::run(self.root.as_path(), session_id, &self.cli).await?;
+        let mut op = op_record_from_binding(session_id, "pbt.run", executed);
+        op.report_json = Some(serde_json::json!({ "pbt_round": round.clone() }));
+        self.append_op(session_id, op)?;
+        Ok(round)
+    }
+
+    pub async fn pbt_regression_from(
+        &mut self,
+        session_id: Uuid,
+        repro_id: &str,
+    ) -> anyhow::Result<QuickfixRecord> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let (record, executed) =
+            crate::pbt::regression_from(self.root.as_path(), session_id, repro_id, &self.cli)
+                .await?;
+        let mut op = op_record_from_binding(session_id, "pbt.regression_from", executed);
+        op.report_json = Some(serde_json::json!({ "quickfix": record.clone() }));
+        self.append_op(session_id, op)?;
+        let _ = self
+            .run_binding(session_id, "xtal.verify", &BTreeMap::new())
+            .await;
+        Ok(record)
+    }
+
+    pub async fn arch_check_report(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<loom_types::api::ArchCheckReport> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let (report, executed) = crate::arch_check::run(&self.cli).await?;
+        let mut op = op_record_from_binding(session_id, "arch.check", executed);
+        op.report_json = Some(serde_json::json!({ "arch_check": report.clone() }));
+        self.append_op(session_id, op)?;
+        Ok(report)
+    }
+
+    pub async fn pkg_provides(
+        &self,
+        module_id: &str,
+    ) -> anyhow::Result<loom_types::api::PkgProvidesResult> {
+        let (result, _) = crate::pkg_provides::run(module_id, &self.cli).await?;
+        Ok(result)
     }
 
     pub fn quickfix_record(
@@ -766,12 +978,18 @@ impl WorkspaceKernel {
         Ok(branch_session_id)
     }
 
-    pub fn ask_project(&self, session_id: Uuid, req: AskRequest) -> anyhow::Result<AskAnswer> {
+    pub async fn ask_project(
+        &self,
+        session_id: Uuid,
+        req: AskRequest,
+    ) -> anyhow::Result<AskAnswer> {
         let session = self
             .model
             .get_session(session_id)
+            .cloned()
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
-        Ok(answer_project_question(self.root.as_path(), session, &req))
+        let context = self.command_context();
+        context.ask_project(&session, &req).await
     }
 
     pub fn mint_sync_code(&mut self, session_id: Uuid) -> anyhow::Result<SyncCode> {
@@ -1649,6 +1867,10 @@ impl WorkspaceKernel {
                     None => return Ok(current),
                 };
             current = self.append_op(session_id, summary_op)?;
+            let _ = self.lint_report(session_id).await;
+            if let Some(snapshot) = self.model.get_session(session_id).cloned() {
+                current = snapshot;
+            }
         }
         if let Ok(captured) = self.capture_trust_posture(session_id) {
             current = captured;
@@ -3288,6 +3510,42 @@ fn answer_project_question(
     }
 
     AskAnswer { text, citations }
+}
+
+fn module_lookup_from_question(question: &str) -> Option<String> {
+    backtick_spans(question)
+        .into_iter()
+        .chain(question.split_whitespace().map(clean_module_token))
+        .find(|candidate| looks_like_module_id(candidate))
+}
+
+fn backtick_spans(question: &str) -> Vec<String> {
+    let mut spans = Vec::new();
+    let mut rest = question;
+    while let Some(start) = rest.find('`') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            break;
+        };
+        spans.push(clean_module_token(&after_start[..end]));
+        rest = &after_start[end + 1..];
+    }
+    spans
+}
+
+fn clean_module_token(token: &str) -> String {
+    token
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && !matches!(ch, '.' | '_' | '-'))
+        .to_string()
+}
+
+fn looks_like_module_id(candidate: &str) -> bool {
+    !candidate.is_empty()
+        && (candidate.contains('.') || candidate.contains('_') || candidate.contains('-'))
+        && candidate
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+        && !candidate.contains("..")
 }
 
 fn proof_citations_for_session(session: &SessionSnapshot) -> Vec<ProofCitation> {
@@ -6198,6 +6456,13 @@ fn render_agent_handoff_prompt(
     out.push_str(
         "\nThese roots are the supervised write contract; report any required write outside them as an approval event before acting.\n",
     );
+    if let Some(markdown) = project_agent_contract_markdown(session) {
+        out.push_str("\n## Project AGENT.md\n\n");
+        out.push_str(&markdown);
+        if !markdown.ends_with('\n') {
+            out.push('\n');
+        }
+    }
     if let Some(contract) = &session.contract {
         out.push_str("\n## Session Contract\n\n");
         out.push_str("Canonical docs:\n");
@@ -6264,6 +6529,14 @@ fn render_agent_handoff_prompt(
         "`kind` must be one of `artifact`, `diagnostic`, `write`, or `approval`. Use `approval` whenever policy, spec, architecture, world, budget, trust, or release scope would widen.\n",
     );
     out
+}
+
+fn project_agent_contract_markdown(session: &SessionSnapshot) -> Option<String> {
+    let root = Utf8Path::new(&session.root);
+    crate::agent_contract::read(root, session.session_id, session.intent.as_ref())
+        .ok()
+        .map(|contract| contract.markdown)
+        .filter(|markdown| !markdown.trim().is_empty())
 }
 
 /// Builds a clarify-specific handoff that asks the agent to either generate
@@ -6493,6 +6766,13 @@ Read the draft intent below and the prior clarification history. Then **either**
 - Do NOT propose code, paths, schemas, or commands. This is intent only.\n\
 - If you need nothing more, emit a single `clarify_done` line and stop.\n",
     );
+    if let Some(markdown) = project_agent_contract_markdown(session) {
+        out.push_str("\n## Project AGENT.md\n\n");
+        out.push_str(&markdown);
+        if !markdown.ends_with('\n') {
+            out.push('\n');
+        }
+    }
     if let Some(intent) = &session.intent {
         out.push_str("\n## Draft Intent\n\n");
         for target in &intent.targets {

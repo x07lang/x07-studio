@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.arch_check_report@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "passed", "violations", "raw"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.arch_check_report@0.1.0" },
+    "passed": { "type": "boolean" },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule", "file", "summary"],
+        "properties": {
+          "rule": { "type": "string" },
+          "file": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "raw": {}
+  }
+}

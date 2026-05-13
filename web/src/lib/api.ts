@@ -16,10 +16,12 @@ import {
 	repairRunVars,
 	verifyRunVars,
 	type AgentApprovalResponse,
+	type AgentContract,
 	type AgentHandoffResponse,
 	type AgentProfile,
 	type AgentRunMode,
 	type AgentRunResponse,
+	type ArchCheckReport,
 	type AutopilotPolicy,
 	type AutopilotResponse,
 	type ApprovalDecision,
@@ -33,13 +35,18 @@ import {
 	type DocPreviewResponse,
 	type FormalizeIntentResponse,
 	type HealthResponse,
+	type HealthSnapshot,
 	type IntentAnswer,
 	type IntentAnswerResponse,
 	type IntentClarifyResponse,
 	type IntentInputMode,
 	type IntentPacket,
 	type LadderState,
+	type LintReport,
+	type MigrateStatus,
 	type LiveDiff,
+	type PbtRound,
+	type PkgProvidesResult,
 	type PlainEnglishSummary,
 	type ProofEvidence,
 	type ProviderProbeResponse,
@@ -79,7 +86,7 @@ type BindingRunOptions =
 
 export class StudioApi {
 	private demoMode = false;
-	private demoSessions: SessionSnapshot[] = [demoSession()];
+	private demoSessions: SessionSnapshot[] = [];
 
 	get isDemoMode() {
 		return this.demoMode;
@@ -108,6 +115,27 @@ export class StudioApi {
 		}
 	}
 
+	async healthSnapshot(): Promise<HealthSnapshot> {
+		if (!this.demoMode) {
+			try {
+				return await request<HealthSnapshot>('/v1/health/snapshot');
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		return demoHealthSnapshot();
+	}
+
+	async applyMigrate(target = '0.5'): Promise<MigrateStatus> {
+		if (!this.demoMode) {
+			return await request<MigrateStatus>('/v1/health/migrate', {
+				method: 'POST',
+				body: JSON.stringify({ target })
+			});
+		}
+		return { needs_migration: false, from_schema: 'x07.project@0.5.0', to_schema: target, project_schema_legacy: false };
+	}
+
 	async listSessions(): Promise<SessionSnapshot[]> {
 		if (!this.demoMode) {
 			try {
@@ -129,8 +157,76 @@ export class StudioApi {
 		}
 		return (
 			this.demoSessions.find((session) => session.session_id === sessionId) ??
-			this.demoSessions[0]
+			this.demoSessions[0] ??
+			demoSession()
 		);
+	}
+
+	async getAgentContract(sessionId: string): Promise<AgentContract> {
+		if (!this.demoMode) {
+			return await request<AgentContract>(`/v1/sessions/${sessionId}/agent-contract`);
+		}
+		const session = this.demoSessions.find((item) => item.session_id === sessionId) ?? this.demoSessions[0] ?? demoSession();
+		return demoAgentContract(session);
+	}
+
+	async saveAgentContract(sessionId: string, markdown: string, priorHash?: string | null): Promise<AgentContract> {
+		if (!this.demoMode) {
+			return await request<AgentContract>(`/v1/sessions/${sessionId}/agent-contract`, {
+				method: 'POST',
+				body: JSON.stringify({ markdown, prior_hash: priorHash ?? null })
+			});
+		}
+		const session = this.demoSessions.find((item) => item.session_id === sessionId) ?? this.demoSessions[0] ?? demoSession();
+		return { ...demoAgentContract(session), markdown, exists: true, hash: String(markdown.length) };
+	}
+
+	async getLintReport(session: SessionSnapshot): Promise<LintReport> {
+		if (!this.demoMode) {
+			return await request<LintReport>(`/v1/sessions/${session.session_id}/lint`);
+		}
+		return demoLintReport(session);
+	}
+
+	async applyLintQuickfix(session: SessionSnapshot, diagnosticId: string): Promise<QuickfixRecord> {
+		if (!this.demoMode) {
+			return await request<QuickfixRecord>(
+				`/v1/sessions/${session.session_id}/lint/${encodeURIComponent(diagnosticId)}/quickfix`,
+				{ method: 'POST' }
+			);
+		}
+		return demoQuickfixRecord(diagnosticId);
+	}
+
+	async runPbt(session: SessionSnapshot): Promise<PbtRound> {
+		if (!this.demoMode) {
+			return await request<PbtRound>(`/v1/sessions/${session.session_id}/pbt/run`, { method: 'POST' });
+		}
+		return demoPbtRound(session);
+	}
+
+	async pbtRegressionFrom(session: SessionSnapshot, reproId: string): Promise<QuickfixRecord> {
+		if (!this.demoMode) {
+			return await request<QuickfixRecord>(
+				`/v1/sessions/${session.session_id}/pbt/regression-from/${encodeURIComponent(reproId)}`,
+				{ method: 'POST' }
+			);
+		}
+		return demoQuickfixRecord(reproId);
+	}
+
+	async archCheck(session: SessionSnapshot): Promise<ArchCheckReport> {
+		if (!this.demoMode) {
+			return await request<ArchCheckReport>(`/v1/sessions/${session.session_id}/arch-check`);
+		}
+		return { schema_version: 'x07.studio.arch_check_report@0.1.0', passed: true, violations: [], raw: { demo: true } };
+	}
+
+	async pkgProvides(moduleId: string): Promise<PkgProvidesResult> {
+		if (!this.demoMode) {
+			return await request<PkgProvidesResult>(`/v1/pkg/provides?module=${encodeURIComponent(moduleId)}`);
+		}
+		return demoPkgProvides(moduleId);
 	}
 
 	async listTurns(sessionId: string): Promise<SessionTurn[]> {
@@ -141,7 +237,8 @@ export class StudioApi {
 				this.demoMode = true;
 			}
 		}
-		return projectDemoTurns(this.demoSessions.find((session) => session.session_id === sessionId) ?? this.demoSessions[0]);
+		const session = this.demoSessions.find((session) => session.session_id === sessionId) ?? this.demoSessions[0];
+		return session ? projectDemoTurns(session) : [];
 	}
 
 	async listBindings(): Promise<BindingDescriptor[]> {
@@ -866,11 +963,8 @@ export class StudioApi {
 			);
 		}
 		return {
-			schema_version: 'x07.studio.quickfix_record@0.1.0',
-			diagnostic_code: 'X07-DEMO',
-			severity: 'warning',
+			...demoQuickfixRecord('X07-DEMO'),
 			summary: `Demo quickfix for ${incidentId}`,
-			patch_ast: { operations: [] },
 			citations: [{ kind: 'incident', file: `.x07-wasm/incidents/${incidentId}`, region: 'run.report.json' }]
 		};
 	}
@@ -1829,6 +1923,113 @@ function demoTrustPosture(session: SessionSnapshot): TrustPosture {
 			? [{ at: new Date().toISOString(), kind: 'proof-coverage', summary: 'proof coverage computed' }]
 			: [],
 		posture_color: verified ? 'green' : 'amber'
+	};
+}
+
+function demoHealthSnapshot(): HealthSnapshot {
+	return {
+		schema_version: 'x07.studio.health_snapshot@0.1.0',
+		captured_at: new Date().toISOString(),
+		doctor: { ok: true, blockers: [], warnings: [] },
+		lockfile: { ok: true, stale: false, yanked: [], advisories: [] },
+		migrate: {
+			needs_migration: false,
+			from_schema: 'x07.project@0.5.0',
+			to_schema: '0.5',
+			project_schema_legacy: false
+		},
+		overall_color: 'green'
+	};
+}
+
+function demoAgentContract(session: SessionSnapshot): AgentContract {
+	const markdown = `# AGENT.md
+
+## Purpose
+${session.title || 'Demo x07 Studio project'}
+
+## Invariants
+- Keep deterministic logic in solve-pure unless a reviewed profile allows OS access.
+
+## Forbidden changes
+- Do not widen specs, architecture, worlds, capabilities, or budgets without review.
+`;
+	return {
+		schema_version: 'x07.studio.agent_contract@0.1.0',
+		session_id: session.session_id,
+		path: 'AGENT.md',
+		exists: false,
+		markdown,
+		sections: [
+			{ title: 'Purpose', body: session.title || 'Demo x07 Studio project' },
+			{ title: 'Invariants', body: '- Keep deterministic logic in solve-pure unless a reviewed profile allows OS access.' },
+			{ title: 'Forbidden changes', body: '- Do not widen specs, architecture, worlds, capabilities, or budgets without review.' }
+		],
+		last_modified: null,
+		hash: String(markdown.length)
+	};
+}
+
+function demoLintReport(session: SessionSnapshot): LintReport {
+	return {
+		schema_version: 'x07.studio.lint_report@0.1.0',
+		session_id: session.session_id,
+		generated_at: new Date().toISOString(),
+		diagnostics: [
+			{
+				id: 'X07-LINT-0042',
+				severity: 'warning',
+				file: 'src/main.x07.json',
+				line: 1,
+				column: 1,
+				summary: 'Demo lint diagnostic with a deterministic quickfix.',
+				fixable: true
+			}
+		],
+		raw: { demo: true }
+	};
+}
+
+function demoPbtRound(session: SessionSnapshot): PbtRound {
+	return {
+		schema_version: 'x07.studio.pbt_round@0.1.0',
+		session_id: session.session_id,
+		started_at: new Date().toISOString(),
+		finished_at: new Date().toISOString(),
+		properties_run: 47,
+		counterexamples: [],
+		raw: { demo: true }
+	};
+}
+
+function demoQuickfixRecord(id: string): QuickfixRecord {
+	return {
+		schema_version: 'x07.studio.quickfix_record@0.1.0',
+		diagnostic_code: id,
+		severity: 'warning',
+		summary: `Deterministic quickfix for ${id}`,
+		patch_ast: {
+			schema_version: 'x07.patchset@0.1.0',
+			patches: [{ path: 'src/main.x07.json', patch: [{ op: 'add', path: '/metadata', value: { fixed: true } }] }]
+		},
+		citations: [{ kind: 'lint', file: 'src/main.x07.json', region: '1:1' }],
+		before_snippet: '{\n  "kind": "module"\n}',
+		after_snippet: '{\n  "kind": "module",\n  "metadata": { "fixed": true }\n}'
+	};
+}
+
+function demoPkgProvides(moduleId: string): PkgProvidesResult {
+	return {
+		schema_version: 'x07.studio.pkg_provides_result@0.1.0',
+		module_id: moduleId,
+		candidates: [
+			{
+				package: 'ext-text',
+				version: '0.5.0',
+				source: 'registry',
+				install_command: 'x07 pkg add ext-text@0.5.0'
+			}
+		]
 	};
 }
 

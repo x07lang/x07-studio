@@ -31,7 +31,7 @@ pub fn ladder_state(root: &Utf8Path, session: &SessionSnapshot) -> LadderState {
                 label: spec.label.to_string(),
                 profile_path: spec.profile_path.map(str::to_string),
                 satisfied: missing.is_empty(),
-                gates: rung_gates(spec.id, spec.profile_path, &missing),
+                gates: rung_gates(root, session, spec.id, spec.profile_path, &missing),
                 missing,
                 evidence,
             }
@@ -49,7 +49,13 @@ pub fn ladder_state(root: &Utf8Path, session: &SessionSnapshot) -> LadderState {
     }
 }
 
-fn rung_gates(rung_id: &str, profile_path: Option<&str>, missing: &[String]) -> Vec<RungGate> {
+fn rung_gates(
+    root: &Utf8Path,
+    session: &SessionSnapshot,
+    rung_id: &str,
+    profile_path: Option<&str>,
+    missing: &[String],
+) -> Vec<RungGate> {
     let mut gates = match rung_id {
         "local_preview" => vec![
             gate(
@@ -70,6 +76,16 @@ fn rung_gates(rung_id: &str, profile_path: Option<&str>, missing: &[String]) -> 
                 "A sandbox trust profile is present before the project is shared.",
             ),
             gate(
+                "arch-check",
+                "Architecture check",
+                "Repo-level architecture invariants pass.",
+            ),
+            gate(
+                "lockfile",
+                "Lockfile check",
+                "The package lockfile is present and checked before sharing.",
+            ),
+            gate(
                 "review-diff",
                 "Review diff gates",
                 "Capability, world, proof, and budget changes are reviewable before sharing.",
@@ -86,6 +102,11 @@ fn rung_gates(rung_id: &str, profile_path: Option<&str>, missing: &[String]) -> 
                 "Proof coverage",
                 "Proof and generated-test evidence are available for team review.",
             ),
+            gate(
+                "arch-check",
+                "Architecture check",
+                "Repo-level architecture invariants pass before team handoff.",
+            ),
         ],
         "production" => vec![
             gate(
@@ -98,6 +119,11 @@ fn rung_gates(rung_id: &str, profile_path: Option<&str>, missing: &[String]) -> 
                 "Provenance",
                 "Production promotion records provenance and certificate artifacts.",
             ),
+            gate(
+                "arch-check",
+                "Architecture check",
+                "Repo-level architecture invariants pass before production promotion.",
+            ),
         ],
         _ => vec![gate("rung", "Rung gate", "Studio tracks this trust rung.")],
     };
@@ -105,10 +131,16 @@ fn rung_gates(rung_id: &str, profile_path: Option<&str>, missing: &[String]) -> 
         let profile_missing = profile_path
             .map(|profile| missing.iter().any(|item| item == profile))
             .unwrap_or(false);
-        gate.currently_satisfied = !profile_missing
-            && !missing
-                .iter()
-                .any(|item| item.contains("xtal.verify") && gate.id.contains("verify"));
+        let verify_missing = missing
+            .iter()
+            .any(|item| item.contains("xtal.verify") && gate.id.contains("verify"));
+        gate.currently_satisfied = !verify_missing
+            && match gate.id.as_str() {
+                "sandbox-profile" | "verified-core" | "certified-capsule" => !profile_missing,
+                "arch-check" => session_op_succeeded(session, "arch.check"),
+                "lockfile" => root.join("x07.lock.json").is_file(),
+                _ => true,
+            };
     }
     gates
 }
@@ -197,6 +229,13 @@ fn verified(session: &SessionSnapshot) -> bool {
         .op_log
         .iter()
         .any(|op| op.op == "xtal.verify" && op.status == OperationStatus::Succeeded)
+}
+
+fn session_op_succeeded(session: &SessionSnapshot, op_name: &str) -> bool {
+    session
+        .op_log
+        .iter()
+        .any(|op| op.op == op_name && op.status == OperationStatus::Succeeded)
 }
 
 #[cfg(test)]
@@ -296,6 +335,26 @@ mod tests {
             status: OperationStatus::Succeeded,
             exit_code: Some(0),
             artifacts: vec!["target/cert/certificate.json".to_string()],
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: None,
+            report_path: None,
+        });
+        session.op_log.push(OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id,
+            op: "arch.check".to_string(),
+            backend: "test".to_string(),
+            command: Vec::new(),
+            started_at: "3".to_string(),
+            finished_at: Some("3".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: vec!["arch/".to_string()],
             notes: None,
             stdout: None,
             stderr: None,

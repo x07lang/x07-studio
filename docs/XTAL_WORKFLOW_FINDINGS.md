@@ -1070,3 +1070,18 @@ This document records friction found while implementing the Studio web surface.
    the latest repair patchset into a deterministic review shape. It does not
    apply patches implicitly; the user still chooses whether to run the repair
    lane.
+
+97. The canonical loop needs visible mundane checks.
+
+   Cycle 5 wires the checks from `agent-workflow.md` that agents actually live
+   inside: AGENT.md, lint/fix, doctor, lockfile, migrate, PBT, arch-check, and
+   package-provides. They are daemon-backed operations, not browser badges, so
+   the same evidence can drive handoff prompts, ladder gates, and connected E2E.
+
+98. Dense trust surfaces work better as one hero plus drawers.
+
+   The Cycle 4 walkthrough showed TrustCard competing visually with every other
+   right-rail tool. Cycle 5 promotes TrustCard, moves secondary operations into
+   DrawerRail, collapses posture noise into PostureBadge, and makes compare a
+   contextual menu. The result keeps evidence available without making every
+   operation equal visual weight.

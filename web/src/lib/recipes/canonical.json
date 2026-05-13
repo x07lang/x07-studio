@@ -1,0 +1,132 @@
+[
+  {
+    "id": "text-core-text-utils",
+    "title": "text-core / text-utils",
+    "module_id": "text.core",
+    "one_liner": "Run the canonical text utility package and inspect dependency posture.",
+    "intent_text": "Open the canonical text.core text-utils example and keep the agent flow aligned with docs/examples/agent-gate/text-core/text-utils.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/text-core/text-utils/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/text-core/missing-dep/",
+      "ci/fixtures/agent-scenarios/text-core/semantics/"
+    ]
+  },
+  {
+    "id": "math-bigint-factorial-100",
+    "title": "math-bigint / factorial-100",
+    "module_id": "math.bigint",
+    "one_liner": "Exercise the bigint package through the factorial example.",
+    "intent_text": "Open the canonical math.bigint factorial-100 example and preserve its package lock and codec assumptions.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/math-bigint/factorial-100/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/math-bigint/missing-dep/",
+      "ci/fixtures/agent-scenarios/math-bigint/codec-v1/"
+    ]
+  },
+  {
+    "id": "math-decimal-money-format",
+    "title": "math-decimal / money-format",
+    "module_id": "math.decimal",
+    "one_liner": "Verify decimal scale and rounding in the money formatter.",
+    "intent_text": "Open the canonical math.decimal money-format example and keep scale rounding behavior explicit.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/math-decimal/money-format/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/math-decimal/missing-dep/",
+      "ci/fixtures/agent-scenarios/math-decimal/scale-rounding/"
+    ]
+  },
+  {
+    "id": "text-unicode-normalize-casefold",
+    "title": "text-unicode / normalize-casefold",
+    "module_id": "text.unicode",
+    "one_liner": "Check Unicode normalization and casefold segmentation.",
+    "intent_text": "Open the canonical text.unicode normalize-casefold example and preserve normalization and segmentation evidence.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/text-unicode/normalize-casefold/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/text-unicode/missing-dep/",
+      "ci/fixtures/agent-scenarios/text-unicode/normalize-casefold-segmentation/"
+    ]
+  },
+  {
+    "id": "data-cbor-roundtrip",
+    "title": "data-cbor / roundtrip",
+    "module_id": "data.cbor",
+    "one_liner": "Round-trip CBOR through canonical encoding checks.",
+    "intent_text": "Open the canonical data.cbor roundtrip example and keep canonical encoding behavior testable.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/data-cbor/roundtrip/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/data-cbor/missing-dep/",
+      "ci/fixtures/agent-scenarios/data-cbor/canonical-encoding/"
+    ]
+  },
+  {
+    "id": "data-msgpack-roundtrip",
+    "title": "data-msgpack / roundtrip",
+    "module_id": "data.msgpack",
+    "one_liner": "Round-trip MessagePack with vector fixtures.",
+    "intent_text": "Open the canonical data.msgpack roundtrip example and preserve encoding vector evidence.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/data-msgpack/roundtrip/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/data-msgpack/missing-dep/",
+      "ci/fixtures/agent-scenarios/data-msgpack/encoding-vectors/"
+    ]
+  },
+  {
+    "id": "checksum-fast-smoke",
+    "title": "checksum-fast / smoke",
+    "module_id": "checksum.fast",
+    "one_liner": "Smoke-test fast checksums against vector scenarios.",
+    "intent_text": "Open the canonical checksum.fast smoke example and keep checksum vector evidence attached.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/checksum-fast/smoke/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/checksum-fast/missing-dep/",
+      "ci/fixtures/agent-scenarios/checksum-fast/vectors/"
+    ]
+  },
+  {
+    "id": "diff-patch-apply",
+    "title": "diff-patch / apply",
+    "module_id": "diff.patch",
+    "one_liner": "Apply deterministic diff patches with package resolution visible.",
+    "intent_text": "Open the canonical diff.patch apply example and keep patch-v1 behavior explicit.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/diff-patch/apply/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/diff-patch/missing-dep/",
+      "ci/fixtures/agent-scenarios/diff-patch/patch-v1/"
+    ]
+  },
+  {
+    "id": "compress-zstd-roundtrip",
+    "title": "compress-zstd / roundtrip",
+    "module_id": "compress.zstd",
+    "one_liner": "Round-trip zstd compression through vector fixtures.",
+    "intent_text": "Open the canonical compress.zstd roundtrip example and preserve compression vector evidence.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/compress-zstd/roundtrip/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/compress-zstd/missing-dep/",
+      "ci/fixtures/agent-scenarios/compress-zstd/roundtrip-vectors/"
+    ]
+  },
+  {
+    "id": "fs-globwalk-list-files",
+    "title": "fs-globwalk / list-files",
+    "module_id": "fs.globwalk",
+    "one_liner": "List files deterministically through the globwalk package.",
+    "intent_text": "Open the canonical fs.globwalk list-files example and keep deterministic ordering explicit.",
+    "task_type": "new_behavior",
+    "canonical_example_path": "docs/examples/agent-gate/fs-globwalk/list-files/",
+    "scenario_paths": [
+      "ci/fixtures/agent-scenarios/fs-globwalk/missing-dep/",
+      "ci/fixtures/agent-scenarios/fs-globwalk/deterministic-ordering/"
+    ]
+  }
+]

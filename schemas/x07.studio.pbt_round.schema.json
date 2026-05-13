@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.pbt_round@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "session_id", "started_at", "finished_at", "properties_run", "counterexamples", "raw"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.pbt_round@0.1.0" },
+    "session_id": { "type": "string" },
+    "started_at": { "type": "string" },
+    "finished_at": { "type": ["string", "null"] },
+    "properties_run": { "type": "integer", "minimum": 0 },
+    "counterexamples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["repro_id", "property", "shrunk_input", "repro_path"],
+        "properties": {
+          "repro_id": { "type": "string" },
+          "property": { "type": "string" },
+          "shrunk_input": {},
+          "repro_path": { "type": "string" }
+        }
+      }
+    },
+    "raw": {}
+  }
+}

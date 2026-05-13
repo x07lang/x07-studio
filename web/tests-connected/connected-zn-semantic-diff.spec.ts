@@ -23,7 +23,8 @@ test('connected semantic diff is available from the timeline and API', async ({ 
 	const prompt = `Cycle 4 semantic diff ${Date.now()}`;
 	const session = await startSession(page, prompt);
 
-	await page.getByRole('button', { name: 'Compare to…' }).first().click();
+	await page.getByRole('button', { name: 'Compare' }).first().click();
+	await page.getByRole('menuitem', { name: 'With current' }).first().click();
 	await expect(page.getByTestId('semantic-diff')).toContainText('solve-pure');
 
 	const diffResponse = await page.request.post(`/v1/sessions/${session.session_id}/diff`, {

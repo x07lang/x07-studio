@@ -7,8 +7,9 @@ function loomHealthEndpoint(): Plugin {
 	return {
 		name: 'loom-health-endpoint',
 		configureServer(server) {
-			server.middlewares.use('/v1/health', async (req, res, next) => {
-				if (req.method !== 'GET') {
+			server.middlewares.use(async (req, res, next) => {
+				const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+				if (req.method !== 'GET' || path !== '/v1/health') {
 					next();
 					return;
 				}

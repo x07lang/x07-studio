@@ -114,6 +114,26 @@ project artifacts without breaking Studio artifact previews.
 - `x07` and `x07-wasm` bindings run with `--json --report-out <file> --quiet-json` and capture the emitted report file.
 - `x07lp` bindings run with `--json` and capture structured stdout/stderr directly.
 
+## Cycle 5 canonical-loop wrappers
+
+Some Cycle 5 commands are rendered from endpoint-specific wrappers because
+their arguments depend on the current diagnostic, repro, or module ID rather
+than the static binding catalog:
+
+- `x07 doctor`
+- `x07 pkg lock --project x07.json --check`
+- `x07 migrate --check/--write --to 0.5`
+- `x07 project migrate --check/--write --project x07.json`
+- `x07 lint --project x07.json`
+- `x07 fix --diagnostic <id>` or `x07 fix --input <file> --write`
+- `x07 test --pbt`
+- `x07 fix --from-pbt <repro.json> --write`
+- `x07 arch check`
+- `x07 pkg provides <module-id> --project x07.json`
+
+They still use the same `CliAdapter` execution path and the same machine-output
+policy as catalog bindings.
+
 ## CLI override environment variables
 
 - `X07_STUDIO_X07_EXE`

@@ -101,7 +101,8 @@
 }
 
 .timeline,
-.now-panel {
+.now-panel,
+.right-rail {
 	min-height: 0;
 	overflow: auto;
 }
@@ -199,11 +200,25 @@
 .question-stack,
 .result-preview,
 .now-panel,
+.right-rail,
 .now-card,
 .try-output,
 .ladder-list {
 	display: grid;
 	gap: 10px;
+}
+
+.modal-sheet {
+	position: fixed;
+	inset: 72px 24px 24px auto;
+	z-index: 25;
+	width: min(760px, calc(100vw - 48px));
+	overflow: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 14px;
+	background: var(--panel, #111820);
+	box-shadow: var(--shadow);
 }
 
 .result-block {

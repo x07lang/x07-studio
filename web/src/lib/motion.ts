@@ -25,3 +25,43 @@ export function marquee(node: HTMLElement) {
 	node.style.overflow = 'hidden';
 	return {};
 }
+
+export function colorMorph(node: HTMLElement) {
+	node.style.transition = [
+		node.style.transition,
+		'border-color var(--motion-base) var(--ease-out)',
+		'background-color var(--motion-base) var(--ease-out)'
+	]
+		.filter(Boolean)
+		.join(', ');
+	return {};
+}
+
+export function drawerExpand(node: HTMLElement) {
+	const height = node.scrollHeight;
+	node.animate([{ height: '0px', opacity: 0 }, { height: `${height}px`, opacity: 1 }], {
+		duration: 180,
+		easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+	});
+	return {};
+}
+
+export function patchPulse(node: HTMLElement, active = true) {
+	if (!active) return {};
+	node.animate(
+		[
+			{ boxShadow: '0 0 0 rgba(114, 228, 180, 0)' },
+			{ boxShadow: '0 0 0 4px rgba(114, 228, 180, 0.24)' },
+			{ boxShadow: '0 0 0 rgba(114, 228, 180, 0)' }
+		],
+		{
+			duration: 200,
+			easing: 'cubic-bezier(0.16, 1, 0.3, 1)'
+		}
+	);
+	return {
+		update(next: boolean) {
+			if (next) patchPulse(node, true);
+		}
+	};
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.pkg_provides_result@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "module_id", "candidates"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.pkg_provides_result@0.1.0" },
+    "module_id": { "type": "string" },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["package", "version", "source", "install_command"],
+        "properties": {
+          "package": { "type": "string" },
+          "version": { "type": "string" },
+          "source": { "type": "string" },
+          "install_command": { "type": "string" }
+        }
+      }
+    }
+  }
+}

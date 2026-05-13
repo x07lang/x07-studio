@@ -37,7 +37,7 @@ test('connected trust posture uses compatibility session fields and renders quic
 	const session = await startSession(page, prompt);
 
 	await expect(page.getByTestId('trust-card')).toContainText('solve-pure');
-	await expect(page.getByTestId('turn-trust_posture_changed')).toContainText('proof coverage');
+	await expect(page.getByTestId('posture-badge')).toContainText('solve-pure');
 
 	const postureResponse = await page.request.get(`/v1/sessions/${session.session_id}/trust/posture`);
 	expect(postureResponse.ok()).toBe(true);

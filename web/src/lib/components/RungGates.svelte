@@ -1,7 +1,9 @@
 <script lang="ts">
-	import type { RungGate } from '$lib/studio';
+	import type { ArchCheckReport, RungGate } from '$lib/studio';
+	import ArchCheckBadge from './ArchCheckBadge.svelte';
 
 	export let gates: RungGate[] = [];
+	export let archCheckReport: ArchCheckReport | null = null;
 </script>
 
 {#if gates.length}
@@ -10,6 +12,9 @@
 			<div class:ok={gate.currently_satisfied}>
 				<strong>{gate.label}</strong>
 				<span>{gate.currently_satisfied ? 'satisfied' : 'needs evidence'}</span>
+				{#if gate.id === 'arch-check'}
+					<ArchCheckBadge report={archCheckReport} />
+				{/if}
 				<small>{gate.description}</small>
 			</div>
 		{/each}

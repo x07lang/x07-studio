@@ -4,13 +4,14 @@ use std::net::SocketAddr;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{Multipart, Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{http::StatusCode, Json, Router};
 use camino::{Utf8Path, Utf8PathBuf};
 use futures::stream::{Stream, StreamExt};
+use serde::Deserialize;
 use serde_json::Value;
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -22,23 +23,26 @@ use uuid::Uuid;
 
 use loom_core::WorkspaceKernel;
 use loom_types::api::{
-    AgentApprovalRequest, AgentApprovalResponse, AgentHandoffResponse, AgentRunRequest,
-    AgentRunResponse, ArtifactPreviewRequest, ArtifactPreviewResponse, AutopilotPolicy,
-    AutopilotResponse, AutopilotStartRequest, BindingDescriptor, CallMcpToolRequest,
-    CassetteBranchRequest, CassetteEntry, CassetteRibbon, CertificateSummary, ClimbRungRequest,
-    ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest,
-    DocPreviewRequest, DocPreviewResponse, FormalizeIntentRequest, FormalizeIntentResponse,
-    HealthResponse, IntentAnswerRequest, IntentAnswerResponse, IntentClarifyRequest,
-    IntentClarifyResponse, IntentImageUploadResponse, IntentInputMode, LadderState, LiveDiff,
-    McpCallResponse, PickRealizeProposalRequest, PickRealizeProposalResponse, ProbeProviderRequest,
-    ProofEvidence, ProviderProbeResponse, QuickfixRecord, QuorumRequest, QuorumRound,
-    RealizeQuorumRequest, RealizeQuorumRound, RealizeRequest, RealizeResponse, ReleaseRequest,
-    ReleaseStatus, ReplayExportResponse, ReplayImportRequest, RequestIntentRevisionRequest,
+    AgentApprovalRequest, AgentApprovalResponse, AgentContract, AgentHandoffResponse,
+    AgentRunRequest, AgentRunResponse, ApplyMigrateRequest, ArchCheckReport,
+    ArtifactPreviewRequest, ArtifactPreviewResponse, AutopilotPolicy, AutopilotResponse,
+    AutopilotStartRequest, BindingDescriptor, CallMcpToolRequest, CassetteBranchRequest,
+    CassetteEntry, CassetteRibbon, CertificateSummary, ClimbRungRequest, ConnectMcpRequest,
+    ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest, DocPreviewRequest,
+    DocPreviewResponse, FormalizeIntentRequest, FormalizeIntentResponse, HealthResponse,
+    HealthSnapshot, IntentAnswerRequest, IntentAnswerResponse, IntentClarifyRequest,
+    IntentClarifyResponse, IntentImageUploadResponse, IntentInputMode, LadderState, LintReport,
+    LiveDiff, McpCallResponse, MigrateStatus, PbtRound, PickRealizeProposalRequest,
+    PickRealizeProposalResponse, PkgProvidesResult, ProbeProviderRequest, ProofEvidence,
+    ProviderProbeResponse, QuickfixRecord, QuorumRequest, QuorumRound, RealizeQuorumRequest,
+    RealizeQuorumRound, RealizeRequest, RealizeResponse, ReleaseRequest, ReleaseStatus,
+    ReplayExportResponse, ReplayImportRequest, RequestIntentRevisionRequest,
     RequestIntentRevisionResponse, ResolveApprovalRequest, RunBindingRequest, RunBuildRequest,
-    RunXtalWorkflowRequest, RuntimeComponentState, RuntimeComponentStatus, SaveAgentProfileRequest,
-    SaveProviderProfileRequest, SemanticDiff, SemanticDiffRequest, SessionTurn, StudioDefaults,
-    StudioMemory, SyncClaimResponse, SyncCode, SyncStateRequest, TrustPosture, TryItRequest,
-    TryItResult, VisualEmitRequest, VisualParseRequest, VisualResponse, WorkspaceRadarResponse,
+    RunXtalWorkflowRequest, RuntimeComponentState, RuntimeComponentStatus,
+    SaveAgentContractRequest, SaveAgentProfileRequest, SaveProviderProfileRequest, SemanticDiff,
+    SemanticDiffRequest, SessionTurn, StudioDefaults, StudioMemory, SyncClaimResponse, SyncCode,
+    SyncStateRequest, TrustPosture, TryItRequest, TryItResult, VisualEmitRequest,
+    VisualParseRequest, VisualResponse, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -52,6 +56,8 @@ pub struct ApiState {
 pub fn router(state: ApiState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/health/snapshot", get(health_snapshot))
+        .route("/v1/health/migrate", post(apply_migrate))
         .route("/v1/workspace/radar", get(workspace_radar))
         .route("/v1/bindings", get(bindings))
         .route("/v1/sessions", get(list_sessions).post(create_session))
@@ -91,6 +97,21 @@ pub fn router(state: ApiState) -> Router {
             "/v1/sessions/{session_id}/intent/image",
             post(upload_intent_image),
         )
+        .route(
+            "/v1/sessions/{session_id}/agent-contract",
+            get(get_agent_contract).post(save_agent_contract),
+        )
+        .route("/v1/sessions/{session_id}/lint", get(lint_report))
+        .route(
+            "/v1/sessions/{session_id}/lint/{diag_id}/quickfix",
+            post(apply_lint_quickfix),
+        )
+        .route("/v1/sessions/{session_id}/pbt/run", post(run_pbt))
+        .route(
+            "/v1/sessions/{session_id}/pbt/regression-from/{repro_id}",
+            post(pbt_regression_from),
+        )
+        .route("/v1/sessions/{session_id}/arch-check", get(arch_check))
         .route("/v1/sessions/{session_id}/bindings/run", post(run_binding))
         .route("/v1/sessions/{session_id}/invoke", post(invoke_artifact))
         .route(
@@ -200,6 +221,7 @@ pub fn router(state: ApiState) -> Router {
             post(run_xtal_workflow),
         )
         .route("/v1/sessions/{session_id}/build", post(run_build_pipeline))
+        .route("/v1/pkg/provides", get(pkg_provides))
         .route("/v1/providers", get(list_providers).post(save_provider))
         .route("/v1/sync/codes", get(mint_sync_code))
         .route("/v1/sync/{code}/claim", post(claim_sync_code))
@@ -440,6 +462,26 @@ async fn health(State(state): State<ApiState>) -> Json<HealthResponse> {
     })
 }
 
+async fn health_snapshot(
+    State(state): State<ApiState>,
+) -> Result<Json<HealthSnapshot>, (StatusCode, String)> {
+    let context = workspace_command_context(&state).await;
+    let snapshot = context.health_snapshot().await.map_err(conflict_error)?;
+    Ok(Json(snapshot))
+}
+
+async fn apply_migrate(
+    State(state): State<ApiState>,
+    Json(request): Json<ApplyMigrateRequest>,
+) -> Result<Json<MigrateStatus>, (StatusCode, String)> {
+    let context = workspace_command_context(&state).await;
+    let status = context
+        .apply_migrate(&request.target)
+        .await
+        .map_err(conflict_error)?;
+    Ok(Json(status))
+}
+
 fn studio_defaults() -> StudioDefaults {
     StudioDefaults {
         daemon_addr: env_setting("X07_STUDIO_DAEMON_ADDR", "127.0.0.1:7719"),
@@ -458,6 +500,11 @@ fn env_setting(key: &str, default: &str) -> String {
 async fn workspace_radar(State(state): State<ApiState>) -> Json<WorkspaceRadarResponse> {
     let kernel = state.kernel.lock().await;
     Json(kernel.workspace_radar())
+}
+
+async fn workspace_command_context(state: &ApiState) -> loom_core::kernel::WorkspaceCommandContext {
+    let kernel = state.kernel.lock().await;
+    kernel.command_context()
 }
 
 async fn bindings(State(state): State<ApiState>) -> Json<Vec<BindingDescriptor>> {
@@ -728,6 +775,84 @@ async fn apply_intent_answer(
         op,
         session,
     }))
+}
+
+async fn get_agent_contract(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<AgentContract>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let contract = kernel.agent_contract(session_id).map_err(conflict_error)?;
+    Ok(Json(contract))
+}
+
+async fn save_agent_contract(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<SaveAgentContractRequest>,
+) -> Result<Json<AgentContract>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let contract = kernel
+        .save_agent_contract(session_id, &request.markdown, request.prior_hash.as_deref())
+        .map_err(conflict_error)?;
+    Ok(Json(contract))
+}
+
+async fn lint_report(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<LintReport>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let report = kernel
+        .lint_report(session_id)
+        .await
+        .map_err(conflict_error)?;
+    Ok(Json(report))
+}
+
+async fn apply_lint_quickfix(
+    Path((session_id, diag_id)): Path<(Uuid, String)>,
+    State(state): State<ApiState>,
+) -> Result<Json<QuickfixRecord>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let record = kernel
+        .apply_lint_quickfix(session_id, &diag_id)
+        .await
+        .map_err(conflict_error)?;
+    Ok(Json(record))
+}
+
+async fn run_pbt(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<PbtRound>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let round = kernel.pbt_round(session_id).await.map_err(conflict_error)?;
+    Ok(Json(round))
+}
+
+async fn pbt_regression_from(
+    Path((session_id, repro_id)): Path<(Uuid, String)>,
+    State(state): State<ApiState>,
+) -> Result<Json<QuickfixRecord>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let record = kernel
+        .pbt_regression_from(session_id, &repro_id)
+        .await
+        .map_err(conflict_error)?;
+    Ok(Json(record))
+}
+
+async fn arch_check(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<ArchCheckReport>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let report = kernel
+        .arch_check_report(session_id)
+        .await
+        .map_err(conflict_error)?;
+    Ok(Json(report))
 }
 
 async fn run_intent_quorum(
@@ -1236,11 +1361,33 @@ async fn ask_project(
     State(state): State<ApiState>,
     Json(request): Json<loom_types::api::AskRequest>,
 ) -> Result<Json<loom_types::api::AskAnswer>, (StatusCode, String)> {
-    let kernel = state.kernel.lock().await;
-    let answer = kernel
-        .ask_project(session_id, request)
+    let (session, context) = {
+        let kernel = state.kernel.lock().await;
+        let session = kernel.get_session(session_id).ok_or_else(not_found)?;
+        (session, kernel.command_context())
+    };
+    let answer = context
+        .ask_project(&session, &request)
+        .await
         .map_err(conflict_error)?;
     Ok(Json(answer))
+}
+
+#[derive(Debug, Deserialize)]
+struct PkgProvidesQuery {
+    module: String,
+}
+
+async fn pkg_provides(
+    Query(query): Query<PkgProvidesQuery>,
+    State(state): State<ApiState>,
+) -> Result<Json<PkgProvidesResult>, (StatusCode, String)> {
+    let context = workspace_command_context(&state).await;
+    let result = context
+        .pkg_provides(&query.module)
+        .await
+        .map_err(conflict_error)?;
+    Ok(Json(result))
 }
 
 async fn visual_streampipe_parse(

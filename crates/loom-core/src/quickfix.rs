@@ -30,7 +30,33 @@ pub fn for_incident(root: &Utf8Path, incident_id: &str) -> QuickfixRecord {
             file: format!(".x07-wasm/incidents/{incident_id}"),
             region: Some("run.report.json".to_string()),
         }],
+        before_snippet: None,
+        after_snippet: None,
     }
+    .pipe(|record| with_snippets(root, record))
+}
+
+pub fn with_snippets(root: &Utf8Path, mut record: QuickfixRecord) -> QuickfixRecord {
+    let target = patch_target(&record.patch_ast).or_else(|| {
+        record
+            .citations
+            .first()
+            .map(|citation| citation.file.clone())
+    });
+    let Some(target) = target else {
+        return record;
+    };
+    let Ok(target_path) = safe_relative_path(root, &target) else {
+        return record;
+    };
+    let Ok(before) = std::fs::read_to_string(&target_path) else {
+        return record;
+    };
+    record.before_snippet = Some(clip(&before, 12_000));
+    if let Some(after) = after_from_patch(&before, &record.patch_ast, &target) {
+        record.after_snippet = Some(clip(&after, 12_000));
+    }
+    record
 }
 
 fn incident_json(root: &Utf8Path, incident_id: &str) -> Option<Value> {
@@ -110,6 +136,197 @@ fn first_value<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
         _ => None,
     }
 }
+
+fn patch_target(patch_ast: &Value) -> Option<String> {
+    patch_ast
+        .get("patches")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("path"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            patch_ast
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+}
+
+fn patch_ops<'a>(patch_ast: &'a Value, target: &str) -> Option<&'a Vec<Value>> {
+    if let Some(ops) = patch_ast.get("patch").and_then(Value::as_array) {
+        return Some(ops);
+    }
+    patch_ast
+        .get("patches")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|item| item.get("path").and_then(Value::as_str) == Some(target))
+        .and_then(|item| item.get("patch"))
+        .and_then(Value::as_array)
+}
+
+fn after_from_patch(before: &str, patch_ast: &Value, target: &str) -> Option<String> {
+    if let Some(after) = first_string(patch_ast, &["after_snippet", "after"]) {
+        return Some(after);
+    }
+    let ops = patch_ops(patch_ast, target)?;
+    let mut doc = serde_json::from_str::<Value>(before).ok()?;
+    for op in ops {
+        apply_op(&mut doc, op).ok()?;
+    }
+    serde_json::to_string_pretty(&doc).ok()
+}
+
+fn apply_op(doc: &mut Value, op: &Value) -> anyhow::Result<()> {
+    let op_name = op
+        .get("op")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("patch operation missing op"))?;
+    let path = op
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("patch operation missing path"))?;
+    let tokens = decode_pointer(path)?;
+    match op_name {
+        "add" => add_value(
+            doc,
+            &tokens,
+            op.get("value").cloned().unwrap_or(Value::Null),
+        ),
+        "replace" => replace_value(
+            doc,
+            &tokens,
+            op.get("value").cloned().unwrap_or(Value::Null),
+        ),
+        "remove" => remove_value(doc, &tokens),
+        "test" => Ok(()),
+        other => Err(anyhow::anyhow!("unsupported patch operation `{other}`")),
+    }
+}
+
+fn decode_pointer(path: &str) -> anyhow::Result<Vec<String>> {
+    if path.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !path.starts_with('/') {
+        return Err(anyhow::anyhow!("JSON pointer must start with /"));
+    }
+    path.split('/')
+        .skip(1)
+        .map(|part| Ok(part.replace("~1", "/").replace("~0", "~")))
+        .collect()
+}
+
+fn add_value(doc: &mut Value, path: &[String], value: Value) -> anyhow::Result<()> {
+    if path.is_empty() {
+        *doc = value;
+        return Ok(());
+    }
+    let (parent_path, leaf) = path.split_at(path.len() - 1);
+    let parent = value_at_mut(doc, parent_path)?;
+    let leaf = &leaf[0];
+    match parent {
+        Value::Object(map) => {
+            map.insert(leaf.clone(), value);
+            Ok(())
+        }
+        Value::Array(items) => {
+            if leaf == "-" {
+                items.push(value);
+                return Ok(());
+            }
+            let index = leaf.parse::<usize>()?;
+            if index > items.len() {
+                return Err(anyhow::anyhow!("array index out of bounds"));
+            }
+            items.insert(index, value);
+            Ok(())
+        }
+        _ => Err(anyhow::anyhow!("patch parent is not a container")),
+    }
+}
+
+fn replace_value(doc: &mut Value, path: &[String], value: Value) -> anyhow::Result<()> {
+    let target = value_at_mut(doc, path)?;
+    *target = value;
+    Ok(())
+}
+
+fn remove_value(doc: &mut Value, path: &[String]) -> anyhow::Result<()> {
+    if path.is_empty() {
+        *doc = Value::Null;
+        return Ok(());
+    }
+    let (parent_path, leaf) = path.split_at(path.len() - 1);
+    let parent = value_at_mut(doc, parent_path)?;
+    let leaf = &leaf[0];
+    match parent {
+        Value::Object(map) => {
+            map.remove(leaf);
+            Ok(())
+        }
+        Value::Array(items) => {
+            let index = leaf.parse::<usize>()?;
+            if index >= items.len() {
+                return Err(anyhow::anyhow!("array index out of bounds"));
+            }
+            items.remove(index);
+            Ok(())
+        }
+        _ => Err(anyhow::anyhow!("patch parent is not a container")),
+    }
+}
+
+fn value_at_mut<'a>(doc: &'a mut Value, path: &[String]) -> anyhow::Result<&'a mut Value> {
+    let mut current = doc;
+    for token in path {
+        match current {
+            Value::Object(map) => {
+                current = map
+                    .get_mut(token)
+                    .ok_or_else(|| anyhow::anyhow!("object key `{token}` not found"))?;
+            }
+            Value::Array(items) => {
+                let index = token.parse::<usize>()?;
+                current = items
+                    .get_mut(index)
+                    .ok_or_else(|| anyhow::anyhow!("array index `{index}` not found"))?;
+            }
+            _ => return Err(anyhow::anyhow!("patch path traverses non-container")),
+        }
+    }
+    Ok(current)
+}
+
+fn safe_relative_path(root: &Utf8Path, relative: &str) -> anyhow::Result<camino::Utf8PathBuf> {
+    let rel = Utf8Path::new(relative);
+    if relative.contains('\0')
+        || rel.is_absolute()
+        || rel.components().any(|component| component.as_str() == "..")
+    {
+        return Err(anyhow::anyhow!(
+            "quickfix path must stay inside the workspace"
+        ));
+    }
+    Ok(root.join(rel))
+}
+
+fn clip(value: &str, max_chars: usize) -> String {
+    let mut out = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        out.push_str("\n...");
+    }
+    out
+}
+
+trait Pipe: Sized {
+    fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
+        f(self)
+    }
+}
+
+impl<T> Pipe for T {}
 
 #[cfg(test)]
 mod tests {

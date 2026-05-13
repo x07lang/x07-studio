@@ -6,6 +6,20 @@ async function useManualMode(page: import('@playwright/test').Page) {
 	await page.getByLabel('Auto').uncheck();
 }
 
+async function openTryIt(page: import('@playwright/test').Page) {
+	const button = page.getByRole('button', { name: /Try It/ });
+	if ((await button.getAttribute('aria-expanded')) !== 'true') {
+		await button.click();
+	}
+}
+
+async function openDrawer(page: import('@playwright/test').Page, name: RegExp) {
+	const button = page.getByRole('button', { name });
+	if ((await button.getAttribute('aria-expanded')) !== 'true') {
+		await button.click();
+	}
+}
+
 test('connected timeline formalizes, clarifies, builds, tries, and scans incidents', async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto('/');
@@ -36,6 +50,7 @@ test('connected timeline formalizes, clarifies, builds, tries, and scans inciden
 	// The fake toolchain now writes the implementation to the same
 	// intent-derived path that verify records, so Try-It should use the
 	// verified artifact instead of tripping the old orphan-stub guard.
+	await openTryIt(page);
 	await page.getByTestId('try-it-panel').getByRole('textbox').first().fill('[2,1]');
 	await page.getByTestId('try-it-panel').getByRole('button', { name: 'Run it' }).click();
 	await expect(page.getByTestId('try-it-panel')).toContainText('"ok": true', {
@@ -85,6 +100,7 @@ test('connected verify disables the realize CTA once template synthesis lands', 
 	);
 	expect(greeter?.op_log.some((op) => op.op === 'synthesis.template')).toBe(true);
 
+	await openTryIt(page);
 	await page.getByTestId('try-it-panel').getByRole('textbox').first().fill('Bodik');
 	await page.getByTestId('try-it-panel').getByRole('button', { name: 'Run it' }).click();
 	await expect(page.getByTestId('try-it-panel')).toContainText('"ok": true', {
@@ -227,6 +243,7 @@ test('connected continuity tools run quorum, sync claims, cassette branches, and
 	await page.getByRole('button', { name: 'Claim' }).click();
 	await expect(page.getByText(`Claimed sync code ${code}`)).toBeVisible({ timeout: 10_000 });
 
+	await openDrawer(page, /Time travel/);
 	await page.getByRole('button', { name: 'Load cassettes' }).click();
 	await expect(page.getByTestId('cassette-list')).toContainText('001-request.json', {
 		timeout: 10_000
@@ -236,6 +253,7 @@ test('connected continuity tools run quorum, sync claims, cassette branches, and
 		timeout: 10_000
 	});
 
+	await openDrawer(page, /Visual editor/);
 	const visual = page.getByTestId('visual-editor');
 	await visual.getByRole('button', { name: 'Parse' }).click();
 	await expect(visual.getByLabel('Node 0 label')).toHaveValue('fetch input');
