@@ -100,6 +100,14 @@ The work *does* progress on disk: AGENT.md gets written, spec gets drafted, impl
 
 **Remaining work (deferred F3-followup):** `AutoBuild`, `AutoRealize`, `AutoClimb` still acquire the lock for the duration of their inner `run_build_pipeline` / `run_role_pipeline` / `climb_rung` calls. Those inner methods are `&mut self` and await `x07` CLI subprocesses while holding `&mut`, which means the lock is still held inside those steps. The yielding refactor releases the lock *between* steps and within the long-running AutoClarify select-loop; per-substep release inside the build/realize/climb pipelines is the remaining work for full responsiveness during scenarios 2-5. The current fix is enough to unblock scenario 1.
 
+**Update 2026-05-13 (commit 2344fde):** The per-substep refactor landed. `run_binding_yielding`, `run_xtal_workflow_with_vars_yielding`, `run_build_pipeline_yielding`, `run_role_pipeline_yielding`, and `execute_prepared_agent_run_yielding` mirror the original `&mut self` methods but acquire/release the kernel mutex around every `x07` CLI subprocess and every agent stream event. `run_autopilot_yielding`'s AutoBuild and AutoRealize arms now call the yielding variants. End-to-end re-test against real toolchain (`scenario-1-text-utils`, fresh workspace):
+
+- 8/8 `curl --max-time 3 /v1/health` probes during the autopilot run returned HTTP 200 in <2ms.
+- Session progressed through `intent_ready → trust_review` while the role pipeline (real claude as architect, real codex as coder) drove 6 realize rounds + 5 review rounds + 7 verify passes (118 ops, 21 timeline turns).
+- Bundle snapshot: `target/stress-pass/scenario-1-text-utils/` — `current_rung: local_preview`, `posture_color: green`, `current_step: lint`.
+
+The "real codex repeatedly produces a scaffold that fails the spec, real claude reviewer keeps saying revise" loop is the same observed-with-fake pattern. The autopilot's no-progress guard plus the role pipeline's `max_review_rounds` bound the runaway. F3 is now fully resolved at the daemon level; production-blocker status removed.
+
 ---
 
 ## F4 — Proof-support warnings not surfaced when real x07 can't prove

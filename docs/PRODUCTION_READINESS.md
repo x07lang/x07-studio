@@ -6,9 +6,9 @@ Last updated 2026-05-13 after the Cycle 7 stress-pass first run.
 
 | Track | Verdict | Why |
 |---|---|---|
-| Internal alpha (Studio dogfooded by x07 team) | **YES** (with caveat) | Canonical loop works against real x07 toolchain on disk. The daemon HTTP hang (F3) is reproducible and team members can work around it with a daemon restart when the page freezes. |
-| Public beta (invite-only external users) | **NO** | F3 is a hard blocker — the UI freezing mid-build is a first-impression killer. Need to diagnose & fix before any external user touches this. |
-| Production / general availability | **NO** | F3 + scenarios 2-5 unrun + cross-browser unvalidated + no long-running stability data. Multiple unknowns. |
+| Internal alpha (Studio dogfooded by x07 team) | **YES** | Canonical loop works against real x07 toolchain on disk. F3 fixed at both autopilot and per-substep level (commits `1ae54f8`, `2344fde`). HTTP stays responsive (8/8 probes <2ms) while real claude/codex/x07 are running. |
+| Public beta (invite-only external users) | **PARTIAL** | F3 fixed. Scenarios 2-5 still unrun against real toolchain (the harness + scenario configs are ready; needs an operator with ~10-20 min per scenario). Cross-browser + 30-min stability still needed. |
+| Production / general availability | **NO** | Scenarios 2-5 unrun + cross-browser unvalidated + no long-running stability data + real `x07lp` integration unrun. Multiple unknowns. |
 
 ## What's verified against real toolchain
 
