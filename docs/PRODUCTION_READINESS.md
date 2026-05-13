@@ -7,7 +7,7 @@ Last updated 2026-05-13 after the pre-production readiness pass.
 | Track | Verdict | Why |
 |---|---|---|
 | Internal alpha (Studio dogfooded by x07 team) | **YES** | Canonical loop works against real x07 toolchain on disk. F3 fixed at both autopilot and per-substep level (commits `1ae54f8`, `2344fde`). HTTP stays responsive (8/8 probes <2ms) while real claude/codex/x07 are running. |
-| Public beta (invite-only external users) | **PENDING SCENARIOS 2-5 + LONG SOAK** | F3 and F4 are fixed; F1/F2/F5 are closed. Cross-browser connected smoke passes in Chromium, Firefox, and WebKit. The remaining public-beta gates are scenarios 2-5 on the real toolchain and a recorded 30-minute stability soak. |
+| Public beta (invite-only external users) | **PENDING SCENARIOS 2-5** | F3 and F4 are fixed; F1/F2/F5 are closed. Cross-browser connected smoke passes in Chromium, Firefox, and WebKit. The 30-minute single-session stability soak passes. The remaining public-beta gate is scenarios 2-5 on the real toolchain. |
 | Production / general availability | **NO** | Public-beta scenario evidence is still incomplete, and GA-only gates remain: real longitudinal usage, real signed certify, cross-platform, accessibility, performance, observability, and user-facing docs. |
 
 ## What's verified against real toolchain
@@ -31,7 +31,7 @@ Last updated 2026-05-13 after the pre-production readiness pass.
 - [x] **F3 diagnosed and fixed.** Daemon HTTP remains responsive during real-claude / real-codex subprocess execution (commits `1ae54f8`, `2344fde`).
 - [ ] **Scenarios 2-5 run with real toolchain.** Currently 1/5 scenarios run.
 - [x] Cross-browser smoke (Chromium + Firefox + WebKit). Harness: `python3 scripts/cross_browser_smoke.py`; latest local result passed.
-- [ ] 30-minute long-running stability test (single autopilot session, observe op-log size + memory). Harness: `python3 scripts/stability_soak.py`. Short 5-second harness validation passed.
+- [x] 30-minute long-running stability test (single autopilot session, observe op-log size + memory). Harness: `python3 scripts/stability_soak.py`; latest local result passed.
 - [x] F4: proof-support warnings surfaced in TrustCard.
 - [x] F2: TrustCard shows active "Computing trust posture..." state while build/verify is running before first posture.
 - [x] F1: HealthRow migrate label fixed for null `from_schema`.
@@ -50,13 +50,13 @@ Last updated 2026-05-13 after the pre-production readiness pass.
 
 Latest harness: `python3 scripts/stability_soak.py`.
 
-A short local validation passed on 2026-05-13:
+A 30-minute single-session autopilot soak passed on 2026-05-13:
 
-- Command: `python3 scripts/stability_soak.py --duration-seconds 5 --poll-seconds 1`
-- Evidence: `target/stress-pass/stability-soak/20260513-152116/summary.json`
-- Result: 4 create/formalize/approve/build cycles, 0 failures, peak RSS 11,488 KiB.
+- Command: `python3 scripts/stability_soak.py --duration-seconds 1800 --poll-seconds 5`
+- Evidence: `target/stress-pass/stability-soak/20260513-152704/summary.json`
+- Result: 1 session, 351 autopilot invocations, 0 failures, peak RSS 15,456 KiB, max op-log size 369, subscriber count stable at 0.
 
-No 30-minute pre-production soak has been recorded in this commit yet. The daemon now exports `active_sessions` and `subscriber_count` on `/v1/health` and `/v1/health/snapshot`; the soak writes `metrics.csv` and `summary.json` under `target/stress-pass/stability-soak/`.
+The daemon now exports `active_sessions` and `subscriber_count` on `/v1/health` and `/v1/health/snapshot`; the soak writes `metrics.csv` and `summary.json` under `target/stress-pass/stability-soak/`. No op-log truncation strategy is needed at the current baseline because the 30-minute max op-log size stayed below 10k.
 
 ### Before production / general availability
 - [ ] All public-beta items above.

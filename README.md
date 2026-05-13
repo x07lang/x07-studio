@@ -202,6 +202,11 @@ python3 scripts/cross_browser_smoke.py
 python3 scripts/stability_soak.py
 ```
 
+`stability_soak.py` defaults to the public-beta A7 workload: one formalized
+session with repeated autopilot starts, health polling, RSS/FD metrics, and
+op-log/subscriber-count tracking. Use `--workload build-loop` when you need the
+older multi-session build-cycle stress pattern.
+
 ## Notes
 
 - The daemon is the operational center in v0.1. The GUI and TUI are deliberately thin clients over the daemon REST surface.
