@@ -16,6 +16,7 @@ Severity legend:
 | F3 | **FIXED** | Daemon HTTP server returns "Empty reply" after autopilot kicks off real claude/codex (resolved by yielding-autopilot refactor; lock released around AutoClarify subprocess select-loop) | 1 |
 | F4 | FIX | Real `x07 verify` produces proof-support warnings the UI doesn't surface clearly | 1 |
 | F5 | NOTE | Real x07 picks discovery path from a sibling debug build, not `~/.x07/bin/` | infra |
+| F6 | **FIXED** | Intent heuristic doesn't recognize text-normalization / casefold / unicode prompts; falls through to generic `app.main.run_v1` with no semantic guidance, leaving the role-pipeline reviewer in a stall loop | 5 |
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 
@@ -163,3 +164,37 @@ The scenario config files (`scripts/scenarios/scenario-2..5-*.json`) are in plac
 | Daemon HTTP responsiveness | always under 50ms | **freezes after ~30s of subprocess activity** |
 
 The real toolchain actually *delivers more* than the fake — proper AGENT.md, proper specs, multiple modules, real verify diag with proof-support notes. The work is solid; the daemon's HTTP layer is the blocker.
+
+---
+
+## F6 — Intent heuristic misses Unicode / text-normalization prompts
+
+**Severity:** FIXED.
+
+**Observed (scenario 5):** the user typed *"Build a normalize-and-casefold text helper that accepts UTF-8 bytes, NFC-normalizes, then casefolds. Reject non-UTF-8 with a structured error."* Real claude clarified, real codex implemented, real x07 verified, but the impl was a 31-line identity passthrough (`view.to_bytes(bytes.view(payload))`). Reviewer kept saying "revise"; autopilot looped 6 realize attempts; phase eventually settled at `trust_review` with scaffold-only=true. UI rendered correctly throughout (HTTP responsive, Process Lane live), but the agents were grinding on nothing useful.
+
+**Root cause:** `intent_packet_from_raw` has a chain of `has_any(...)` keyword tests for known archetypes (sort/greet/calc/parser/validator/...). None of them recognized `normalize`, `casefold`, `unicode`, `utf-8`, `nfc`. The text fell through to the generic default `("app.main", "run_v1")`. The scaffolded spec then had no `requires/ensures` describing normalization — just `bytes -> bytes` — so codex (correctly) couldn't infer the semantic and emitted identity.
+
+**Evidence:**
+- Recorded session: `target/stress-pass/scenario-5-collab/workspace/spec/app.main.x07spec.json` — operation has no requires/ensures.
+- `src/app/main.x07.json` — body is `["view.to_bytes", ["bytes.view", "payload"]]` (pure identity).
+- Op log shows 6× `agent.realize.openai-codex` + 5× `review.round` (all `revise`) in a row.
+
+**Fix (commit on top of `0f360d7`):** extended `intent_packet_from_raw`'s archetype table:
+- `is_text_normalize` (normalize / casefold / nfc / nfd / unicode / utf-8 / utf8) → `app.text.normalize_v1`
+- `is_checksum` (checksum / crc32 / hash digest / fingerprint) → `app.checksum.digest_v1`
+- `is_codec` (cbor / msgpack / json codec / encode-decode) → `app.codec.roundtrip_v1`
+- `is_compress` (compress / zstd / gzip / deflate) → `app.compress.roundtrip_v1`
+
+Regression test `formalize_intent_recognizes_text_normalization_intents` exercises three text-normalize phrasings against the heuristic.
+
+**Status:** **FIXED.** The heuristic now picks a meaningful target for Unicode-shaped prompts. Followup deferred: the spec scaffolder still doesn't extract concrete `requires/ensures` from the intent text — codex still has to guess at the semantic. That's a deeper improvement (probably "ask the architect to draft requires/ensures from the intent before coder runs") and belongs in a future cycle.
+
+---
+
+## What scenario 5 also confirmed (positive findings)
+
+- **HTTP stays fully responsive under real subprocess load.** 18 probes during a 3-minute autopilot run all returned HTTP 200 in <2ms. F3 fix holds across multiple realize iterations, multiple reviewer rounds, multiple codex spawns.
+- **Real x07 0.2.10 toolchain integration works end-to-end.** AGENT.md is a real 30-line operating guide. `x07.json`, `x07.lock.json`, `x07-toolchain.toml` all populated correctly. Spec files (`toy.sorter`, `app.main`) materialize with proper JSON schema. Tests report + xtal verify diag both write `ok:true`.
+- **Role pipeline genuinely invokes two agents.** Op log shows 6× `agent.realize.openai-codex` (codex doing the implementation) interleaved with `review.round` records that name `claude-code` as the reviewer. The Architect+Coder+Reviewer pipeline is live.
+- **The autopilot's stall guard fires correctly.** After enough realize attempts produce scaffold-only summaries, autopilot moves on. The fix from `1ae54f8` continues to hold.

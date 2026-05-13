@@ -5651,6 +5651,20 @@ fn intent_packet_from_raw(
     let is_parser = has_any(&["parser", "parse json", "tokenize", "lex "]);
     let is_validator = has_any(&["validator", "validate ", "schema check"]);
     let is_cli_tool = has_any(&["cli tool", "command line tool", "command-line tool"]);
+    let is_text_normalize = has_any(&[
+        "normalize",
+        "casefold",
+        "case-fold",
+        "case fold",
+        "nfc",
+        "nfd",
+        "unicode",
+        "utf-8",
+        "utf8",
+    ]);
+    let is_checksum = has_any(&["checksum", "crc32", "hash digest", "fingerprint"]);
+    let is_codec = has_any(&["cbor", "msgpack", "messagepack", "json codec", "encode/decode"]);
+    let is_compress = has_any(&["compress", "decompress", "zstd", "gzip", "deflate"]);
     let is_service = has_any(
         [
             "http service",
@@ -5694,6 +5708,14 @@ fn intent_packet_from_raw(
         ("app.parser".to_string(), "parse_v1".to_string())
     } else if is_validator {
         ("app.validator".to_string(), "validate_v1".to_string())
+    } else if is_text_normalize {
+        ("app.text".to_string(), "normalize_v1".to_string())
+    } else if is_checksum {
+        ("app.checksum".to_string(), "digest_v1".to_string())
+    } else if is_codec {
+        ("app.codec".to_string(), "roundtrip_v1".to_string())
+    } else if is_compress {
+        ("app.compress".to_string(), "roundtrip_v1".to_string())
     } else if is_service {
         ("app.service".to_string(), "handle_v1".to_string())
     } else if is_cli_tool {
@@ -9523,6 +9545,41 @@ mod tests {
 
         assert_eq!(intent.targets[0].module_id, "atlas.app");
         assert_eq!(intent.targets[0].entry.as_deref(), Some("atlas_dev"));
+    }
+
+    #[test]
+    fn formalize_intent_recognizes_text_normalization_intents() {
+        // Real-toolchain scenario 5 ("normalize-and-casefold text helper")
+        // surfaced that the heuristic fell through to the generic
+        // `app.main.run_v1` for Unicode-shaped prompts, which gave the
+        // downstream agent no semantic guidance and produced an identity
+        // passthrough impl. The heuristic now routes text-normalize /
+        // casefold / unicode / utf-8 prompts to `app.text.normalize_v1`.
+        let root = temp_root();
+        let session = SessionSnapshot::new(
+            Uuid::nil(),
+            "normalize",
+            root.to_string(),
+            TaskType::NewBehavior,
+        );
+        for prompt in [
+            "Build a normalize-and-casefold text helper that accepts UTF-8 bytes, NFC-normalizes, then casefolds.",
+            "Normalize a unicode string with casefold semantics.",
+            "Implement NFC normalization on incoming UTF-8 payloads.",
+        ] {
+            let intent = intent_packet_from_raw(
+                &session,
+                prompt,
+                IntentInputMode::Text,
+                &[],
+            );
+            assert_eq!(
+                intent.targets[0].module_id, "app.text",
+                "prompt {prompt:?} should resolve to app.text but produced {:?}",
+                intent.targets[0]
+            );
+            assert_eq!(intent.targets[0].entry.as_deref(), Some("normalize_v1"));
+        }
     }
 
     #[test]
