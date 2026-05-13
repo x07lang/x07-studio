@@ -100,6 +100,11 @@ pub struct EnrichmentReport {
     pub entry: String,
     pub doc_added: bool,
     pub archetype_recognized: bool,
+    /// Agent id that produced the doc when enrichment came from a
+    /// supervised architect-agent run. `None` for deterministic floor
+    /// enrichments (the F7 archetype table) so the op-record can name
+    /// the source.
+    pub agent_id: Option<String>,
 }
 
 impl EnrichmentReport {
@@ -112,6 +117,101 @@ impl EnrichmentReport {
     }
 }
 
+/// Structured payload the architect agent emits as one
+/// `kind: "spec_enrichment"` agent_event line. Only `doc` is currently
+/// applied to the spec; `examples` are surfaced through the op-record
+/// for future use (Cycle-8 will pipe them into `IntentPacket.examples`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentEnrichment {
+    pub doc: String,
+    pub examples: Vec<String>,
+}
+
+impl AgentEnrichment {
+    /// Parse an agent_event payload `{kind:"spec_enrichment", doc:"…", examples:[…]}`
+    /// into a typed enrichment. Returns `None` when the event is missing
+    /// the kind tag, the schema marker, or a non-empty `doc` field —
+    /// agent-supplied empty docs are treated as "no enrichment" so we
+    /// don't overwrite the spec with whitespace.
+    pub fn from_event_value(value: &Value) -> Option<Self> {
+        if value.get("schema_version")?.as_str()? != "x07.studio.agent_event@0.1.0" {
+            return None;
+        }
+        if value.get("kind")?.as_str()? != "spec_enrichment" {
+            return None;
+        }
+        let doc = value.get("doc")?.as_str()?.trim();
+        if doc.is_empty() {
+            return None;
+        }
+        let examples = value
+            .get("examples")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .filter(|item| !item.trim().is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        Some(Self {
+            doc: doc.to_string(),
+            examples,
+        })
+    }
+}
+
+/// Apply an agent-supplied enrichment to the scaffolded spec on disk.
+/// Same conservatism as the deterministic floor: only fills `doc` when
+/// it is currently empty, never overwrites existing content. Returns
+/// the resulting report so the caller can log it.
+pub fn apply_agent_enrichment_to_spec(
+    root: &Utf8Path,
+    spec_relative_path: &str,
+    module_id: &str,
+    entry: &str,
+    agent_id: &str,
+    enrichment: &AgentEnrichment,
+) -> anyhow::Result<EnrichmentReport> {
+    let operation_name = format!("{module_id}.{entry}");
+    let mut report = EnrichmentReport {
+        spec_path: spec_relative_path.to_string(),
+        module_id: module_id.to_string(),
+        entry: entry.to_string(),
+        doc_added: false,
+        archetype_recognized: false,
+        agent_id: Some(agent_id.to_string()),
+    };
+    let absolute = root.join(spec_relative_path);
+    let raw = match std::fs::read_to_string(&absolute) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(report);
+        }
+        Err(error) => {
+            return Err(anyhow::anyhow!(
+                "failed to read scaffolded spec at `{absolute}`: {error}"
+            ));
+        }
+    };
+    let mut spec_value: Value = serde_json::from_str(&raw).map_err(|error| {
+        anyhow::anyhow!("scaffolded spec `{absolute}` is not valid JSON: {error}")
+    })?;
+    let mutated = merge_doc_into_spec(&mut spec_value, &operation_name, &enrichment.doc);
+    if !mutated {
+        return Ok(report);
+    }
+    report.doc_added = true;
+    let mut serialized = serde_json::to_string_pretty(&spec_value)
+        .map_err(|error| anyhow::anyhow!("failed to re-serialize enriched spec: {error}"))?;
+    serialized.push('\n');
+    std::fs::write(&absolute, serialized).map_err(|error| {
+        anyhow::anyhow!("failed to write enriched spec to `{absolute}`: {error}")
+    })?;
+    Ok(report)
+}
+
 /// Merge an archetype's semantic descriptor into a scaffolded x07 spec JSON
 /// document. The merge is conservative: it only fills empty fields, never
 /// overwrites existing content.
@@ -122,6 +222,14 @@ pub fn merge_semantic_into_spec(
     operation_name: &str,
     semantic: &ArchetypeSemantic,
 ) -> bool {
+    merge_doc_into_spec(spec_value, operation_name, semantic.doc)
+}
+
+/// Lower-level merge that takes a plain doc string. `merge_semantic_into_spec`
+/// uses this for archetype-driven enrichment; agent-driven enrichment uses it
+/// directly so it can pass a runtime-owned string without leaking it as
+/// `&'static str`.
+pub fn merge_doc_into_spec(spec_value: &mut Value, operation_name: &str, doc: &str) -> bool {
     let mut mutated = false;
     let Some(operations) = spec_value
         .get_mut("operations")
@@ -141,12 +249,44 @@ pub fn merge_semantic_into_spec(
         if current_doc.trim().is_empty() {
             op.as_object_mut()
                 .expect("operation entry is JSON object")
-                .insert("doc".to_string(), Value::String(semantic.doc.to_string()));
+                .insert("doc".to_string(), Value::String(doc.to_string()));
             mutated = true;
         }
         break;
     }
     mutated
+}
+
+/// Read the spec on disk and return `true` when the operation's `doc`
+/// field is empty (or the file is missing / unreadable / malformed). This
+/// is the gate the role pipeline uses to decide whether to invoke the
+/// architect agent: a non-empty doc means F7 already filled it, or the
+/// user authored their own, so no agent call is needed.
+pub fn operation_doc_is_empty(
+    root: &Utf8Path,
+    spec_relative_path: &str,
+    operation_name: &str,
+) -> bool {
+    let absolute = root.join(spec_relative_path);
+    let Ok(raw) = std::fs::read_to_string(&absolute) else {
+        return true;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return true;
+    };
+    let Some(operations) = value.get("operations").and_then(Value::as_array) else {
+        return true;
+    };
+    operations
+        .iter()
+        .find(|op| {
+            op.get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name == operation_name)
+        })
+        .and_then(|op| op.get("doc").and_then(Value::as_str))
+        .map(|doc| doc.trim().is_empty())
+        .unwrap_or(true)
 }
 
 /// Read the scaffolded spec at `spec_path`, merge in archetype semantics
@@ -168,6 +308,7 @@ pub fn enrich_scaffolded_spec(
         entry: entry.to_string(),
         doc_added: false,
         archetype_recognized: false,
+        agent_id: None,
     };
     let Some(semantic) = archetype_for(module_id, entry) else {
         return Ok(report);
@@ -353,5 +494,208 @@ mod tests {
         .unwrap();
         assert!(report.archetype_recognized);
         assert!(!report.doc_added);
+    }
+
+    #[test]
+    fn operation_doc_is_empty_reports_missing_file_as_empty() {
+        let root = fresh_root();
+        assert!(operation_doc_is_empty(
+            &root,
+            "spec/never.x07spec.json",
+            "never.op_v1",
+        ));
+    }
+
+    #[test]
+    fn operation_doc_is_empty_returns_false_when_doc_is_present() {
+        let root = fresh_root();
+        std::fs::create_dir_all(root.join("spec")).unwrap();
+        let spec = json!({
+            "operations": [{
+                "name": "app.x.go_v1",
+                "doc": "Already filled by F7 archetype table.",
+            }]
+        });
+        std::fs::write(
+            root.join("spec/app.x.x07spec.json"),
+            serde_json::to_string_pretty(&spec).unwrap(),
+        )
+        .unwrap();
+        assert!(!operation_doc_is_empty(
+            &root,
+            "spec/app.x.x07spec.json",
+            "app.x.go_v1",
+        ));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn operation_doc_is_empty_returns_true_for_whitespace_doc() {
+        let root = fresh_root();
+        std::fs::create_dir_all(root.join("spec")).unwrap();
+        let spec = json!({
+            "operations": [{
+                "name": "app.y.run_v1",
+                "doc": "  ",
+            }]
+        });
+        std::fs::write(
+            root.join("spec/app.y.x07spec.json"),
+            serde_json::to_string_pretty(&spec).unwrap(),
+        )
+        .unwrap();
+        assert!(operation_doc_is_empty(
+            &root,
+            "spec/app.y.x07spec.json",
+            "app.y.run_v1",
+        ));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn agent_enrichment_parses_valid_event() {
+        let event = json!({
+            "schema_version": "x07.studio.agent_event@0.1.0",
+            "kind": "spec_enrichment",
+            "doc": "Compute the moving median over a window of bytes.",
+            "examples": ["[1,2,3,4,5] window=3 -> [median]", "[] -> reject"]
+        });
+        let parsed = AgentEnrichment::from_event_value(&event).expect("valid enrichment");
+        assert!(parsed.doc.contains("moving median"));
+        assert_eq!(parsed.examples.len(), 2);
+    }
+
+    #[test]
+    fn agent_enrichment_rejects_wrong_kind() {
+        let event = json!({
+            "schema_version": "x07.studio.agent_event@0.1.0",
+            "kind": "clarify_question",
+            "doc": "Compute the moving median.",
+        });
+        assert!(AgentEnrichment::from_event_value(&event).is_none());
+    }
+
+    #[test]
+    fn agent_enrichment_rejects_empty_doc() {
+        let event = json!({
+            "schema_version": "x07.studio.agent_event@0.1.0",
+            "kind": "spec_enrichment",
+            "doc": "   ",
+        });
+        assert!(AgentEnrichment::from_event_value(&event).is_none());
+    }
+
+    #[test]
+    fn agent_enrichment_rejects_missing_schema() {
+        let event = json!({
+            "kind": "spec_enrichment",
+            "doc": "Something.",
+        });
+        assert!(AgentEnrichment::from_event_value(&event).is_none());
+    }
+
+    #[test]
+    fn apply_agent_enrichment_writes_doc_and_reports_agent_id() {
+        let root = fresh_root();
+        let spec_relative = "spec/app.main.x07spec.json";
+        std::fs::create_dir_all(root.join("spec")).unwrap();
+        let scaffolded = json!({
+            "schema_version": "x07.x07spec@0.1.0",
+            "module_id": "app.main",
+            "operations": [{
+                "id": "op.run_v1.v1",
+                "name": "app.main.run_v1",
+                "doc": "",
+                "params": [{"name": "payload", "ty": "bytes"}],
+                "result": "bytes",
+                "requires": [],
+                "ensures": [],
+                "ensures_props": [],
+                "invariant": [],
+            }],
+        });
+        std::fs::write(
+            root.join(spec_relative),
+            serde_json::to_string_pretty(&scaffolded).unwrap(),
+        )
+        .unwrap();
+
+        let enrichment = AgentEnrichment {
+            doc: "Compute the rolling stddev over a sliding window of bytes.".to_string(),
+            examples: vec!["[1,2,3] window=3 -> [stddev]".to_string()],
+        };
+        let report = apply_agent_enrichment_to_spec(
+            &root,
+            spec_relative,
+            "app.main",
+            "run_v1",
+            "claude-code",
+            &enrichment,
+        )
+        .unwrap();
+        assert!(report.doc_added);
+        assert_eq!(report.agent_id.as_deref(), Some("claude-code"));
+
+        let on_disk: Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(spec_relative)).unwrap())
+                .unwrap();
+        let doc = on_disk["operations"][0]["doc"].as_str().unwrap();
+        assert!(doc.contains("rolling stddev"));
+
+        let second = apply_agent_enrichment_to_spec(
+            &root,
+            spec_relative,
+            "app.main",
+            "run_v1",
+            "claude-code",
+            &enrichment,
+        )
+        .unwrap();
+        assert!(!second.doc_added);
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn apply_agent_enrichment_preserves_existing_doc() {
+        let root = fresh_root();
+        let spec_relative = "spec/app.main.x07spec.json";
+        std::fs::create_dir_all(root.join("spec")).unwrap();
+        let scaffolded = json!({
+            "schema_version": "x07.x07spec@0.1.0",
+            "operations": [{
+                "name": "app.main.run_v1",
+                "doc": "User-authored doc; do not clobber.",
+            }],
+        });
+        std::fs::write(
+            root.join(spec_relative),
+            serde_json::to_string_pretty(&scaffolded).unwrap(),
+        )
+        .unwrap();
+        let enrichment = AgentEnrichment {
+            doc: "Agent-derived doc that should NOT win over user content.".to_string(),
+            examples: Vec::new(),
+        };
+        let report = apply_agent_enrichment_to_spec(
+            &root,
+            spec_relative,
+            "app.main",
+            "run_v1",
+            "claude-code",
+            &enrichment,
+        )
+        .unwrap();
+        assert!(!report.doc_added);
+
+        let on_disk: Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(spec_relative)).unwrap())
+                .unwrap();
+        assert_eq!(
+            on_disk["operations"][0]["doc"].as_str().unwrap(),
+            "User-authored doc; do not clobber."
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

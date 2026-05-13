@@ -2425,6 +2425,107 @@ impl WorkspaceKernel {
                 session_id,
                 role_pipeline_op(session_id, &pipeline, "started"),
             )?;
+        }
+
+        let architect_id = crate::roles::resolve_actor(
+            AgentRole::Architect,
+            &agents,
+            &overrides,
+            preferences.as_ref(),
+        );
+        let architect_budget = pipeline
+            .stages
+            .iter()
+            .find(|stage| stage.action == "confirm_spec")
+            .and_then(|stage| stage.budget.as_ref())
+            .and_then(|budget| budget.wall_clock_ms)
+            .map(|ms| (ms / 1_000).max(1));
+        if let Some(architect_id) = architect_id {
+            // Tier-2 architect-agent enrichment: only fires when the spec
+            // on disk still has an empty `doc` (i.e. F7's deterministic
+            // floor didn't recognise the archetype). Costs one extra
+            // claude subscription invocation per session at most.
+            let should_invoke = {
+                let k = kernel.lock().await;
+                let session = k.model.get_session(session_id).cloned();
+                if let Some(session) = session {
+                    if let Some(intent) = session.intent.as_ref() {
+                        if let Some(target) = intent.targets.first() {
+                            if let Some(entry) = target.entry.as_deref() {
+                                let module_id = &target.module_id;
+                                let spec_relative = format!("spec/{module_id}.x07spec.json");
+                                let operation_name = format!("{module_id}.{entry}");
+                                crate::architect::operation_doc_is_empty(
+                                    k.root.as_path(),
+                                    &spec_relative,
+                                    &operation_name,
+                                )
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            if should_invoke {
+                let prepared = {
+                    let mut k = kernel.lock().await;
+                    k.start_intent_architect_enrich(session_id, &architect_id, architect_budget)
+                        .await
+                };
+                match prepared {
+                    Ok(prepared) => {
+                        let architect_run_op_id = prepared.op.id;
+                        if let Err(error) =
+                            Self::execute_prepared_agent_run_yielding(kernel, prepared).await
+                        {
+                            let mut k = kernel.lock().await;
+                            k.append_op(
+                                session_id,
+                                pipeline_stage_op(
+                                    session_id,
+                                    AgentRole::Architect,
+                                    "confirm_spec",
+                                    &format!(
+                                        "Architect agent run failed: {error}; falling back to scaffolded spec."
+                                    ),
+                                ),
+                            )?;
+                        } else {
+                            let mut k = kernel.lock().await;
+                            let _ = k.ingest_architect_enrichment(
+                                session_id,
+                                &architect_id,
+                                architect_run_op_id,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        let mut k = kernel.lock().await;
+                        k.append_op(
+                            session_id,
+                            pipeline_stage_op(
+                                session_id,
+                                AgentRole::Architect,
+                                "confirm_spec",
+                                &format!(
+                                    "Architect agent could not be prepared: {error}; falling back to scaffolded spec."
+                                ),
+                            ),
+                        )?;
+                    }
+                }
+            }
+        }
+
+        {
+            let mut k = kernel.lock().await;
             let session = k
                 .model
                 .get_session(session_id)
@@ -3474,6 +3575,95 @@ impl WorkspaceKernel {
         })
     }
 
+    /// Prepares a supervised architect-enrich round. The agent reads the
+    /// approved intent + the scaffolded spec on disk, emits exactly one
+    /// `spec_enrichment` `agent_event` JSON line describing the operation's
+    /// behaviour, and exits. The supervisor parses that event and merges the
+    /// `doc` field into the scaffolded spec — no source files are written by
+    /// the agent itself.
+    ///
+    /// Mirrors [`Self::start_intent_clarify_with_genpack`]. Only fires when
+    /// the F7 deterministic floor returned `archetype_recognized = false`,
+    /// so each subscription run produces incremental value over what the
+    /// archetype table already supplies.
+    pub async fn start_intent_architect_enrich(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let seed = self.genpack_context_seed(session_id)?;
+        let genpack = Self::resolve_genpack_context(seed).await;
+        self.start_intent_architect_enrich_with_genpack(
+            session_id,
+            agent_id,
+            timeout_seconds,
+            genpack.as_ref(),
+        )
+    }
+
+    pub fn start_intent_architect_enrich_with_genpack(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        timeout_seconds: Option<u64>,
+        genpack: Option<&GenpackHandoffContext>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        session.intent.as_ref().ok_or_else(|| {
+            anyhow!("session `{session_id}` must have an approved intent before architect-enrich")
+        })?;
+        let agent = self
+            .list_agent_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        ensure_agent_enabled(&agent, "running an architect-enrich round")?;
+        ensure_agent_command_available(&agent)?;
+        let handoff = agent_architect_enrich_handoff_from_session(&session, &agent, genpack);
+        let prompt_path = self
+            .store
+            .save_agent_handoff_with_suffix(&handoff, "architect-enrich")?;
+        let op = agent_architect_enrich_running_op(session_id, &agent, &handoff, &prompt_path);
+        let mut architect_agent = agent.clone();
+        architect_agent.allowed_verbs = vec!["intent.architect.enrich".to_string()];
+        architect_agent.write_roots = Vec::new();
+        // Use the subscription-safe builder so claude runs in non-interactive
+        // `-p` mode with stream-json output. The agent does not write files,
+        // but the flags are correct for a one-shot stdout-only invocation.
+        let prompt_content = std::fs::read_to_string(prompt_path.as_std_path())
+            .with_context(|| format!("read architect-enrich prompt at {prompt_path}"))?;
+        let (program, args) = crate::synthesis::build_realize_subscription_command(
+            &agent.id,
+            self.root.as_path(),
+            &prompt_content,
+        );
+        let command = AgentCommandPlan {
+            session_id,
+            op_id: op.id,
+            agent: architect_agent,
+            handoff: handoff.clone(),
+            prompt_path: prompt_path.clone(),
+            cwd: self.root.clone(),
+            program,
+            args,
+            timeout_seconds: timeout_seconds.unwrap_or(60).clamp(20, 240),
+            op_kind: "architect_enrich".to_string(),
+        };
+        let snapshot = self.append_op(session_id, op.clone())?;
+        Ok(PreparedAgentRun {
+            handoff,
+            op,
+            session: snapshot,
+            command: Some(command),
+            clarify_round: None,
+        })
+    }
+
     /// Prepares a supervised realize run that asks the agent to fill in the
     /// scaffolded `src/` modules. Mirrors the clarify pipeline: returns a
     /// `PreparedAgentRun` whose `command` the caller pumps through
@@ -3996,6 +4186,105 @@ impl WorkspaceKernel {
         )?;
         self.store.save_session(&snapshot)?;
         Ok(snapshot)
+    }
+
+    /// Walks the op-log for `agent.event.<agent_id>.spec_enrichment`
+    /// records produced by the architect-enrich run, picks the most recent
+    /// one (so subsequent reruns can override an earlier draft), parses it
+    /// into a typed `AgentEnrichment`, and merges the `doc` field into the
+    /// scaffolded spec on disk. Appends an `architect.enrich_spec`
+    /// op-record naming the agent.
+    ///
+    /// Returns `Ok(true)` if the spec was mutated, `Ok(false)` if the run
+    /// produced no usable enrichment event (or the spec already carried a
+    /// doc). Errors propagate when the spec file is unreadable / corrupt.
+    pub fn ingest_architect_enrichment(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        run_op_id: Uuid,
+    ) -> anyhow::Result<bool> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let intent = session
+            .intent
+            .as_ref()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
+        let Some(target) = intent.targets.first() else {
+            return Ok(false);
+        };
+        let module_id = target.module_id.clone();
+        let Some(entry) = target.entry.clone() else {
+            return Ok(false);
+        };
+        let run_op_started = session
+            .op_log
+            .iter()
+            .find(|op| op.id == run_op_id)
+            .map(|op| op.started_at.clone())
+            .unwrap_or_default();
+        let event_op_name = format!("agent.event.{agent_id}.spec_enrichment");
+        let event_value = session
+            .op_log
+            .iter()
+            .rev()
+            .filter(|op| op.op == event_op_name)
+            .filter(|op| run_op_started.is_empty() || op.started_at >= run_op_started)
+            .find_map(|op| {
+                op.report_json
+                    .as_ref()
+                    .and_then(|value| value.get("structured"))
+                    .cloned()
+            });
+        let Some(value) = event_value else {
+            self.append_op(
+                session_id,
+                architect_enrich_op(
+                    session_id,
+                    &crate::architect::EnrichmentReport {
+                        spec_path: format!("spec/{module_id}.x07spec.json"),
+                        module_id: module_id.clone(),
+                        entry: entry.clone(),
+                        doc_added: false,
+                        archetype_recognized: false,
+                        agent_id: Some(agent_id.to_string()),
+                    },
+                ),
+            )?;
+            return Ok(false);
+        };
+        let Some(enrichment) = crate::architect::AgentEnrichment::from_event_value(&value) else {
+            self.append_op(
+                session_id,
+                architect_enrich_op(
+                    session_id,
+                    &crate::architect::EnrichmentReport {
+                        spec_path: format!("spec/{module_id}.x07spec.json"),
+                        module_id: module_id.clone(),
+                        entry: entry.clone(),
+                        doc_added: false,
+                        archetype_recognized: false,
+                        agent_id: Some(agent_id.to_string()),
+                    },
+                ),
+            )?;
+            return Ok(false);
+        };
+        let spec_relative = format!("spec/{module_id}.x07spec.json");
+        let report = crate::architect::apply_agent_enrichment_to_spec(
+            self.root.as_path(),
+            &spec_relative,
+            &module_id,
+            &entry,
+            agent_id,
+            &enrichment,
+        )?;
+        let doc_added = report.doc_added;
+        self.append_op(session_id, architect_enrich_op(session_id, &report))?;
+        Ok(doc_added)
     }
 
     /// Applies user-supplied answers from the browser back into the intent
@@ -7450,13 +7739,24 @@ fn architect_stage_note(session: &SessionSnapshot) -> String {
         .get("entry")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
+    let agent_id = report.get("agent_id").and_then(serde_json::Value::as_str);
     let target = format!("{module_id}.{entry}");
-    if doc_added {
-        format!("Architect enriched `{target}` spec with archetype contract before handing off to the coder.")
-    } else if archetype_recognized {
-        format!("Architect confirmed `{target}` spec already carries the archetype contract.")
-    } else {
-        "Spec is already approved; architect lane confirmed the contract boundary.".to_string()
+    match (doc_added, agent_id, archetype_recognized) {
+        (true, Some(agent), _) => format!(
+            "Architect agent `{agent}` drafted a behaviour contract for `{target}` before handing off to the coder."
+        ),
+        (true, None, _) => format!(
+            "Architect enriched `{target}` spec with archetype contract before handing off to the coder."
+        ),
+        (false, _, true) => format!(
+            "Architect confirmed `{target}` spec already carries the archetype contract."
+        ),
+        (false, Some(agent), false) => format!(
+            "Architect agent `{agent}` ran but produced no usable enrichment; coder will work from the user intent alone."
+        ),
+        (false, None, false) => {
+            "Spec is already approved; architect lane confirmed the contract boundary.".to_string()
+        }
     }
 }
 
@@ -7464,15 +7764,24 @@ fn architect_enrich_op(session_id: Uuid, report: &crate::architect::EnrichmentRe
     let now = now_string();
     let fields_added = report.fields_added();
     let archetype_label = format!("{}.{}", report.module_id, report.entry);
-    let note = if !report.archetype_recognized {
-        format!("Architect: no archetype recognised for `{archetype_label}`; spec left as-is.")
-    } else if fields_added == 0 {
-        format!("Architect: archetype `{archetype_label}` already enriched; no changes written.")
-    } else {
+    let source = match (&report.agent_id, report.archetype_recognized) {
+        (Some(agent_id), _) => format!("architect agent `{agent_id}`"),
+        (None, true) => "archetype table".to_string(),
+        (None, false) => "studio-architect".to_string(),
+    };
+    let note = if report.doc_added {
         format!(
-            "Architect enriched `{archetype_label}` spec ({fields_added} field{plural}).",
+            "Architect ({source}) enriched `{archetype_label}` spec ({fields_added} field{plural}).",
             plural = if fields_added == 1 { "" } else { "s" },
         )
+    } else if report.agent_id.is_some() {
+        format!(
+            "Architect agent run produced no usable spec enrichment for `{archetype_label}`; spec left as-is."
+        )
+    } else if !report.archetype_recognized {
+        format!("Architect: no archetype recognised for `{archetype_label}`; spec left as-is.")
+    } else {
+        format!("Architect: archetype `{archetype_label}` already enriched; no changes written.")
     };
     let artifacts = if report.doc_added {
         vec![report.spec_path.clone()]
@@ -7509,6 +7818,7 @@ fn architect_enrich_op(session_id: Uuid, report: &crate::architect::EnrichmentRe
             "archetype_recognized": report.archetype_recognized,
             "doc_added": report.doc_added,
             "fields_added": fields_added,
+            "agent_id": report.agent_id,
         })),
         report_path: None,
     }
@@ -7819,6 +8129,44 @@ fn agent_clarify_handoff_from_session(
     }
 }
 
+fn agent_architect_enrich_handoff_from_session(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    genpack: Option<&GenpackHandoffContext>,
+) -> AgentHandoff {
+    let mut architect_agent = agent.clone();
+    architect_agent.allowed_verbs = vec!["intent.architect.enrich".to_string()];
+    architect_agent.write_roots = Vec::new();
+    let prompt_path = format!(
+        ".x07/studio/handoffs/{}-{}-architect-enrich.md",
+        session.session_id, agent.id
+    );
+    let command = std::iter::once(agent.command.clone())
+        .chain(agent.args.clone())
+        .chain(std::iter::once(prompt_path.clone()))
+        .collect::<Vec<_>>();
+    let artifacts = vec![
+        prompt_path.clone(),
+        format!(".x07/studio/sessions/{}.json", session.session_id),
+    ];
+    let prompt = render_agent_architect_enrich_prompt(session, &architect_agent, &command, genpack);
+    AgentHandoff {
+        schema_version: "x07.studio.agent_handoff@0.1.0".to_string(),
+        session_id: session.session_id,
+        agent_id: agent.id.clone(),
+        agent_label: agent.label.clone(),
+        command,
+        prompt_path,
+        prompt,
+        allowed_verbs: architect_agent.allowed_verbs.clone(),
+        mcp_tools: architect_agent.mcp_tools.clone(),
+        write_roots: architect_agent.write_roots.clone(),
+        approval_required: false,
+        artifacts,
+        created_at: now_string(),
+    }
+}
+
 fn agent_realize_handoff_from_session(
     session: &SessionSnapshot,
     agent: &AgentProfile,
@@ -8072,6 +8420,122 @@ Read the draft intent below and the prior clarification history. Then **either**
     }
     out.push_str(
         "\nWhen you are done emitting events, exit. The supervisor will read your output.\n",
+    );
+    out
+}
+
+fn render_agent_architect_enrich_prompt(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    command: &[String],
+    genpack: Option<&GenpackHandoffContext>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("# x07 Studio — Spec Enrichment (Architect Role)\n\n");
+    out.push_str(&format!("- Agent: {} (`{}`)\n", agent.label, agent.id));
+    out.push_str(&format!(
+        "- Session: {} (`{}`)\n",
+        session.title, session.session_id
+    ));
+    out.push_str(&format!("- Workspace: `{}`\n", session.root));
+    out.push_str(&format!("- Command: `{}`\n", command.join(" ")));
+    out.push_str(
+        "\nYou are running an **architect spec-enrichment** round. You do not write \
+any source code or files. The user has approved an intent; a scaffolded \
+spec already exists on disk, but its `doc` field is empty because the \
+intent text doesn't match any of Studio's known archetypes. Read the \
+intent text below and emit a single `spec_enrichment` event whose `doc` \
+field is a concrete 1-3 sentence behaviour description for the target \
+operation. That description is what the coder agent will read to write \
+the implementation.\n\n",
+    );
+    out.push_str("## Output Protocol\n\n");
+    out.push_str("Emit exactly one JSON line on stdout, then exit:\n\n");
+    out.push_str("```json\n");
+    out.push_str(
+        r#"{"schema_version":"x07.studio.agent_event@0.1.0","kind":"spec_enrichment","doc":"...","examples":["..."]}"#,
+    );
+    out.push_str("\n```\n\n");
+    out.push_str(
+        "Rules:\n\
+- `doc` is plain English, 1-3 sentences, concrete. Name the inputs, the \
+  outputs, the failure mode, and any non-obvious invariant.\n\
+- Do NOT use x07/XTAL jargon (e.g. `bytes`, `view.to_bytes`, `op.run_v1`). \
+  The coder reads this to build a mental model.\n\
+- `examples` is optional; 0-3 short input -> output illustrations are fine.\n\
+- Do NOT propose predicates (`requires` / `ensures`); the strict spec \
+  checker will reject anything malformed. Limit yourself to `doc` + \
+  `examples`.\n\
+- Do NOT propose new module ids or operation renames. The target is fixed.\n\
+- If the intent text is too ambiguous to write a useful doc, emit a \
+  single `spec_enrichment` event whose `doc` is the most specific \
+  description you can defend, and add an open question to `examples` \
+  prefixed with `OPEN:`. The user will see it.\n",
+    );
+    if let Some(markdown) = project_agent_contract_markdown(session) {
+        out.push_str("\n## Project AGENT.md\n\n");
+        out.push_str(&markdown);
+        if !markdown.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    if let Some(intent) = &session.intent {
+        out.push_str("\n## Approved Intent\n\n");
+        for target in &intent.targets {
+            out.push_str(&format!(
+                "- Target operation: `{}` / `{}`\n",
+                target.module_id,
+                target.entry.as_deref().unwrap_or("run_v1")
+            ));
+        }
+        match &intent.source {
+            IntentSource::Text { raw } | IntentSource::Spec { raw } => {
+                out.push_str(&format!("\nUser input:\n\n```\n{raw}\n```\n"));
+            }
+            IntentSource::Voice { transcript } => {
+                out.push_str(&format!("\nVoice transcript:\n\n```\n{transcript}\n```\n"));
+            }
+            IntentSource::Incident { path } => {
+                out.push_str(&format!("\nIncident path: `{path}`\n"));
+            }
+            IntentSource::Sketch { path } => {
+                out.push_str(&format!("\nSketch artifact: `{path}`\n"));
+            }
+            IntentSource::Image { path, mime } => {
+                out.push_str(&format!("\nImage artifact: `{path}` (`{mime}`)\n"));
+            }
+        }
+        if !intent.witnesses.is_empty() {
+            out.push_str("\nAccumulated witnesses:\n");
+            for witness in &intent.witnesses {
+                out.push_str(&format!("- `{:?}`: {}\n", witness.kind, witness.text));
+            }
+        }
+        if !intent.constraints.is_empty() {
+            out.push_str("\nConstraints:\n");
+            for constraint in &intent.constraints {
+                out.push_str(&format!("- {constraint}\n"));
+            }
+        }
+        if !intent.clarification_history.is_empty() {
+            out.push_str("\nPrior clarify Q&A:\n");
+            for turn in &intent.clarification_history {
+                out.push_str(&format!(
+                    "- Q (round {}, `{}`): {}\n",
+                    turn.round, turn.question_id, turn.question_text
+                ));
+                if let Some(answer) = &turn.answer_text {
+                    out.push_str(&format!("  A: {answer}\n"));
+                }
+            }
+        }
+    }
+    if let Some(genpack) = genpack {
+        render_genpack_section(&mut out, genpack);
+    }
+    out.push_str(
+        "\nEmit one `spec_enrichment` event, then exit. The supervisor will read \
+your output and update the scaffolded spec on disk.\n",
     );
     out
 }
@@ -8414,6 +8878,45 @@ fn agent_clarify_running_op(
     }
 }
 
+fn agent_architect_enrich_running_op(
+    session_id: Uuid,
+    agent: &AgentProfile,
+    handoff: &AgentHandoff,
+    prompt_path: &Utf8Path,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("agent.architect_enrich.{}", agent.id),
+        backend: "agent-supervisor".to_string(),
+        command: handoff.command.clone(),
+        started_at: now,
+        finished_at: None,
+        status: OperationStatus::Running,
+        exit_code: None,
+        artifacts: vec![prompt_path.to_string()],
+        notes: Some(format!(
+            "{} is drafting a behaviour description for the scaffolded spec.",
+            agent.label
+        )),
+        stdout: Some(format!(
+            "Supervised architect-enrich run started.\nCommand: {}\nPrompt: {}\n",
+            handoff.command.join(" "),
+            handoff.prompt_path
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "mode": "architect_enrich",
+            "handoff": handoff,
+        })),
+        report_path: None,
+    }
+}
+
 fn agent_realize_running_op(
     session_id: Uuid,
     agent: &AgentProfile,
@@ -8750,7 +9253,13 @@ fn parse_structured_agent_event(line: &str) -> Option<AgentSemanticEvent> {
     let kind = value.get("kind")?.as_str()?;
     if !matches!(
         kind,
-        "artifact" | "diagnostic" | "write" | "approval" | "clarify_question" | "clarify_done"
+        "artifact"
+            | "diagnostic"
+            | "write"
+            | "approval"
+            | "clarify_question"
+            | "clarify_done"
+            | "spec_enrichment"
     ) {
         return None;
     }
@@ -9587,6 +10096,229 @@ mod tests {
         assert!(
             note.contains("enriched"),
             "architect note should reflect enrichment, got `{note}`"
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn parse_structured_agent_event_accepts_spec_enrichment_kind() {
+        let line = r#"{"schema_version":"x07.studio.agent_event@0.1.0","kind":"spec_enrichment","doc":"Compute rolling stddev","examples":["[1,2,3]->[stddev]"]}"#;
+        let parsed = super::parse_structured_agent_event(line).expect("event parses");
+        assert_eq!(parsed.kind, "spec_enrichment");
+        assert!(parsed.structured.is_some());
+    }
+
+    #[test]
+    fn ingest_architect_enrichment_writes_doc_from_recorded_event() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("novel intent", TaskType::NewBehavior)
+            .expect("create session");
+
+        let (intent, _, _) = kernel
+            .formalize_intent(
+                session.session_id,
+                "Build something completely unique and unrecognised by archetype heuristics.",
+                IntentInputMode::Text,
+                &[],
+            )
+            .expect("formalize intent");
+        assert_eq!(intent.targets[0].module_id, "app.main");
+        assert_eq!(intent.targets[0].entry.as_deref(), Some("run_v1"));
+
+        // Set up the scaffolded spec on disk that the architect agent
+        // would have read.
+        let spec_relative = format!("spec/{}.x07spec.json", intent.targets[0].module_id);
+        std::fs::create_dir_all(root.join("spec")).expect("create spec dir");
+        let scaffolded = serde_json::json!({
+            "schema_version": "x07.x07spec@0.1.0",
+            "module_id": intent.targets[0].module_id,
+            "operations": [{
+                "id": "op.run_v1.v1",
+                "name": format!("{}.{}", intent.targets[0].module_id, intent.targets[0].entry.as_deref().unwrap_or("run_v1")),
+                "doc": "",
+                "params": [{"name": "payload", "ty": "bytes"}],
+                "result": "bytes",
+                "requires": [],
+                "ensures": [],
+                "ensures_props": [],
+                "invariant": [],
+            }],
+        });
+        std::fs::write(
+            root.join(&spec_relative),
+            serde_json::to_string_pretty(&scaffolded).unwrap(),
+        )
+        .unwrap();
+
+        // Simulate the running-op + the parsed event op-record that
+        // execute_agent_command_streaming would have appended after the
+        // real architect-agent subprocess emitted its line. We bypass the
+        // subprocess entirely and check the ingest path standalone.
+        let run_op = OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id: session.session_id,
+            op: "agent.architect_enrich.claude-code".to_string(),
+            backend: "agent-supervisor".to_string(),
+            command: vec!["claude".to_string()],
+            started_at: "1970-01-01T00:00:00Z".to_string(),
+            finished_at: Some("1970-01-01T00:00:01Z".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: Vec::new(),
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: None,
+            report_path: None,
+        };
+        kernel
+            .append_op(session.session_id, run_op.clone())
+            .expect("append run op");
+
+        let event_op = OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id: session.session_id,
+            op: "agent.event.claude-code.spec_enrichment".to_string(),
+            backend: "agent-supervisor".to_string(),
+            command: vec!["claude".to_string()],
+            started_at: "1970-01-01T00:00:02Z".to_string(),
+            finished_at: Some("1970-01-01T00:00:02Z".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: Vec::new(),
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: Some(serde_json::json!({
+                "structured": {
+                    "schema_version": "x07.studio.agent_event@0.1.0",
+                    "kind": "spec_enrichment",
+                    "doc": "Compute the moving exponential weighted average over the payload's u8 bytes; reject empty input with a structured error.",
+                    "examples": ["[10,20,30]->[ewma per-byte]"]
+                }
+            })),
+            report_path: None,
+        };
+        kernel
+            .append_op(session.session_id, event_op)
+            .expect("append event op");
+
+        let mutated = kernel
+            .ingest_architect_enrichment(session.session_id, "claude-code", run_op.id)
+            .expect("ingest");
+        assert!(mutated, "ingest should mutate the spec doc");
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(&spec_relative)).unwrap())
+                .unwrap();
+        let doc = on_disk["operations"][0]["doc"]
+            .as_str()
+            .expect("doc string");
+        assert!(
+            doc.contains("exponential weighted average"),
+            "spec doc should reflect the agent enrichment, got `{doc}`"
+        );
+
+        let snapshot = kernel
+            .get_session(session.session_id)
+            .expect("snapshot loaded");
+        let enrich_op = snapshot
+            .op_log
+            .iter()
+            .rev()
+            .find(|op| op.op == "architect.enrich_spec")
+            .expect("architect.enrich_spec recorded");
+        let report = enrich_op.report_json.as_ref().expect("report json present");
+        assert_eq!(
+            report.get("agent_id").and_then(serde_json::Value::as_str),
+            Some("claude-code")
+        );
+        assert_eq!(
+            report.get("doc_added").and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+
+        let note = architect_stage_note(&snapshot);
+        assert!(
+            note.contains("Architect agent `claude-code`"),
+            "stage note should name the agent, got `{note}`"
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ingest_architect_enrichment_records_visible_op_when_no_event_emitted() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("silent agent", TaskType::NewBehavior)
+            .expect("create session");
+
+        let (_intent, _, _) = kernel
+            .formalize_intent(
+                session.session_id,
+                "Truly novel undefined task that the agent will fail to enrich.",
+                IntentInputMode::Text,
+                &[],
+            )
+            .expect("formalize intent");
+
+        let run_op = OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id: session.session_id,
+            op: "agent.architect_enrich.claude-code".to_string(),
+            backend: "agent-supervisor".to_string(),
+            command: vec!["claude".to_string()],
+            started_at: "1970-01-01T00:00:00Z".to_string(),
+            finished_at: Some("1970-01-01T00:00:01Z".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: Vec::new(),
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: None,
+            report_path: None,
+        };
+        kernel
+            .append_op(session.session_id, run_op.clone())
+            .expect("append run op");
+
+        let mutated = kernel
+            .ingest_architect_enrichment(session.session_id, "claude-code", run_op.id)
+            .expect("ingest");
+        assert!(!mutated);
+
+        let snapshot = kernel
+            .get_session(session.session_id)
+            .expect("snapshot loaded");
+        let enrich_op = snapshot
+            .op_log
+            .iter()
+            .rev()
+            .find(|op| op.op == "architect.enrich_spec")
+            .expect("ingest should still record an op-record");
+        let report = enrich_op.report_json.as_ref().expect("report json present");
+        assert_eq!(
+            report.get("agent_id").and_then(serde_json::Value::as_str),
+            Some("claude-code")
+        );
+        assert_eq!(
+            report.get("doc_added").and_then(serde_json::Value::as_bool),
+            Some(false)
         );
 
         std::fs::remove_dir_all(root).ok();

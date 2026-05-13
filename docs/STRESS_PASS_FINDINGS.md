@@ -218,7 +218,39 @@ The archetype table covers the F6 targets — `app.text.normalize_v1`, `app.chec
 - `kernel::tests::architect_enrich_after_scaffold_writes_doc_for_known_archetype` exercises the full intent → vars → enrichment path: a normalize-and-casefold session ends with the on-disk spec carrying a doc string containing "NFC" and "casefold", plus an `architect.enrich_spec` op-record with `doc_added: true` in the session timeline.
 - `kernel::tests::architect_enrich_after_scaffold_is_quiet_for_unknown_archetype` confirms the unknown-archetype path still appends a visible op-record (with `archetype_recognized: false`) instead of silently no-op-ing.
 
-**Status:** **FIXED.** F6 ensures the right target; F7 ensures the spec actually carries the semantic. Together they close the scenario-5 stall loop at the deterministic level. Novel/never-seen intent shapes still route to `app.main.run_v1` and bypass enrichment — agent-driven `doc` extraction for those is the natural Tier-2 follow-up.
+**Status:** **FIXED** (Tier-1 deterministic floor + Tier-2 agent enrichment).
+
+### Tier-2 — Architect agent enrichment for novel intents
+
+The Tier-1 floor only fires for intents the F6 heuristic recognised. When the heuristic falls through to the generic `app.main.run_v1` default — i.e. the user typed something the keyword table doesn't catch — the spec's `doc` stays empty and the coder is back to guessing.
+
+Tier-2 closes that gap inside the role pipeline. After `role.pipeline.started` and before `role.stage.confirm_spec`, the yielding pipeline:
+
+1. Resolves the Architect role to a real agent (default: `claude-code`).
+2. Reads the scaffolded spec on disk and checks whether the matching operation's `doc` is empty (`crate::architect::operation_doc_is_empty`). If Tier-1 already filled it, skip — no extra subscription minutes spent.
+3. Builds a focused architect handoff (`agent_architect_enrich_handoff_from_session`) and spawns `claude -p --output-format stream-json --add-dir <workspace> <prompt>` through the existing F3-safe yielding executor. The agent has zero write roots and a single allowed verb: `intent.architect.enrich`.
+4. Parses the architect's `spec_enrichment` event line out of stdout (kind allowlisted in `parse_structured_agent_event`), validates the schema marker, and merges the `doc` field into the spec via `architect::apply_agent_enrichment_to_spec` — same conservatism as Tier-1, never overwrites existing `doc` content.
+5. Appends an `architect.enrich_spec` op-record naming the agent. The role pipeline's `confirm_spec` log then reflects the agent-driven enrichment (`Architect agent \`claude-code\` drafted a behaviour contract for app.main.run_v1 …`) instead of the canned dummy string.
+
+Failure modes are silent: if claude isn't installed, prep returns an error and the pipeline appends a `confirm_spec` log explaining and proceeds; if the subprocess crashes, same; if it emits no usable event, the op-record records `doc_added: false, agent_id: "claude-code"` so the timeline shows the agent ran even though nothing changed.
+
+Output protocol (kept narrow on purpose):
+
+```json
+{"schema_version":"x07.studio.agent_event@0.1.0","kind":"spec_enrichment","doc":"…","examples":["…"]}
+```
+
+Only `doc` is currently merged into the spec; `examples` are stored on the op-record for a future cycle that pipes them into `IntentPacket.examples`. Predicates (`requires`/`ensures`) are still off-limits to both tiers — the strict `spec.check` gate makes them risky to synthesize without a verification harness.
+
+**Cost gate:** Tier-2 fires at most once per session per role-pipeline turn, only when (a) an architect agent is configured and command-available, and (b) the spec's operation `doc` is still empty after Tier-1. Subscription-only contract preserved (`build_realize_subscription_command` reused — never `--bare`/`--oss`).
+
+**Tests:** loom-core grew to 121 passing (was 109 after Tier-1). New coverage:
+- `architect::tests::operation_doc_is_empty_*` (3) — checks the gate predicate.
+- `architect::tests::agent_enrichment_*` (4) — event-parser validation: schema marker, kind tag, non-empty doc, examples array.
+- `architect::tests::apply_agent_enrichment_*` (2) — disk merge, idempotence, user-doc preservation.
+- `kernel::tests::parse_structured_agent_event_accepts_spec_enrichment_kind` — confirms the agent_event allowlist accepts the new kind.
+- `kernel::tests::ingest_architect_enrichment_writes_doc_from_recorded_event` — full ingest: pre-populates a fake `agent.event.<agent>.spec_enrichment` op-record, calls ingest, asserts spec on disk + `architect.enrich_spec` op-record + agent-named stage note.
+- `kernel::tests::ingest_architect_enrichment_records_visible_op_when_no_event_emitted` — silent-agent path still appends a visible op-record so the timeline shows the run happened.
 
 ---
 
