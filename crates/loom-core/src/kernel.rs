@@ -266,6 +266,14 @@ impl WorkspaceKernel {
         self.model.session_list()
     }
 
+    pub fn active_session_count(&self) -> usize {
+        self.model.sessions.len()
+    }
+
+    pub fn event_subscriber_count(&self) -> usize {
+        self.event_bus.subscriber_count()
+    }
+
     pub fn get_session(&self, session_id: Uuid) -> Option<SessionSnapshot> {
         self.model.get_session(session_id).cloned()
     }

@@ -19,6 +19,8 @@
 	let voiceConfidence = 0;
 	let voice = createVoiceCapture();
 	let interruptVoice = createVoiceCapture('en-US', true);
+	const maxImageBytes = 4 * 1024 * 1024;
+	const allowedImageMimes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
 	const dispatch = createEventDispatcher<{
 		compose: { text: string; auto: boolean; voiceTranscript?: VoiceTranscript | null };
@@ -90,6 +92,7 @@
 		event.preventDefault();
 		const file = event.dataTransfer?.files?.[0];
 		if (!file) return;
+		if (!canAttachImage(file)) return;
 		imageName = file.name;
 		dispatch('image', { file });
 	}
@@ -98,9 +101,17 @@
 		const input = event.currentTarget as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
+		if (!canAttachImage(file)) {
+			input.value = '';
+			return;
+		}
 		imageName = file.name;
 		dispatch('image', { file });
 		input.value = '';
+	}
+
+	function canAttachImage(file: File) {
+		return file.size <= maxImageBytes && allowedImageMimes.has(file.type);
 	}
 
 	function toggleVoice() {
@@ -159,7 +170,7 @@
 			<span class="auto-label">Auto</span>
 		</label>
 		<label class="image-button" title="Attach a screenshot or sketch">
-			<input type="file" accept="image/*" on:change={onFile} />
+			<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" on:change={onFile} />
 			<span>{imageName || 'Image'}</span>
 		</label>
 		<button

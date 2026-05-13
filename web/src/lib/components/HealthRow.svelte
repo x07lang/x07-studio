@@ -23,9 +23,14 @@
 				? 'stale'
 				: 'blocked'
 		: 'checking';
-	$: migrateValue = snapshot?.migrate.needs_migration
-		? `${snapshot.migrate.from_schema ?? 'schema'} → ${snapshot.migrate.to_schema ?? '0.5'}`
-		: 'up to date';
+	function migrateLabel(migrate = snapshot?.migrate): string | null {
+		if (!migrate?.needs_migration) return null;
+		const to = migrate.to_schema ?? '0.5';
+		if (migrate.from_schema == null) return `init → ${to}`;
+		return `${migrate.from_schema} → ${to}`;
+	}
+
+	$: migrateValue = migrateLabel();
 </script>
 
 <section class="health-row {snapshot?.overall_color ?? 'amber'}" data-testid="health-row">
@@ -39,18 +44,19 @@
 		<span class="label">Lockfile</span>
 		<strong>{lockfileValue}</strong>
 	</button>
-	<button
-		type="button"
-		class="pill {migrateColor}"
-		class:resting={!snapshot?.migrate.needs_migration}
-		disabled={busy || !snapshot?.migrate.needs_migration}
-		on:click={() => dispatch('migrate')}
-		title={snapshot?.migrate.needs_migration ? 'Apply x07 migrate' : 'No schema migration required'}
-	>
-		<span class="dot" aria-hidden="true"></span>
-		<span class="label">Migrate</span>
-		<strong>{migrateValue}</strong>
-	</button>
+	{#if migrateValue}
+		<button
+			type="button"
+			class="pill {migrateColor}"
+			disabled={busy}
+			on:click={() => dispatch('migrate')}
+			title="Apply x07 migrate"
+		>
+			<span class="dot" aria-hidden="true"></span>
+			<span class="label">Migrate</span>
+			<strong>{migrateValue}</strong>
+		</button>
+	{/if}
 </section>
 
 <style>

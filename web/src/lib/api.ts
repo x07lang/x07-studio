@@ -142,6 +142,24 @@ export class StudioApi {
 		return { needs_migration: false, from_schema: 'x07.project@0.5.0', to_schema: target, project_schema_legacy: false };
 	}
 
+	/**
+	 * Uploads an image witness. The daemon enforces the same constraints:
+	 * PNG/JPEG/WebP/GIF only, with a 4 MiB maximum body.
+	 */
+	async uploadIntentImage(session: SessionSnapshot, file: File): Promise<void> {
+		if (this.demoMode) return;
+		const form = new FormData();
+		form.append('file', file);
+		form.append('mime', file.type || 'application/octet-stream');
+		const response = await fetch(`/v1/sessions/${session.session_id}/intent/image`, {
+			method: 'POST',
+			body: form
+		});
+		if (!response.ok) {
+			throw new HttpRequestError(response.status, await response.text());
+		}
+	}
+
 	async listSessions(): Promise<SessionSnapshot[]> {
 		if (!this.demoMode) {
 			try {
@@ -2115,6 +2133,8 @@ function demoHealthSnapshot(): HealthSnapshot {
 			to_schema: '0.5',
 			project_schema_legacy: false
 		},
+		subscriber_count: 0,
+		active_sessions: 0,
 		overall_color: 'green'
 	};
 }

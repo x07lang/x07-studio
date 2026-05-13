@@ -20,6 +20,10 @@ pub struct HealthResponse {
     pub workspace_root: String,
     pub defaults: StudioDefaults,
     pub components: Vec<RuntimeComponentStatus>,
+    #[serde(default)]
+    pub subscriber_count: u32,
+    #[serde(default)]
+    pub active_sessions: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -795,6 +799,8 @@ pub struct ContractSection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveAgentContractRequest {
+    /// Full AGENT.md body. The daemon rejects empty bodies and bodies larger
+    /// than 64 KiB before writing inside the session workspace.
     pub markdown: String,
     #[serde(default)]
     pub prior_hash: Option<String>,
@@ -827,6 +833,10 @@ pub struct HealthSnapshot {
     pub doctor: DoctorStatus,
     pub lockfile: LockfileStatus,
     pub migrate: MigrateStatus,
+    #[serde(default)]
+    pub subscriber_count: u32,
+    #[serde(default)]
+    pub active_sessions: u32,
     pub overall_color: String,
 }
 

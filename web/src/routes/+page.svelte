@@ -262,6 +262,7 @@
 			await compose({ text: recipe.intent_text, auto: true, voiceTranscript: null });
 			if (selected) {
 				agentContract = await api.getAgentContract(selected.session_id).catch(() => null);
+				agentContractOpen = agentContract != null;
 			}
 		} finally {
 			recipeStartInFlight = null;
@@ -589,14 +590,12 @@
 
 	async function uploadImage(detail: { file: File }) {
 		if (!selected) return;
-		const form = new FormData();
-		form.append('file', detail.file);
-		form.append('mime', detail.file.type || 'application/octet-stream');
-		await fetch(`/v1/sessions/${selected.session_id}/intent/image`, {
-			method: 'POST',
-			body: form
-		}).catch(() => undefined);
-		status = `Image witness added: ${detail.file.name}`;
+		try {
+			await api.uploadIntentImage(selected, detail.file);
+			status = `Image witness added: ${detail.file.name}`;
+		} catch (error) {
+			status = error instanceof Error ? error.message : 'Image witness upload failed';
+		}
 	}
 
 	async function submitRelease(rung: string) {

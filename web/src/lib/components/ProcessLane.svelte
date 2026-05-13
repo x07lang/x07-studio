@@ -14,7 +14,7 @@
 </script>
 
 {#if lane}
-	<section class="process-lane" data-testid="process-lane" aria-label="Process lane">
+	<section class="process-lane" data-testid="process-lane" aria-label="Process lane" aria-live="polite">
 		<div class="lane-copy">
 			<div>
 				<span>Now</span>
@@ -32,7 +32,7 @@
 			</div>
 		</div>
 		<div class="lane-strip">
-			{#each lane.steps as step}
+			{#each lane.steps as step (step.id)}
 				<StepNode
 					{step}
 					forecast={forecasts[step.id] ?? null}

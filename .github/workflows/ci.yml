@@ -55,6 +55,9 @@ jobs:
       - name: Rust tests
         run: cargo test --workspace -- --nocapture
 
+      - name: Subscription-only cost gate
+        run: python3 scripts/check_no_metered_api.py
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
@@ -78,9 +81,9 @@ jobs:
         working-directory: web
         run: npm run build
 
-      - name: Install Playwright browser
+      - name: Install Playwright browsers
         working-directory: web
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Web E2E
         working-directory: web

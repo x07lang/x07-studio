@@ -4,17 +4,20 @@
 	import PostureChip from './PostureChip.svelte';
 
 	export let posture: TrustPosture | null = null;
+	export let isComputing = false;
 
 	$: headline = posture
 		? `${posture.worlds.join(', ')} · ${posture.capabilities.length} OS read${posture.capabilities.length === 1 ? '' : 's'} · ${Math.round(posture.proof_coverage.proved_pct)}% proof coverage`
-		: 'Trust posture pending';
+		: isComputing
+			? 'Computing trust posture...'
+			: 'Trust posture pending';
 
 	$: proverFraction = posture && posture.budgets.prover_seconds_cap
 		? Math.min(1, posture.budgets.prover_seconds_used / posture.budgets.prover_seconds_cap)
 		: 0;
 </script>
 
-<section class="trust-card {posture?.posture_color ?? 'amber'}" data-testid="trust-card" use:colorMorph>
+<section class="trust-card {posture?.posture_color ?? 'amber'}" class:computing={!posture && isComputing} data-testid="trust-card" use:colorMorph>
 	<header>
 		<span class="eyebrow">Trust posture</span>
 		<PostureChip color={posture?.posture_color ?? 'amber'} label={posture?.trust_profile ?? 'pending'} />
@@ -75,7 +78,11 @@
 			</details>
 		{/if}
 	{:else}
-		<p class="pending-line">Build or formalize a session to capture the first posture.</p>
+		<p class="pending-line">
+			{isComputing
+				? "I'm working on it - checking the build, generating proofs, capturing posture."
+				: 'Build or formalize a session to capture the first posture.'}
+		</p>
 	{/if}
 </section>
 
@@ -106,6 +113,9 @@
 	.trust-card.green { border-left-color: var(--accent-pure); --accent: var(--accent-pure); }
 	.trust-card.amber { border-left-color: var(--accent-sandbox); --accent: var(--accent-sandbox); }
 	.trust-card.red   { border-left-color: var(--accent-danger); --accent: var(--accent-danger); }
+	.trust-card.computing {
+		animation: trust-pulse 1.2s ease-in-out infinite;
+	}
 	header {
 		display: flex;
 		align-items: center;
@@ -118,6 +128,10 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		font-weight: 600;
+	}
+	.trust-card.computing .eyebrow,
+	.trust-card.computing .headline {
+		animation: trust-copy-pulse 1.2s ease-in-out infinite;
 	}
 	.headline {
 		margin: 0;
@@ -274,5 +288,29 @@
 	}
 	.proof-note-message {
 		color: var(--text);
+	}
+
+	@keyframes trust-pulse {
+		0%, 100% {
+			box-shadow: 0 0 0 rgba(255, 195, 91, 0);
+			border-left-color: rgba(255, 195, 91, 0.7);
+		}
+		50% {
+			box-shadow: 0 0 18px rgba(255, 195, 91, 0.14);
+			border-left-color: var(--accent-sandbox);
+		}
+	}
+
+	@keyframes trust-copy-pulse {
+		0%, 100% { opacity: 0.7; }
+		50% { opacity: 1; }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.trust-card.computing,
+		.trust-card.computing .eyebrow,
+		.trust-card.computing .headline {
+			animation: none;
+		}
 	}
 </style>

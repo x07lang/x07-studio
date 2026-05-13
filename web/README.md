@@ -54,3 +54,10 @@ npm run build
 npm run e2e
 npm run e2e:connected
 ```
+
+Cross-browser pre-production smoke uses the connected fake daemon and runs the
+same XTAL flow on Chromium, Firefox, and WebKit:
+
+```bash
+python3 ../scripts/cross_browser_smoke.py
+```

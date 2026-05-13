@@ -14,7 +14,7 @@ describe('motion actions', () => {
 		const action = fadeUpOnMount(node);
 
 		expect(node.style.opacity).toBe('1');
-		action.destroy();
+		action.destroy?.();
 	});
 
 	it('keeps marquee non-invasive', () => {

@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::Path as StdPath;
 use std::sync::Arc;
 
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, patch, post};
@@ -48,6 +48,9 @@ use loom_types::api::{
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
 use loom_types::session::SessionSnapshot;
+
+const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
+const MAX_UPLOAD_REQUEST_BYTES: usize = MAX_UPLOAD_BYTES + 64 * 1024;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -275,6 +278,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/mcp/{connection_id}/call", post(call_mcp_tool))
         .route("/v1/mcp/{connection_id}", delete(close_mcp))
         .with_state(state)
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_REQUEST_BYTES))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }
@@ -474,20 +478,36 @@ fn executable_path_variant(path: &Utf8Path) -> Option<Utf8PathBuf> {
 async fn health(State(state): State<ApiState>) -> Json<HealthResponse> {
     let kernel = state.kernel.lock().await;
     let workspace_root = kernel.workspace_root().to_string();
+    let (active_sessions, subscriber_count) = health_counts(&kernel);
     Json(HealthResponse {
         ok: true,
         workspace_root,
         defaults: studio_defaults(),
         components: runtime_components(kernel.workspace_root()),
+        subscriber_count,
+        active_sessions,
     })
 }
 
 async fn health_snapshot(
     State(state): State<ApiState>,
 ) -> Result<Json<HealthSnapshot>, (StatusCode, String)> {
+    let (active_sessions, subscriber_count) = {
+        let kernel = state.kernel.lock().await;
+        health_counts(&kernel)
+    };
     let context = workspace_command_context(&state).await;
-    let snapshot = context.health_snapshot().await.map_err(conflict_error)?;
+    let mut snapshot = context.health_snapshot().await.map_err(conflict_error)?;
+    snapshot.active_sessions = active_sessions;
+    snapshot.subscriber_count = subscriber_count;
     Ok(Json(snapshot))
+}
+
+fn health_counts(kernel: &WorkspaceKernel) -> (u32, u32) {
+    (
+        kernel.active_session_count() as u32,
+        kernel.event_subscriber_count() as u32,
+    )
 }
 
 async fn apply_migrate(
@@ -1000,8 +1020,6 @@ async fn upload_intent_image(
     State(state): State<ApiState>,
     mut multipart: Multipart,
 ) -> Result<Json<IntentImageUploadResponse>, (StatusCode, String)> {
-    const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
-
     let mut file_mime = None;
     let mut declared_mime = None;
     let mut bytes = None;
@@ -1020,10 +1038,10 @@ async fn upload_intent_image(
                     .bytes()
                     .await
                     .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-                if data.len() > MAX_IMAGE_BYTES {
+                if data.len() > MAX_UPLOAD_BYTES {
                     return Err((
                         StatusCode::PAYLOAD_TOO_LARGE,
-                        "image upload exceeds 8 MiB".to_string(),
+                        "image upload exceeds 4 MiB".to_string(),
                     ));
                 }
                 bytes = Some(data.to_vec());
@@ -1050,10 +1068,10 @@ async fn upload_intent_image(
         .or(file_mime)
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "application/octet-stream".to_string());
-    if !mime.starts_with("image/") {
+    if !is_allowed_image_mime(&mime) {
         return Err((
             StatusCode::BAD_REQUEST,
-            "multipart file must use an image/* content type".to_string(),
+            "multipart file must use image/png, image/jpeg, image/webp, or image/gif".to_string(),
         ));
     }
 
@@ -1213,6 +1231,13 @@ async fn pick_realize_proposal(
         .await
         .map_err(internal_error)?;
     Ok(Json(response))
+}
+
+fn is_allowed_image_mime(mime: &str) -> bool {
+    matches!(
+        mime.split(';').next().unwrap_or_default().trim(),
+        "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+    )
 }
 
 async fn start_autopilot(
@@ -1969,7 +1994,7 @@ fn not_found() -> (StatusCode, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{env_setting, runtime_components, sibling_component_source};
+    use super::{env_setting, is_allowed_image_mime, runtime_components, sibling_component_source};
 
     #[test]
     fn runtime_components_include_required_x07_wasm_and_platform_tools() {
@@ -2044,6 +2069,15 @@ mod tests {
         std::env::set_var(&key, " ");
         assert_eq!(env_setting(&key, "fallback"), "fallback");
         std::env::remove_var(key);
+    }
+
+    #[test]
+    fn image_upload_mime_allowlist_rejects_active_content() {
+        assert!(is_allowed_image_mime("image/png"));
+        assert!(is_allowed_image_mime("image/jpeg; charset=binary"));
+        assert!(!is_allowed_image_mime("text/html"));
+        assert!(!is_allowed_image_mime("image/svg+xml"));
+        assert!(!is_allowed_image_mime("application/x-sh"));
     }
 
     fn temp_root() -> camino::Utf8PathBuf {

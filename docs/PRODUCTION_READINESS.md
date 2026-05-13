@@ -1,38 +1,62 @@
 # Production-readiness checklist
 
-Last updated 2026-05-13 after the Cycle 7 stress-pass first run.
+Last updated 2026-05-13 after the pre-production readiness pass.
 
 ## Decision summary
 
 | Track | Verdict | Why |
 |---|---|---|
 | Internal alpha (Studio dogfooded by x07 team) | **YES** | Canonical loop works against real x07 toolchain on disk. F3 fixed at both autopilot and per-substep level (commits `1ae54f8`, `2344fde`). HTTP stays responsive (8/8 probes <2ms) while real claude/codex/x07 are running. |
-| Public beta (invite-only external users) | **PARTIAL** | F3 fixed. Scenarios 2-5 still unrun against real toolchain (the harness + scenario configs are ready; needs an operator with ~10-20 min per scenario). Cross-browser + 30-min stability still needed. |
-| Production / general availability | **NO** | Scenarios 2-5 unrun + cross-browser unvalidated + no long-running stability data + real `x07lp` integration unrun. Multiple unknowns. |
+| Public beta (invite-only external users) | **PENDING SCENARIOS 2-5 + LONG SOAK** | F3 and F4 are fixed; F1/F2/F5 are closed. Cross-browser connected smoke passes in Chromium, Firefox, and WebKit. The remaining public-beta gates are scenarios 2-5 on the real toolchain and a recorded 30-minute stability soak. |
+| Production / general availability | **NO** | Public-beta scenario evidence is still incomplete, and GA-only gates remain: real longitudinal usage, real signed certify, cross-platform, accessibility, performance, observability, and user-facing docs. |
 
 ## What's verified against real toolchain
 
 - ✅ Real x07 0.2.10 toolchain integration on disk: AGENT.md is properly generated, x07.json + x07-toolchain.toml + x07.lock.json land, full spec/src/target trees materialize, real xtal.verify produces a proper diag report with `ok:true` and real proof-support warnings.
 - ✅ Subscription-only cost contract holds (gate stays green; only flat-rate CLIs invoked).
-- ✅ HealthRow correctly reflects real lockfile/migrate state (with cosmetic F1).
+- ✅ HealthRow correctly reflects real lockfile/migrate state; fresh workspaces render `MIGRATE init → 0.5`.
 - ✅ Build/clippy/type-check gates green.
 - ✅ All connected-E2E tests still green (the fake harness suite).
+- ✅ Daemon health reports active session and SSE subscriber counts for stability-soak monitoring.
+- ✅ TrustCard surfaces real proof-support diagnostics and distinguishes active posture computation from idle pending state.
 
 ## What's NOT verified — must be done before each tier
 
 ### Before internal alpha
 - [x] At least one real-toolchain scenario produces real on-disk artifacts. (Scenario 1 done.)
 - [x] Subscription-only contract enforced. (`no_metered_api` gate green.)
-- [ ] Document the F3 workaround (kill daemon, restart, reload page) in `docs/CYCLE_7_NOTES.md` so dogfooders know what to do when it freezes.
+- [x] Document the F3 workaround historically in `docs/CYCLE_7_NOTES.md`; it is now obsolete because F3 is fixed.
 
 ### Before public beta
-- [ ] **F3 diagnosed and fixed.** Daemon HTTP must remain responsive during real-claude / real-codex subprocess execution.
+- [x] **F3 diagnosed and fixed.** Daemon HTTP remains responsive during real-claude / real-codex subprocess execution (commits `1ae54f8`, `2344fde`).
 - [ ] **Scenarios 2-5 run with real toolchain.** Currently 1/5 scenarios run.
-- [ ] Cross-browser smoke (Safari + Firefox).
-- [ ] 30-minute long-running stability test (single autopilot session, observe op-log size + memory).
-- [ ] F4: proof-support warnings surfaced in TrustCard.
-- [ ] F1: HealthRow migrate label fixed for null `from_schema`.
-- [ ] Basic security review: AGENT.md write-back path, file uploads, MCP tool transparency.
+- [x] Cross-browser smoke (Chromium + Firefox + WebKit). Harness: `python3 scripts/cross_browser_smoke.py`; latest local result passed.
+- [ ] 30-minute long-running stability test (single autopilot session, observe op-log size + memory). Harness: `python3 scripts/stability_soak.py`. Short 5-second harness validation passed.
+- [x] F4: proof-support warnings surfaced in TrustCard.
+- [x] F2: TrustCard shows active "Computing trust posture..." state while build/verify is running before first posture.
+- [x] F1: HealthRow migrate label fixed for null `from_schema`.
+- [x] F5: x07 toolchain discovery order documented in `docs/V0_1_STATUS.md`.
+- [x] Basic security review: AGENT.md write-back path, file uploads, MCP tool transparency. See `docs/SECURITY_REVIEW.md`.
+
+## Browser support matrix
+
+| Browser engine | Current status | Evidence |
+|---|---|---|
+| Chromium | Pass | `target/stress-pass/cross-browser-smoke/summary.json` from `python3 scripts/cross_browser_smoke.py` |
+| Firefox | Pass | `target/stress-pass/cross-browser-smoke/summary.json` from `python3 scripts/cross_browser_smoke.py` |
+| WebKit / Safari engine | Pass; Web Speech remains headless-limited | `target/stress-pass/cross-browser-smoke/summary.json` from `python3 scripts/cross_browser_smoke.py` |
+
+## Stability soak results
+
+Latest harness: `python3 scripts/stability_soak.py`.
+
+A short local validation passed on 2026-05-13:
+
+- Command: `python3 scripts/stability_soak.py --duration-seconds 5 --poll-seconds 1`
+- Evidence: `target/stress-pass/stability-soak/20260513-152116/summary.json`
+- Result: 4 create/formalize/approve/build cycles, 0 failures, peak RSS 11,488 KiB.
+
+No 30-minute pre-production soak has been recorded in this commit yet. The daemon now exports `active_sessions` and `subscriber_count` on `/v1/health` and `/v1/health/snapshot`; the soak writes `metrics.csv` and `summary.json` under `target/stress-pass/stability-soak/`.
 
 ### Before production / general availability
 - [ ] All public-beta items above.
@@ -40,17 +64,16 @@ Last updated 2026-05-13 after the Cycle 7 stress-pass first run.
 - [ ] Real `x07lp` integration (currently faked).
 - [ ] Real `x07 trust certify` produces a real signed certificate; certificate viewer renders the real artifact.
 - [ ] Cross-platform: Linux + Windows-via-WSL confirmation.
-- [ ] Accessibility audit: ARIA, keyboard nav, screen reader smoke.
+- [ ] Accessibility audit: baseline focus/reduced-motion/ARIA pass documented in `docs/ACCESSIBILITY.md`; axe-core serious/critical audit still pending.
 - [ ] Performance: every Process Lane step under 500ms client-render; daemon p95 ≤ 200ms even under autopilot load.
-- [ ] Documentation: user guide, agent guide, troubleshooting runbook.
+- [x] Documentation: user guide, agent guide, troubleshooting runbook, and docs index.
 - [ ] Observability: per-session structured logs, error reporting opt-in, basic SLO dashboard.
 
 ## Open questions for Bodik
 
-1. **F3 priority.** Want me to take a swing at diagnosing the daemon hang next, or save for a focused debug session?
-2. **Workspace shape for scenarios 2-5.** Scenario 2 (CSV repair) assumes the workspace already has a failing impl to repair. Should scenarios run sequentially against a single workspace (cumulative state) or each get a fresh workspace?
-3. **Recording bundles in git.** The Cycle 7 plan said `.gitignore` them. Worth committing the *sanitized summary* artifacts (real-AGENT.md, real-verify-diag.json snippets) as evidence?
-4. **Internal-alpha launch timing.** Even with F3, the toolchain integration works on disk. Worth a soft launch to the x07 team this week, with the F3 workaround documented?
+1. **Workspace shape for scenarios 2-5.** Scenario 2 (CSV repair) assumes the workspace already has a failing impl to repair. Should scenarios run sequentially against a single workspace (cumulative state) or each get a fresh workspace?
+2. **Recording bundles in git.** The Cycle 7 plan said `.gitignore` them. Worth committing the *sanitized summary* artifacts (real-AGENT.md, real-verify-diag.json snippets) as evidence?
+3. **Internal-alpha launch timing.** The real-toolchain integration works on disk and the historical F3 workaround is obsolete. Worth a soft launch to the x07 team this week while scenarios 2-5 and the long soak are queued?
 
 ## Source documents
 

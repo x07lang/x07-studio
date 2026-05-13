@@ -9,6 +9,7 @@ use loom_types::api::{AgentContract, ContractSection};
 use loom_types::artifacts::IntentPacket;
 
 const CONTRACT_PATH: &str = "AGENT.md";
+const MAX_CONTRACT_BYTES: usize = 64 * 1024;
 
 pub fn read(
     root: &Utf8Path,
@@ -47,6 +48,9 @@ pub fn read(
 pub fn write(root: &Utf8Path, markdown: &str, prior_hash: Option<&str>) -> anyhow::Result<()> {
     if markdown.trim().is_empty() {
         bail!("AGENT.md cannot be empty");
+    }
+    if markdown.len() > MAX_CONTRACT_BYTES {
+        bail!("AGENT.md cannot exceed 64 KiB");
     }
     let path = root.join(CONTRACT_PATH);
     if let Some(expected) = prior_hash {
@@ -276,6 +280,18 @@ mod tests {
         let contract = read(root.as_path(), Uuid::new_v4(), None).expect("read");
         assert!(contract.exists);
         assert_eq!(contract.sections[0].body, "Test");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn write_rejects_oversized_agent_md() {
+        let root = camino::Utf8PathBuf::from_path_buf(std::env::temp_dir())
+            .expect("utf8")
+            .join(format!("x07-studio-agent-write-large-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let oversized = format!("# AGENT.md\n\n{}", "x".repeat(64 * 1024));
+        let error = write(root.as_path(), &oversized, None).expect_err("reject oversized body");
+        assert!(error.to_string().contains("64 KiB"));
         std::fs::remove_dir_all(root).ok();
     }
 }

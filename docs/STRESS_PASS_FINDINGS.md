@@ -11,11 +11,11 @@ Severity legend:
 
 | # | Severity | Title | Scenario |
 |---|---|---|---|
-| F1 | NOTE | HealthRow MIGRATE label reads "schema → 0.5" when `from_schema` is null | 1 |
-| F2 | NOTE | TrustCard pending stays "pending" for >1 min on a fresh real workspace | 1 |
+| F1 | **FIXED** | HealthRow MIGRATE label reads "schema → 0.5" when `from_schema` is null | 1 |
+| F2 | **FIXED** | TrustCard pending stays "pending" for >1 min on a fresh real workspace | 1 |
 | F3 | **FIXED** | Daemon HTTP server returns "Empty reply" after autopilot kicks off real claude/codex (resolved by yielding-autopilot refactor; lock released around AutoClarify subprocess select-loop) | 1 |
 | F4 | FIX | Real `x07 verify` produces proof-support warnings the UI doesn't surface clearly | 1 |
-| F5 | NOTE | Real x07 picks discovery path from a sibling debug build, not `~/.x07/bin/` | infra |
+| F5 | **DOCUMENTED** | Real x07 picks discovery path from a sibling debug build, not `~/.x07/bin/` | infra |
 | F6 | **FIXED** | Intent heuristic doesn't recognize text-normalization / casefold / unicode prompts; falls through to generic `app.main.run_v1` with no semantic guidance, leaving the role-pipeline reviewer in a stall loop | 5 |
 | F7 | **FIXED** | Architect role emits a dummy "spec confirmed" log without enriching the scaffolded spec; coder gets empty `requires/ensures/doc` and produces identity passthrough (deterministic floor — `doc` enrichment from archetype semantics) | 5 |
 | F8 | **FIXED** | `claude -p` variadic flags (`--add-dir`, `--allowedTools`) swallow the trailing prompt positional; architect-enrich subprocess produced 0 bytes and timed out | tier2 |
@@ -43,7 +43,7 @@ Severity legend:
 
 **Fix sketch:** `HealthRow.svelte` should render the value as `init → 0.5` (or just `pending`) when `from_schema` is null. The current `${from ?? 'schema'} → ${to}` expression masks the null/init case.
 
-**Status:** open. Cosmetic; doesn't block scenario flow.
+**Status:** **FIXED** in the pre-production readiness pass. `HealthRow.svelte` now renders the fresh-workspace case as `init → 0.5`, renders existing migrations as `<from> → <to>`, and hides the migrate pill when no migration is needed. `HealthRow.test.ts` covers all three cases.
 
 ---
 
@@ -57,7 +57,7 @@ Severity legend:
 
 **Fix sketch:** When session phase is past `intent_drafting` but no posture has been captured yet, the TrustCard should show an animated "Computing trust posture…" state instead of the same idle "pending" copy used at zero-session.
 
-**Status:** open. Would polish well but no functional impact.
+**Status:** **FIXED** in the pre-production readiness pass. `TrustCard.svelte` now accepts `isComputing`, renders `Computing trust posture...` while a session is past intent drafting but posture is still absent, and respects `prefers-reduced-motion`. `TrustCard.test.ts` covers captured, computing, and idle states.
 
 ---
 
@@ -133,7 +133,7 @@ This is *exactly* the kind of information the Trust Card should surface — "we 
 
 **Fix sketch:** `crates/loom-core/src/trust_posture.rs` should fold the verify-diag's `WXTAL_VERIFY_PROVE_*` warnings into `TrustPosture.assumptions` (or a new `proof_support_notes` field), and TrustCard.svelte should render them inline below the BUDGET/PROOFS grid.
 
-**Status:** open. Recommended fix before public beta.
+**Status:** **FIXED** by the Tier-1.5b proof-support pass. See the later F4 section for the implemented `proof_support_notes` projection and TrustCard panel.
 
 ---
 
@@ -145,7 +145,7 @@ This is *exactly* the kind of information the Trust Card should surface — "we 
 
 **Fix sketch:** Document the discovery order in `docs/CYCLE_2_NOTES.md` or `docs/V0_1_STATUS.md`. Optionally make the order configurable via env var.
 
-**Status:** open. Documentation only.
+**Status:** **DOCUMENTED** in `docs/V0_1_STATUS.md` under "x07 toolchain discovery order."
 
 ---
 

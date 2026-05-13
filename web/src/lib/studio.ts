@@ -561,6 +561,8 @@ export interface HealthSnapshot {
 	doctor: DoctorStatus;
 	lockfile: LockfileStatus;
 	migrate: MigrateStatus;
+	subscriber_count?: number;
+	active_sessions?: number;
 	overall_color: 'green' | 'amber' | 'red' | string;
 }
 
@@ -876,6 +878,8 @@ export interface HealthResponse {
 	workspace_root: string;
 	defaults: StudioDefaults;
 	components: RuntimeComponentStatus[];
+	subscriber_count?: number;
+	active_sessions?: number;
 }
 
 export interface StudioDefaults {
@@ -4092,6 +4096,8 @@ export function demoHealth(): HealthResponse {
 	return {
 		ok: true,
 		workspace_root: demoSession().root,
+		subscriber_count: 0,
+		active_sessions: 1,
 		defaults: {
 			daemon_addr: '127.0.0.1:7719',
 			provider_profile_id: 'ollama-local',

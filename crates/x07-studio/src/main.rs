@@ -949,6 +949,8 @@ mod tests {
                 provider_profile_id: "ollama-local".to_string(),
                 platform_state_dir: ".x07/platform".to_string(),
             },
+            subscriber_count: 0,
+            active_sessions: 0,
             components: vec![
                 runtime_component(
                     "x07-wasm",

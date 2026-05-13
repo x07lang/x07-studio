@@ -81,6 +81,7 @@
 		{ id: 'ask', title: 'Ask the project', open: false },
 		{ id: 'visual', title: 'Visual editor', open: false }
 	];
+	$: trustComputing = !!session && session.phase !== 'intent_drafting' && trustPosture == null;
 
 	function resolved(role: AgentRole) {
 		const override = roleOverrides?.[role];
@@ -98,7 +99,7 @@
 </script>
 
 <aside class="now-panel" data-testid="now-panel">
-	<TrustCard posture={trustPosture} />
+	<TrustCard posture={trustPosture} isComputing={trustComputing} />
 
 	<DrawerRail items={drawerItems}>
 		<section slot="now" class="now-card status-card">

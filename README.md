@@ -41,6 +41,13 @@ x07-studio/
 │   └── mcp-stdio.example.json
 ├── docs/
 │   ├── ARCHITECTURE.md
+│   ├── INDEX.md
+│   ├── USER_GUIDE.md
+│   ├── AGENT_GUIDE.md
+│   ├── TROUBLESHOOTING.md
+│   ├── ACCESSIBILITY.md
+│   ├── SECURITY_REVIEW.md
+│   ├── PRODUCTION_READINESS.md
 │   ├── API.md
 │   ├── TIMELINE_MODE.md
 │   ├── XTAL_WORKFLOW_FINDINGS.md
@@ -161,6 +168,15 @@ The Studio health endpoint and web onboarding panel report readiness for `x07`,
 the full Atlas release and local platform delivery lane; the agent CLIs are
 optional until supervised handoffs need to execute locally.
 
+## Documentation
+
+- Start with `docs/INDEX.md` for the audience-oriented doc map.
+- Use `docs/USER_GUIDE.md` for local usage and first-session walkthrough.
+- Use `docs/AGENT_GUIDE.md` for Codex/Claude handoff semantics, write roots, and MCP event visibility.
+- Use `docs/TROUBLESHOOTING.md` for daemon, upload, AGENT.md, and trust-posture issues.
+- Use `docs/PRODUCTION_READINESS.md` for public-beta and GA gates.
+- Use `docs/SECURITY_REVIEW.md` for the latest pre-production security pass.
+
 ## Validation
 
 ```bash
@@ -168,6 +184,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd web && npm run check && npm test && npm run build && npm run e2e && npm run e2e:connected
+python3 scripts/check_no_metered_api.py
 ```
 
 GitHub Actions builds the Rust workspace, the Svelte web app, Playwright E2E,
@@ -177,6 +194,13 @@ from `x07lang/x07-wasm-backend` and wires it into the packaged defaults so
 Atlas app workflows have a ready WASM component. CI validates each bundle's
 manifest, web app, launcher scripts, first-run defaults, zip archive, and
 bundled `x07-wasm` bootstrap status.
+
+Additional pre-production harnesses:
+
+```bash
+python3 scripts/cross_browser_smoke.py
+python3 scripts/stability_soak.py
+```
 
 ## Notes
 

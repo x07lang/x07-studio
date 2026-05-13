@@ -92,6 +92,8 @@ pub async fn snapshot(root: &Utf8Path, adapter: &CliAdapter) -> anyhow::Result<H
         doctor,
         lockfile,
         migrate,
+        subscriber_count: 0,
+        active_sessions: 0,
         overall_color: overall_color.to_string(),
     })
 }

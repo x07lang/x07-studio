@@ -9,6 +9,5 @@ test('connected health row renders doctor lockfile and migrate status', async ({
 	await expect(health).toContainText('ready');
 	await expect(health).toContainText('Lockfile');
 	await expect(health).toContainText('verified');
-	await expect(health).toContainText('Migrate');
-	await expect(health).toContainText('up to date');
+	await expect(health.getByText('Migrate')).toHaveCount(0);
 });

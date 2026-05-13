@@ -37,6 +37,11 @@ impl SessionEventBus {
         }
     }
 
+    pub fn subscriber_count(&self) -> usize {
+        let map = self.inner.lock().expect("session event bus poisoned");
+        map.values().map(|sender| sender.receiver_count()).sum()
+    }
+
     pub fn heartbeat_event() -> SessionStreamEvent {
         let unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)

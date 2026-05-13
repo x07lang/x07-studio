@@ -2,6 +2,19 @@
 	import type { AgentStreamEvent } from '$lib/studio';
 
 	export let event: AgentStreamEvent;
+
+	const sensitiveKeys = new Set(['api_key', 'apikey', 'authorization', 'cookie', 'password', 'secret', 'token']);
+
+	function redact(value: unknown): unknown {
+		if (Array.isArray(value)) return value.map(redact);
+		if (!value || typeof value !== 'object') return value;
+		return Object.fromEntries(
+			Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+				key,
+				sensitiveKeys.has(key.toLowerCase()) ? '[redacted]' : redact(item)
+			])
+		);
+	}
 </script>
 
 {#if event.kind === 'mcp_call'}
@@ -10,9 +23,10 @@
 			<h3>{event.server}</h3>
 			<code>{event.tool}</code>
 		</header>
-		<pre>{JSON.stringify(event.input, null, 2)}</pre>
+		<p class="redaction-policy">Sensitive args named token, secret, password, authorization, cookie, or api_key are redacted.</p>
+		<pre>{JSON.stringify(redact(event.input), null, 2)}</pre>
 		{#if event.output}
-			<pre>{JSON.stringify(event.output, null, 2)}</pre>
+			<pre>{JSON.stringify(redact(event.output), null, 2)}</pre>
 		{/if}
 	</section>
 {/if}
@@ -37,6 +51,12 @@
 	}
 	.mcp-call-card code {
 		color: var(--cyan);
+	}
+	.redaction-policy {
+		margin: 0;
+		color: var(--muted);
+		font-size: 11px;
+		line-height: 1.4;
 	}
 	.mcp-call-card pre {
 		max-height: 160px;

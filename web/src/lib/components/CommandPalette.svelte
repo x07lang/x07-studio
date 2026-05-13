@@ -18,9 +18,10 @@
 </script>
 
 {#if open}
-	<section class="command-palette" data-testid="command-palette">
+	<div class="command-palette" data-testid="command-palette" role="dialog" aria-modal="true" aria-label="Command palette">
 		<input
 			bind:value={query}
+			aria-label="Command"
 			placeholder="Command"
 			on:keydown={(event) => {
 				if (event.key === 'Escape') dispatch('close');
@@ -37,7 +38,7 @@
 				</button>
 			{/each}
 		</div>
-	</section>
+	</div>
 {/if}
 
 <style>

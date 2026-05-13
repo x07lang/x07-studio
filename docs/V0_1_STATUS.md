@@ -86,6 +86,24 @@
 - Cycle 6 process/collaboration surfaces are wired: Process Lane projection, current/next actor status, per-step evidence drawer, what-if forecasts, role metadata on agent profiles, per-session role overrides, role preferences in memory, review round turns, self-review fallback, step budget pause records, passive verbal interrupt hook, and manual Second opinion quorum
 - Session creation accepts `{title, task_type}` plus browser-compatible `{intent_text, mode}` aliases, and request schema versions for realize quorum and ladder release default at the API boundary
 - MCP calls parsed from coding-agent tool streams are preserved as transparent timeline turns instead of being collapsed into generic tool-use text
+- daemon HTTP stays responsive under real subprocess load through yielding autopilot and per-substep kernel lock release
+- proof-support diagnostics from real `x07 verify` surface in TrustCard instead of being hidden behind a single proof percentage
+- daemon health exposes active session and SSE subscriber counts for stability-soak monitoring
+
+## x07 toolchain discovery order
+
+Studio has two related resolution paths:
+
+1. Runtime component discovery for onboarding and packaged defaults:
+   1. `X07_STUDIO_X07_EXE` if set.
+   2. Bundled `components/x07`.
+   3. Sibling development checkout binaries, preferring `x07/target/release/x07` then `x07/target/debug/x07`.
+   4. `x07` on `PATH`.
+2. Command execution after defaults are loaded:
+   1. `X07_STUDIO_X07_EXE` if set.
+   2. `x07` on `PATH`.
+
+Set `X07_STUDIO_X07_EXE=$HOME/.x07/bin/x07` to force the installed toolchain when both an installed CLI and sibling debug/release builds exist. The same pattern applies to `X07_STUDIO_X07_WASM_EXE` and `X07_STUDIO_X07LP_EXE`.
 
 ## Still intentionally thin in v0.1
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { afterUpdate, onMount } from 'svelte';
 	import { createEventDispatcher } from 'svelte';
 	import type { CanonicalStep, WhatIfForecast } from '$lib/studio';
 	import RoleBadge from './RoleBadge.svelte';
@@ -12,6 +13,25 @@
 	$: seconds = step.elapsed_ms ? `${Math.max(1, Math.round(step.elapsed_ms / 1000))}s` : '';
 	$: budgetSeconds = step.budget?.wall_clock_ms ? Math.round(step.budget.wall_clock_ms / 1000) : null;
 	$: accessibleName = `Process step ${step.label}: ${step.actor}, ${step.status}`;
+
+	function perfEnabled() {
+		if (typeof window === 'undefined') return false;
+		return new URLSearchParams(window.location.search).has('perf');
+	}
+
+	function measureStep(kind: 'mount' | 'update') {
+		if (!perfEnabled()) return;
+		const start = `x07-studio.step-node.${step.id}.${kind}.start`;
+		const end = `x07-studio.step-node.${step.id}.${kind}.end`;
+		performance.mark(start);
+		queueMicrotask(() => {
+			performance.mark(end);
+			performance.measure(`x07-studio.step-node.${step.id}.${kind}`, start, end);
+		});
+	}
+
+	onMount(() => measureStep('mount'));
+	afterUpdate(() => measureStep('update'));
 </script>
 
 <button
@@ -106,6 +126,11 @@
 		}
 		50% {
 			box-shadow: 0 0 22px rgba(85, 214, 231, 0.22);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.step-node.running {
+			animation: none;
 		}
 	}
 </style>
