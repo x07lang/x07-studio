@@ -24,7 +24,7 @@ Severity legend:
 | F11 | **FIXED** | `architect_enrich_after_scaffold` wrote `serde_json::to_string_pretty`, which fails x07's `WXTAL_SPEC_NONCANONICAL_JSON` gate; downstream `xtal.verify` rejected the spec | tier1.5 |
 | F12 | **FIXED** | Build-pipeline scaffolds the impl as `["bytes.empty"]`; any non-trivial `ensures` predicate produced a counterexample. Tier-1.5b lands: predicates promote **after** `try_template_synthesis` / coder writes a real impl, mirrored into both spec and impl files | tier1.5b |
 | F4  | **FIXED** | Real `x07 verify` proof-support warnings (`WXTAL_VERIFY_PROVE_*`, `X07V_*`, `EXTAL_VERIFY_PROVE_*`) now surface in `TrustPosture.proof_support_notes`; TrustCard renders them in a collapsible "Proof support" panel with severity-colored borders | tier1.5b |
-| F13 | **OPEN** | Scenario 2 CSV repair does not exercise repair: parser spec remains doc-only (`ensures: []`), `xtal.verify` warns but succeeds, and no `xtal.repair` op fires | 2 |
+| F13 | **FIXED** | Scenario 2 CSV repair now exercises real repair: seeded CSV examples make `xtal.verify` fail, `xtal.repair` runs, and autopilot pauses cleanly at `realize_stalled` | 2 |
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 
@@ -398,7 +398,17 @@ After Tier-1.5b landed, I expanded the predicate-bearing archetype set:
 - `app.codec.roundtrip_v1` — `len(__result) = len(payload)` (roundtrip = identity, semantically + matches the identity synthesis floor).
 - `app.compress.roundtrip_v1` — same shape, same justification.
 
-Sandbox-validated each predicate end-to-end with real `x07 xtal spec check --project x07.json --input <spec>`: both return `ok: true`, zero diagnostics. The archetype-table now ships 4 provable predicates (sort `length_preserved`, greeter `result_nonempty`, codec `length_preserved`, compress `length_preserved`).
+Sandbox-validated each predicate end-to-end with real `x07 xtal spec check --project x07.json --input <spec>`: both return `ok: true`, zero diagnostics. At that point the archetype table shipped 4 provable predicates (sort `length_preserved`, greeter `result_nonempty`, codec `length_preserved`, compress `length_preserved`).
+
+**C2 update 2026-05-13:** parser, validator, and calculator now carry post-implementation predicates too:
+- `app.parser.parse_v1` — `len(__result) = len(payload)` against an explicit byte-copy template.
+- `app.validator.validate_v1` — `len(__result) = 1` against a one-byte status template.
+- `app.calculator.compute_v1` — `len(__result) <= 16` against a bounded copy template.
+
+Real Studio build-path validation used isolated daemon workspaces:
+- Parser: `target/stress-pass-c2-parser/workspace`, session `172fada6-2286-41fb-b658-d6aa7a51cefc`, `ensures_added: [0, 1]`, verify statuses `succeeded, succeeded`.
+- Validator: `target/stress-pass-c2-validator/workspace`, session `fcb826f1-2031-460e-b8b9-d79ff1c983e6`, `ensures_added: [0, 1]`, verify statuses `succeeded, succeeded`.
+- Calculator: `target/stress-pass-c2-calculator/workspace`, session `bd6109cc-0164-40a1-a9c4-168956bca86a`, `ensures_added: [0, 1]`, verify statuses `succeeded, succeeded`.
 
 **Visual validation** of F4 done with real toolchain: a fresh sort autopilot session through the SvelteKit UI confirmed the TrustCard renders the new "PROOF SUPPORT 2 notes" collapsible panel with the two real x07 warnings emitted from `x07 verify --prove`:
 
@@ -441,6 +451,23 @@ Both render in the new panel with amber severity borders (warning class), each w
 **Root cause:** `app.parser.parse_v1` remains doc-only in the archetype table. The deterministic parser synthesis floor writes a length-prefixed echo implementation, and the post-implementation predicate promotion path has no parser predicate to promote. With no formal contract for malformed quote rejection, `xtal.verify` has nothing strict to fail against, so the repair loop never becomes eligible.
 
 **Fix direction:** Complete the C2 parser predicate expansion, or add a scenario-specific pre-seeded failing contract/workspace setup. The fix must make a real `xtal.verify` failure reachable before claiming scenario 2 coverage. Do not mark A5 complete from the current bundle.
+
+**Status:** **FIXED** on 2026-05-13.
+
+Fix landed in two parts:
+- C2 predicate expansion added parser / validator / calculator post-implementation predicates and matching deterministic templates.
+- `scenario-2-csv-repair` now declares `workspace_fixture: scripts/scenarios/fixtures/scenario-2-csv-repair`; `stress_pass.py init` copies that fixture into the evidence bundle workspace. The fixture contains strict CSV examples, including empty input and malformed quote reporting.
+
+Real-daemon validation:
+- Bundle: `target/stress-pass-f13-check/scenario-2-csv-repair/`
+- Session: `394a5716-3251-4101-a299-cdf4616f8c05`
+- Snapshot: `op_count: 23`, `turn_count: 9`, `current_step: repair`
+- `target/xtal/verify/summary.json`: `outcome: "fail"`, top code `EXTAL_VERIFY_TESTS_FAILED`, tests `passed: 1`, `failed: 2`.
+- Op log: real `xtal.repair` op fired with status `failed`.
+- Repair report: `EXTAL_REPAIR_NO_ACTIONABLE_FAILURE` from real `x07 xtal repair --write --semantic-only`.
+- Autopilot final decision: `stage: "realize_stalled"`, `action: "user"`, reason "Verification failed and automatic repair did not reach verified evidence; pausing for human review."
+
+This accepts scenario 2 as the intended repair-loop coverage: the strict CSV fixture now reaches real failed verification, real repair, and a clean human pause. It does not claim a production CSV parser implementation.
 
 ---
 

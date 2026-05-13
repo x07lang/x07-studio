@@ -1,0 +1,10 @@
+{
+  "schema_version": "x07.project@0.5.0",
+  "compat": "0.5",
+  "world": "solve-pure",
+  "entry": "src/main.x07.json",
+  "operational_entry_symbol": "app.parser.parse_v1",
+  "module_roots": ["src", "gen"],
+  "dependencies": [],
+  "lockfile": "x07.lock.json"
+}

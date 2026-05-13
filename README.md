@@ -200,12 +200,19 @@ Additional pre-production harnesses:
 ```bash
 python3 scripts/cross_browser_smoke.py
 python3 scripts/stability_soak.py
+python3 scripts/stress_pass.py init --scenario scenario-2-csv-repair
 ```
 
 `stability_soak.py` defaults to the public-beta A7 workload: one formalized
 session with repeated autopilot starts, health polling, RSS/FD metrics, and
 op-log/subscriber-count tracking. Use `--workload build-loop` when you need the
 older multi-session build-cycle stress pattern.
+
+`stress_pass.py init --scenario scenario-2-csv-repair` seeds
+`target/stress-pass/scenario-2-csv-repair/workspace` from the CSV repair
+fixture when that workspace is missing. Boot the daemon against the seeded
+workspace to exercise the real `xtal.verify` failure -> `xtal.repair` -> clean
+`realize_stalled` pause path.
 
 ## Notes
 

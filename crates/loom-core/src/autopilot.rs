@@ -56,6 +56,12 @@ pub fn decide_next(state: &SessionSnapshot, policy: &AutopilotPolicy) -> Autopil
             "spec_approve",
             "Intent is stable enough to draft and approve the initial spec.",
         )
+    } else if state.phase == SessionPhase::RepairEligible {
+        (
+            AutopilotAction::Pause,
+            "realize_stalled",
+            "Verification failed and automatic repair did not reach verified evidence; pausing for human review.",
+        )
     } else if matches!(
         state.phase,
         SessionPhase::SpecApproved
@@ -373,6 +379,19 @@ mod tests {
             op_record(sid, "agent.realize.claude-code", None),
             op_record(sid, "summary.plain_english", Some(scaffold_report)),
         ]);
+
+        let plan = decide_next(&session, &AutopilotPolicy::default());
+
+        assert_eq!(plan.action, AutopilotAction::Pause);
+        assert_eq!(plan.decision.stage, "realize_stalled");
+    }
+
+    #[test]
+    fn repair_eligible_pauses_instead_of_restarting_build() {
+        let mut session =
+            SessionSnapshot::new(Uuid::new_v4(), "demo", "/tmp/demo", TaskType::NewBehavior);
+        session.phase = SessionPhase::RepairEligible;
+        session.intent = Some(IntentPacket::demo(session.session_id, "/tmp/demo"));
 
         let plan = decide_next(&session, &AutopilotPolicy::default());
 

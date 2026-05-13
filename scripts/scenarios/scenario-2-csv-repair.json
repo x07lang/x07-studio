@@ -2,6 +2,7 @@
   "id": "scenario-2-csv-repair",
   "goal": "Force the real repair loop: a CSV parser with an intentional constraint the first impl will trip.",
   "recipe_id": "data-cbor-roundtrip",
+  "workspace_fixture": "scripts/scenarios/fixtures/scenario-2-csv-repair",
   "intent_override": "Build a CSV parser that strictly rejects malformed quotes per RFC 4180. Report line numbers for every malformed row. Empty input must produce zero rows, not an error.",
   "expected_flow": [
     "Real x07 xtal verify fails on the strict-quote constraint",

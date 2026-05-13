@@ -7,7 +7,7 @@ Last updated 2026-05-13 after the pre-production readiness pass.
 | Track | Verdict | Why |
 |---|---|---|
 | Internal alpha (Studio dogfooded by x07 team) | **YES** | Canonical loop works against real x07 toolchain on disk. F3 fixed at both autopilot and per-substep level (commits `1ae54f8`, `2344fde`). HTTP stays responsive (8/8 probes <2ms) while real claude/codex/x07 are running. |
-| Public beta (invite-only external users) | **PENDING SCENARIOS 2-5** | F3 and F4 are fixed; F1/F2/F5 are closed. Cross-browser connected smoke passes in Chromium, Firefox, and WebKit. The 30-minute single-session stability soak passes. The remaining public-beta gate is scenarios 2-5 on the real toolchain. |
+| Public beta (invite-only external users) | **PENDING SCENARIOS 3-5** | F3 and F4 are fixed; F1/F2/F5/F13 are closed. Cross-browser connected smoke passes in Chromium, Firefox, and WebKit. The 30-minute single-session stability soak passes. Scenario 2 now exercises real repair and pauses cleanly; scenarios 3-5 still need real-toolchain evidence. |
 | Production / general availability | **NO** | Public-beta scenario evidence is still incomplete, and GA-only gates remain: real longitudinal usage, real signed certify, cross-platform, accessibility, performance, observability, and user-facing docs. |
 
 ## What's verified against real toolchain
@@ -29,7 +29,7 @@ Last updated 2026-05-13 after the pre-production readiness pass.
 
 ### Before public beta
 - [x] **F3 diagnosed and fixed.** Daemon HTTP remains responsive during real-claude / real-codex subprocess execution (commits `1ae54f8`, `2344fde`).
-- [ ] **Scenarios 2-5 run with real toolchain.** Currently 1/5 scenarios accepted. Scenario 2 was probed against the real daemon and is blocked by F13: no parser contract reaches `xtal.verify`, so the repair loop does not fire.
+- [ ] **Scenarios 2-5 run with real toolchain.** Currently 2/5 scenarios accepted. Scenario 2 now uses the seeded CSV fixture, reaches real `xtal.verify` failure, runs real `xtal.repair`, and pauses at `realize_stalled`; scenarios 3-5 remain.
 - [x] Cross-browser smoke (Chromium + Firefox + WebKit). Harness: `python3 scripts/cross_browser_smoke.py`; latest local result passed.
 - [x] 30-minute long-running stability test (single autopilot session, observe op-log size + memory). Harness: `python3 scripts/stability_soak.py`; latest local result passed.
 - [x] F4: proof-support warnings surfaced in TrustCard.
@@ -71,15 +71,15 @@ The daemon now exports `active_sessions` and `subscriber_count` on `/v1/health` 
 
 ## Open questions for Bodik
 
-1. **Workspace shape for scenarios 2-5.** Scenario 2 (CSV repair) assumes the workspace already has a failing impl to repair. Should scenarios run sequentially against a single workspace (cumulative state) or each get a fresh workspace?
-2. **Scenario 2 contract source.** Should the CSV repair scenario get a deterministic parser predicate (C2) or a pre-seeded failing contract fixture so repair is deliberately exercised?
-3. **Recording bundles in git.** The Cycle 7 plan said `.gitignore` them. Worth committing the *sanitized summary* artifacts (real-AGENT.md, real-verify-diag.json snippets) as evidence?
-4. **Internal-alpha launch timing.** The real-toolchain integration works on disk and the historical F3 workaround is obsolete. Worth a soft launch to the x07 team this week while scenarios 2-5 and the long soak are queued?
+1. **Workspace shape for scenarios 3-5.** Should the remaining scenarios run sequentially against a single workspace (cumulative state) or each get a fresh workspace?
+2. **Recording bundles in git.** The Cycle 7 plan said `.gitignore` them. Worth committing the *sanitized summary* artifacts (real-AGENT.md, real-verify-diag.json snippets) as evidence?
+3. **Internal-alpha launch timing.** The real-toolchain integration works on disk and the historical F3 workaround is obsolete. Worth a soft launch to the x07 team this week while scenarios 3-5 are queued?
 
 ## Source documents
 
-- `docs/STRESS_PASS_FINDINGS.md` — full finding log F1..F5.
+- `docs/STRESS_PASS_FINDINGS.md` — full finding log F1..F13.
 - `dev-docs/phases/x07-studio/cycle-7-plan.md` — the original Cycle 7 plan.
 - `target/stress-pass/scenario-1-text-utils/` — scenario 1 evidence (artifacts, screenshots, scenario config).
+- `target/stress-pass-f13-check/scenario-2-csv-repair/` — scenario 2 repair-loop evidence (real `xtal.verify` failure, real `xtal.repair`, clean `realize_stalled` pause).
 - `scripts/stress_pass.py` — the recording harness.
 - `scripts/scenarios/scenario-1..5-*.json` — scenario configs.

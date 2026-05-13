@@ -7,7 +7,7 @@ The real-toolchain stress pass started here. Per-phase status as of 2026-05-13:
 | Plan | done | `dev-docs/phases/x07-studio/cycle-7-plan.md` |
 | 7A — harness | done | `scripts/stress_pass.py` (record-only, not orchestrator) |
 | 7B — scenario 1 (text-utils baseline) | done — F3 fixed, scenario 1 baseline captured | Real toolchain delivered real artifacts on disk; daemon remains responsive during subprocess load after commits `1ae54f8` and `2344fde` |
-| 7C — scenario 2 (CSV repair) | deferred | Pending scenarios-2-5 sweep |
+| 7C — scenario 2 (CSV repair) | done — repair loop exercised, clean pause | Seeded CSV example fixture makes real `xtal.verify` fail; real `xtal.repair` runs and autopilot pauses at `realize_stalled` |
 | 7D — scenario 3 (os-time widen) | deferred | Pending scenarios-2-5 sweep |
 | 7E — scenario 4 (PBT regression) | deferred | Pending scenarios-2-5 sweep |
 | 7F — scenario 5 (Architect+Coder) | deferred | Pending scenarios-2-5 sweep |
@@ -34,6 +34,6 @@ This was good enough for internal alpha before the fix. It is not an expected pa
 
 ## Suggested next steps
 
-1. **Run scenarios 2-5** in sequence against the real toolchain and update findings.
+1. **Run scenarios 3-5** in sequence against the real toolchain and update findings.
 2. Run `python3 scripts/cross_browser_smoke.py` and record the browser support matrix.
 3. Run `python3 scripts/stability_soak.py` for the 30-minute public-beta soak and record `metrics.csv`/`summary.json`.

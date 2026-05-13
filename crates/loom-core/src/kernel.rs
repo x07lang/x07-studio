@@ -2768,22 +2768,28 @@ impl WorkspaceKernel {
             if !stub_paths_pre.is_empty() {
                 if let Some(template_op) = self.try_template_synthesis(&current)? {
                     self.append_op(session_id, template_op)?;
+                    let _ = self
+                        .architect_promote_predicates_after_impl(session_id)
+                        .await;
                     // Re-verify against the synthesized impl. We're still
                     // in TrustReview from the build path, so the reducer
                     // rejects another VerificationPassed event — that's
                     // fine: we just want the fresh xtal.verify report on
                     // disk so the next summary scan reflects reality.
-                    let _ = self
+                    let after_check = self
                         .run_binding(session_id, "impl.check", &BTreeMap::new())
                         .await;
-                    let _ = self
-                        .run_binding(session_id, "xtal.verify", &build_vars)
-                        .await;
-                    current = self
-                        .model
-                        .get_session(session_id)
-                        .cloned()
-                        .unwrap_or(current);
+                    if let Ok(snapshot) = after_check {
+                        current = snapshot;
+                        if !last_op_failed(&current) {
+                            if let Ok(snapshot) = self
+                                .run_binding(session_id, "xtal.verify", &build_vars)
+                                .await
+                            {
+                                current = snapshot;
+                            }
+                        }
+                    }
                 }
             }
             let summary_op =

@@ -126,9 +126,24 @@ def init_bundle(scenario_id: str, bundle_root: Path) -> Path:
     if scenario_path.exists():
         scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
         shutil.copy(scenario_path, bundle / "scenario.json")
+        fixture_rel = scenario.get("workspace_fixture")
+        if fixture_rel:
+            fixture = (REPO_ROOT / fixture_rel).resolve()
+            if not fixture.is_relative_to(REPO_ROOT):
+                raise SystemExit(f"workspace_fixture escapes repo: {fixture_rel}")
+            if not fixture.is_dir():
+                raise SystemExit(f"workspace_fixture not found: {fixture_rel}")
+            workspace = bundle / "workspace"
+            if not workspace.exists():
+                shutil.copytree(fixture, workspace)
 
     readme = bundle / "README.md"
     if not readme.exists():
+        workspace_hint = (
+            f"`{bundle / 'workspace'}`"
+            if (bundle / "workspace").exists()
+            else "`<fresh workspace>`"
+        )
         lines = [
             f"# Stress-pass bundle — {scenario_id}",
             "",
@@ -141,7 +156,7 @@ def init_bundle(scenario_id: str, bundle_root: Path) -> Path:
         lines.extend([
             "",
             "## Operator steps",
-            "1. Boot daemon: `python3 scripts/launch_studio_web.py --workspace <path>` or `cargo run -p loom-daemon -- serve --root <path>`.",
+            f"1. Boot daemon with workspace {workspace_hint}: `python3 scripts/launch_studio_web.py --workspace <path>` or `cargo run -p loom-daemon -- serve --root <path>`.",
             "2. Open the UI; pick the configured recipe.",
             "3. After each phase transition (intent / build / verify / review / pause), run:",
             "",

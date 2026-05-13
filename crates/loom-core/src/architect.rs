@@ -12,11 +12,9 @@
 //! concrete behaviour description so the coder agent has something to
 //! implement against.
 //!
-//! Future cycles can extend this with predicate-based `ensures` (e.g.
-//! length bounds the prover can check) and `ensures_props` references to
-//! generated property tests. The current pass intentionally limits itself
-//! to the `doc` field — predicates are gated by `spec.check`, and a wrong
-//! predicate would break the whole flow.
+//! Predicate-based `ensures` stay in the archetype table and are promoted
+//! only after an implementation exists. `spec.check` and the prover both
+//! consume these clauses, so the table must stay conservative.
 
 use camino::Utf8Path;
 use serde_json::Value;
@@ -127,17 +125,26 @@ pub fn archetype_for(module_id: &str, entry: &str) -> Option<ArchetypeSemantic> 
         ("app.calculator", "compute_v1") => ArchetypeSemantic {
             doc: "Compute the arithmetic result described by the input payload and return it \
                   as bytes. Reject malformed input with a structured error.",
-            ensures: &[],
+            ensures: &[SpecPredicate {
+                id: "result_bounded",
+                expr_json: r#"["<=", ["bytes.len", "__result"], 16]"#,
+            }],
         },
         ("app.parser", "parse_v1") => ArchetypeSemantic {
             doc: "Parse the input bytes according to the agreed grammar. Return the parsed \
                   structure encoded as bytes. Reject malformed input with a structured error.",
-            ensures: &[],
+            ensures: &[SpecPredicate {
+                id: "length_preserved_floor",
+                expr_json: r#"["=", ["bytes.len", "__result"], ["bytes.len", "payload"]]"#,
+            }],
         },
         ("app.validator", "validate_v1") => ArchetypeSemantic {
             doc: "Validate the input payload against the agreed schema. Return a structured \
                   status indicating pass or fail. Do not mutate the input.",
-            ensures: &[],
+            ensures: &[SpecPredicate {
+                id: "status_byte",
+                expr_json: r#"["=", ["bytes.len", "__result"], 1]"#,
+            }],
         },
         ("app.cli", "run_v1") => ArchetypeSemantic {
             doc: "Interpret the input payload as a command request and return the command's \
@@ -676,6 +683,27 @@ mod tests {
         let semantic = archetype_for("app.compress", "roundtrip_v1").unwrap();
         assert_eq!(semantic.ensures.len(), 1);
         assert_eq!(semantic.ensures[0].id, "length_preserved");
+    }
+
+    #[test]
+    fn parser_archetype_carries_length_preserved_floor_predicate() {
+        let semantic = archetype_for("app.parser", "parse_v1").unwrap();
+        assert_eq!(semantic.ensures.len(), 1);
+        assert_eq!(semantic.ensures[0].id, "length_preserved_floor");
+    }
+
+    #[test]
+    fn validator_archetype_carries_status_byte_predicate() {
+        let semantic = archetype_for("app.validator", "validate_v1").unwrap();
+        assert_eq!(semantic.ensures.len(), 1);
+        assert_eq!(semantic.ensures[0].id, "status_byte");
+    }
+
+    #[test]
+    fn calculator_archetype_carries_bounded_result_predicate() {
+        let semantic = archetype_for("app.calculator", "compute_v1").unwrap();
+        assert_eq!(semantic.ensures.len(), 1);
+        assert_eq!(semantic.ensures[0].id, "result_bounded");
     }
 
     #[test]

@@ -1,0 +1,22 @@
+{
+  "schema_version": "x07.x07spec@0.1.0",
+  "module_id": "app.parser",
+  "operations": [
+    {
+      "id": "op.parse_v1.v1",
+      "name": "app.parser.parse_v1",
+      "doc": "Parse RFC 4180 CSV bytes. Valid rows return normalized CSV bytes. Empty input returns zero rows as empty bytes. Malformed quotes return RFC4180-violation:line=<line> as bytes.",
+      "params": [
+        {
+          "name": "payload",
+          "ty": "bytes"
+        }
+      ],
+      "result": "bytes",
+      "requires": [],
+      "ensures": [],
+      "ensures_props": [],
+      "examples_ref": "spec/app.parser.x07spec.examples.jsonl"
+    }
+  ]
+}

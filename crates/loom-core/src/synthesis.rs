@@ -222,27 +222,35 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
         ]));
     }
     if lowered.contains("calc") {
-        // Pass-through identity over bytes — a placeholder until the user
-        // hands off to the subscription agent for the actual arithmetic.
+        // Bounded result floor: copy at most 16 bytes. The real arithmetic
+        // semantics stay with the subscription agent, but this shape keeps
+        // the result contract provable and Try-It bounded.
         return Some(json!([
             "begin",
+            ["let", "n", ["bytes.len", "payload"]],
+            ["let", "limit", ["if", [">", "n", 16], 16, "n"]],
+            ["let", "out", ["bytes.empty"]],
             [
-                "if",
-                ["=", ["bytes.len", "payload"], 0],
-                ["return", ["bytes.empty"]],
-                0
+                "for",
+                "i",
+                0,
+                "limit",
+                [
+                    "set",
+                    "out",
+                    ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]
+                ]
             ],
-            ["view.to_bytes", ["bytes.view", "payload"]]
+            "out"
         ]));
     }
-    if lowered.contains("parse") || lowered.contains("validator") {
-        // Length-prefixed echo: returns `<u8:len><payload>`. Real parsers
-        // need spec-driven generation; this is a Try-It floor.
+    if lowered.contains("parse") {
+        // Parser floor: preserve the input byte length. Specific grammars
+        // come from examples/properties or a subscription agent.
         return Some(json!([
             "begin",
             ["let", "n", ["bytes.len", "payload"]],
             ["let", "out", ["bytes.empty"]],
-            ["set", "out", ["bytes.push_u8", "out", "n"]],
             [
                 "for",
                 "i",
@@ -253,6 +261,21 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
                     "out",
                     ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]
                 ]
+            ],
+            "out"
+        ]));
+    }
+    if lowered.contains("validator") {
+        // Validator floor: one-byte status, 1 for non-empty input and 0
+        // for empty input.
+        return Some(json!([
+            "begin",
+            ["let", "n", ["bytes.len", "payload"]],
+            ["let", "out", ["bytes.empty"]],
+            [
+                "set",
+                "out",
+                ["bytes.push_u8", "out", ["if", [">", "n", 0], 1, 0]]
             ],
             "out"
         ]));
@@ -386,6 +409,36 @@ mod tests {
         let serialized = serde_json::to_string(&body).expect("serialize");
         assert!(serialized.contains("Hello, "));
         assert!(serialized.len() > 80);
+    }
+
+    #[test]
+    fn template_synthesis_emits_parser_floor_that_preserves_length() {
+        let packet = intent("app.parser", "parse_v1");
+        let synth = synthesize_from_template(&packet).expect("template");
+        let body = synth.body["decls"][1]["body"].clone();
+        let serialized = serde_json::to_string(&body).expect("serialize");
+        assert!(serialized.contains("bytes.push_u8"));
+        assert!(serialized.contains("bytes.get_u8"));
+    }
+
+    #[test]
+    fn template_synthesis_emits_validator_status_byte_floor() {
+        let packet = intent("app.validator", "validate_v1");
+        let synth = synthesize_from_template(&packet).expect("template");
+        let body = synth.body["decls"][1]["body"].clone();
+        let serialized = serde_json::to_string(&body).expect("serialize");
+        assert!(serialized.contains("bytes.push_u8"));
+        assert!(serialized.contains("\"n\",0"));
+    }
+
+    #[test]
+    fn template_synthesis_emits_calculator_bounded_floor() {
+        let packet = intent("app.calculator", "compute_v1");
+        let synth = synthesize_from_template(&packet).expect("template");
+        let body = synth.body["decls"][1]["body"].clone();
+        let serialized = serde_json::to_string(&body).expect("serialize");
+        assert!(serialized.contains("\"limit\""));
+        assert!(serialized.contains(",16"));
     }
 
     #[test]
