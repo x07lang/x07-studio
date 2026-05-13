@@ -62,14 +62,26 @@ pub fn project(session: &SessionSnapshot) -> ProcessLane {
         }
     }
 
-    let current_index = steps
+    // "Current" prefers an in-flight step (Running/Stalled). Otherwise it points to
+    // the Pending step that comes *after* the latest Done step — never to a Pending
+    // step that has already-completed work after it, which would mis-read as
+    // "behind." If everything pending sits before the latest Done activity, we treat
+    // the run as complete and leave current_index empty.
+    let latest_active = steps
         .iter()
-        .position(|step| matches!(step.status, StepStatus::Running | StepStatus::Stalled))
-        .or_else(|| {
-            steps
-                .iter()
-                .position(|step| step.status == StepStatus::Pending)
-        });
+        .rposition(|step| matches!(step.status, StepStatus::Running | StepStatus::Stalled));
+    let latest_done = steps
+        .iter()
+        .rposition(|step| step.status == StepStatus::Done);
+    let current_index = latest_active.or_else(|| {
+        let start = latest_done.map_or(0, |idx| idx + 1);
+        steps
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find(|(_, step)| step.status == StepStatus::Pending)
+            .map(|(idx, _)| idx)
+    });
     let next_index = current_index.and_then(|index| {
         steps
             .iter()
@@ -266,6 +278,44 @@ mod tests {
         assert_eq!(lane.steps[0].id, "intent");
         assert_eq!(lane.steps[0].status, StepStatus::Pending);
         assert_eq!(lane.current_index, Some(0));
+    }
+
+    #[test]
+    fn current_points_at_step_after_latest_activity_not_earliest_pending() {
+        let mut session =
+            SessionSnapshot::new(Uuid::new_v4(), "demo", "/tmp/demo", TaskType::NewBehavior);
+        // Capture intent + draft spec + write impl + verify all succeed.
+        // AGENT.md sync never fired an op, so it stays Pending in the middle of
+        // the lane. The current pointer must NOT regress backwards to that step;
+        // it should point to the first Pending step *after* the latest Done.
+        for name in [
+            "intent.formalize",
+            "spec.scaffold",
+            "agent.realize.openai-codex",
+            "xtal.verify",
+        ] {
+            session.op_log.push(op(session.session_id, name, OperationStatus::Succeeded));
+        }
+
+        let lane = project(&session);
+
+        let current = lane
+            .current_index
+            .map(|idx| lane.steps[idx].id.as_str())
+            .unwrap_or("<none>");
+        assert_ne!(current, "agent_md", "current must not be a pending step before completed activity");
+        // The current pointer should sit on a step after the latest Done step.
+        let latest_done_idx = lane
+            .steps
+            .iter()
+            .rposition(|step| matches!(step.status, StepStatus::Done))
+            .unwrap();
+        if let Some(current_idx) = lane.current_index {
+            assert!(
+                current_idx > latest_done_idx,
+                "current_index ({current_idx}) must come after latest done step ({latest_done_idx})"
+            );
+        }
     }
 
     #[test]

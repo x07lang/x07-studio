@@ -409,56 +409,97 @@ fn collapse_duplicate_posture_turns(turns: Vec<SessionTurn>) -> Vec<SessionTurn>
     collapsed
 }
 
+fn last_verified_index(turns: &[SessionTurn]) -> Option<usize> {
+    turns
+        .iter()
+        .rposition(|turn| matches!(turn, SessionTurn::Verified { .. }))
+}
+
 fn collapse_verified_refinement_turns(turns: Vec<SessionTurn>) -> Vec<SessionTurn> {
-    let mut collapsed = Vec::with_capacity(turns.len());
+    let mut collapsed: Vec<SessionTurn> = Vec::with_capacity(turns.len());
     for turn in turns {
-        let should_merge = match (collapsed.last_mut(), &turn) {
+        // The candidate prior Verified turn may not be the last entry if loop
+        // progress turns (agent_realize, agent_stream, lint, review) landed
+        // between it and the new Verified. We still want to merge stall-only
+        // duplicates across those intermediates so the user doesn't see three
+        // identical "scaffolded; needs implementation" cards stacked.
+        let prior_idx = last_verified_index(&collapsed);
+        let merge_mode = match (prior_idx.and_then(|i| collapsed.get(i)), &turn) {
             (
                 Some(SessionTurn::Verified {
                     summary: first,
-                    op_ids: first_ops,
                     ..
                 }),
                 SessionTurn::Verified {
                     summary: second,
-                    op_ids: second_ops,
                     ..
                 },
-            ) if first.scaffold_only
-                && !second.scaffold_only
-                && summaries_match_except_scaffold(first, second) =>
-            {
-                first.scaffold_only = false;
-                first.stub_paths = second.stub_paths.clone();
-                first.headline = second.headline.clone();
-                first.behavior_promises = second.behavior_promises.clone();
-                first.behavior_promise_ids = second.behavior_promise_ids.clone();
-                first.boundaries = second.boundaries.clone();
-                first.evidence = second.evidence.clone();
-                first.run_invocation = second.run_invocation.clone();
-                first.followups = second.followups.clone();
-                for op_id in second_ops {
-                    if !first_ops.contains(op_id) {
-                        first_ops.push(*op_id);
-                    }
+            ) if summaries_match_except_scaffold(first, second) => {
+                if first.scaffold_only && !second.scaffold_only {
+                    Some(MergeMode::ScaffoldCleared)
+                } else if first.scaffold_only && second.scaffold_only {
+                    // Multiple stalled scaffold passes — keep one turn, bump evidence
+                    // to the latest so "N passes" stays current. This avoids stacking
+                    // identical Verified rows when autopilot retries without progress.
+                    Some(MergeMode::StallRefresh)
+                } else {
+                    None
                 }
-                true
             }
-            _ => false,
+            _ => None,
         };
-        if should_merge {
-            if let Some(SessionTurn::Verified {
-                refined_from_scaffold,
-                ..
-            }) = collapsed.last_mut()
-            {
+        let Some(mode) = merge_mode else {
+            collapsed.push(turn);
+            continue;
+        };
+        let prior_idx = prior_idx.expect("merge_mode requires a prior Verified turn");
+        let SessionTurn::Verified {
+            summary: ref mut first,
+            op_ids: ref mut first_ops,
+            ref mut refined_from_scaffold,
+            ..
+        } = collapsed[prior_idx]
+        else {
+            unreachable!("merge_mode is only set when both turns are Verified");
+        };
+        let SessionTurn::Verified {
+            summary: second,
+            op_ids: second_ops,
+            ..
+        } = turn
+        else {
+            unreachable!("merge_mode is only set when both turns are Verified");
+        };
+        first.stub_paths = second.stub_paths;
+        first.headline = second.headline;
+        first.behavior_promises = second.behavior_promises;
+        first.behavior_promise_ids = second.behavior_promise_ids;
+        first.boundaries = second.boundaries;
+        first.evidence = second.evidence;
+        first.run_invocation = second.run_invocation;
+        first.followups = second.followups;
+        for op_id in second_ops {
+            if !first_ops.contains(&op_id) {
+                first_ops.push(op_id);
+            }
+        }
+        match mode {
+            MergeMode::ScaffoldCleared => {
+                first.scaffold_only = false;
                 *refined_from_scaffold = true;
             }
-        } else {
-            collapsed.push(turn);
+            MergeMode::StallRefresh => {
+                // Keep scaffold_only=true; the latest evidence already records the
+                // most recent verify-pass count.
+            }
         }
     }
     collapsed
+}
+
+enum MergeMode {
+    ScaffoldCleared,
+    StallRefresh,
 }
 
 fn summaries_match_except_scaffold(
@@ -602,6 +643,51 @@ mod tests {
             turns.first(),
             Some(loom_types::api::SessionTurn::Verified { .. })
         ));
+    }
+
+    #[test]
+    fn duplicate_scaffold_verified_turns_collapse_across_intermediates() {
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "demo", "/workspace", TaskType::NewBehavior);
+
+        let scaffold_report = serde_json::json!({
+            "schema_version": "x07.studio.plain_english_summary@0.1.0",
+            "headline": "Built: text-utils — scaffolded; needs implementation.",
+            "behavior_promises": ["Open text-utils"],
+            "boundaries": [],
+            "evidence": ["Verified correctness (2 passes)."],
+            "run_invocation": "x07 run",
+            "followups": [],
+            "scaffold_only": true,
+            "stub_paths": ["src/app/main.x07.json"]
+        });
+        let mut first_summary = op(session_id, Uuid::from_u128(101), "summary.plain_english");
+        first_summary.report_json = Some(scaffold_report.clone());
+
+        // Loop progress: agent_realize + agent_event between the two scaffold-only
+        // Verified summaries; the collapse must reach across them.
+        let realize = op(session_id, Uuid::from_u128(102), "agent.realize.openai-codex");
+        let stream = op(
+            session_id,
+            Uuid::from_u128(103),
+            "agent.event.openai-codex.stream_tool_use",
+        );
+
+        let mut second_summary = op(session_id, Uuid::from_u128(104), "summary.plain_english");
+        second_summary.report_json = Some(scaffold_report);
+
+        session.op_log = vec![first_summary, realize, stream, second_summary];
+
+        let turns = project_session_turns(&session);
+        let verified_count = turns
+            .iter()
+            .filter(|turn| matches!(turn, loom_types::api::SessionTurn::Verified { .. }))
+            .count();
+        assert_eq!(
+            verified_count, 1,
+            "duplicate scaffold-only Verified turns must collapse into one regardless of loop-progress turns between them"
+        );
     }
 
     #[test]

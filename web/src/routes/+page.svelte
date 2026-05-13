@@ -262,7 +262,6 @@
 			await compose({ text: recipe.intent_text, auto: true, voiceTranscript: null });
 			if (selected) {
 				agentContract = await api.getAgentContract(selected.session_id).catch(() => null);
-				agentContractOpen = Boolean(agentContract);
 			}
 		} finally {
 			recipeStartInFlight = null;
