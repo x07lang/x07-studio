@@ -375,7 +375,7 @@
 	background: rgba(85, 214, 231, 0.11);
 }
 
-.ladder-list div {
+.ladder-list > div {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto;
 	gap: 4px 8px;
@@ -385,11 +385,11 @@
 	border-radius: var(--radius);
 }
 
-.ladder-list div.done {
+.ladder-list > div.done {
 	border-color: rgba(114, 228, 180, 0.42);
 }
 
-.ladder-list small {
+.ladder-list > div > small {
 	grid-column: 1 / -1;
 	color: var(--muted);
 	overflow-wrap: anywhere;
