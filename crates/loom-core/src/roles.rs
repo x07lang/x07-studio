@@ -15,8 +15,13 @@ pub fn default_routing(preferences: Option<&RolePreferences>) -> RolePipeline {
             PipelineStage {
                 role: AgentRole::Architect,
                 action: "confirm_spec".to_string(),
+                // Sized for Tier-2 architect-agent enrichment (a real
+                // claude subscription invocation). When the deterministic
+                // floor already filled the spec, the stage just appends a
+                // log and returns instantly — the budget is a ceiling,
+                // not a target.
                 budget: Some(StepBudget {
-                    wall_clock_ms: Some(8_000),
+                    wall_clock_ms: Some(90_000),
                     prover_seconds: None,
                     on_exhaust: "pause".to_string(),
                 }),

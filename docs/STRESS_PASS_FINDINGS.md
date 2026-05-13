@@ -18,6 +18,8 @@ Severity legend:
 | F5 | NOTE | Real x07 picks discovery path from a sibling debug build, not `~/.x07/bin/` | infra |
 | F6 | **FIXED** | Intent heuristic doesn't recognize text-normalization / casefold / unicode prompts; falls through to generic `app.main.run_v1` with no semantic guidance, leaving the role-pipeline reviewer in a stall loop | 5 |
 | F7 | **FIXED** | Architect role emits a dummy "spec confirmed" log without enriching the scaffolded spec; coder gets empty `requires/ensures/doc` and produces identity passthrough (deterministic floor — `doc` enrichment from archetype semantics) | 5 |
+| F8 | **FIXED** | `claude -p` variadic flags (`--add-dir`, `--allowedTools`) swallow the trailing prompt positional; architect-enrich subprocess produced 0 bytes and timed out | tier2 |
+| F9 | **FIXED** | claude `--output-format stream-json` wraps the agent's text inside assistant/result envelopes; top-level `agent_event` parser missed the embedded `spec_enrichment` line | tier2 |
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 
@@ -244,7 +246,39 @@ Only `doc` is currently merged into the spec; `examples` are stored on the op-re
 
 **Cost gate:** Tier-2 fires at most once per session per role-pipeline turn, only when (a) an architect agent is configured and command-available, and (b) the spec's operation `doc` is still empty after Tier-1. Subscription-only contract preserved (`build_realize_subscription_command` reused — never `--bare`/`--oss`).
 
-**Tests:** loom-core grew to 121 passing (was 109 after Tier-1). New coverage:
+### Tier-2 — real-toolchain validation pass
+
+Driven `2026-05-13`, fresh workspace `target/stress-pass/scenario-tier2/workspace`, daemon on `127.0.0.1:7760`, real `claude 2.1.140` + `codex 0.130.0` + `x07 0.2.10`. Intent (chosen to fall through every F6 archetype keyword): *"Build a deduplicator that takes a stream of u8 bytes and returns only the first occurrence of each value, preserving original order. Reject empty input with a structured error."*
+
+**First run surfaced two real production bugs that the unit tests missed:**
+
+**F8 — `claude -p` variadic flags swallow the trailing prompt positional.** The pre-existing `build_realize_subscription_command` arrangement was `claude -p ... --add-dir <workspace> <prompt>`. claude's commander.js parser treats `--add-dir <directories...>` as variadic and consumes every following token until the next flag, so the prompt got eaten and claude errored `"Input must be provided either through stdin or as a prompt argument when using --print"`. The architect-enrich subprocess produced 0 chars of stdout and timed out at the budget ceiling on every attempt. Fix: reorder the args so `--add-dir <workspace> ... --allowedTools "..."` lands well before the prompt, then prepend a literal `--` token to force commander out of option parsing. New regression assertion in `synthesis::tests::build_realize_command_uses_subscription_flags_for_claude` checks `args[len-2..] == ["--", prompt]`.
+
+**F9 — claude `--output-format stream-json` wraps the agent's text inside `{"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}` envelopes, often with surrounding markdown code fences.** Our `parse_structured_agent_event` only matched top-level `{"schema_version":"x07.studio.agent_event@0.1.0",...}` lines, so even a perfectly-formed `spec_enrichment` event was invisible when claude wrapped it. Codex's `codex exec --json` happens to emit those at the top level (line-oriented), so the bug only manifested for claude-as-agent. Fix: when top-level parse fails, try `parse_structured_agent_event_from_claude_wrapper` which extracts the `content[].text` (or top-level `result` for `{"type":"result",...}`), strips markdown code fences (handles ` ```json ` / ` ``` ` prefixes), scans for the schema marker, and walks brace depth to extract the JSON object. Four new regression tests cover: claude assistant envelope, result envelope, prose-prefixed JSON, no-marker = `None`.
+
+**Third bug — Tier-2 budget was floored at the 8-second confirm-spec stage budget.** Pre-Tier-2 the architect stage was a no-op log; 8s was generous. Tier-2's 90s default got clamped DOWN to the stage budget. Fix: floor at 90s in the role-pipeline budget derivation, and raise `roles::default_routing`'s architect-stage `wall_clock_ms` from `8_000` to `90_000` so the budget is honest.
+
+**Second run, post-fixes:**
+
+- 169 ops in the timeline, phase reached `trust_review` cleanly.
+- `agent.architect_enrich.claude-code` finished `succeeded`.
+- `agent.event.claude-code.spec_enrichment` op-record was emitted with the parsed structured payload.
+- `architect.enrich_spec` op-record carries `doc_added: true, agent_id: "claude-code"`.
+- `role.stage.confirm_spec` reads: *"Architect agent `claude-code` drafted a behaviour contract for `app.main.run_v1` before handing off to the coder."*
+
+Resulting spec on disk (`target/stress-pass/scenario-tier2/evidence/app.main.x07spec.json`, `operations[0].doc`):
+
+> *"Given a non-empty sequence of u8 values as input, return a single collected list containing each distinct value in the order it first appeared in the input; subsequent occurrences of a value already seen are dropped. If the input is empty, return a structured error with the tag EmptyInput instead of an empty list. The operation imposes no maximum input length and must preserve first-occurrence order exactly."*
+
+This is what F7-Tier-2 was supposed to do: read a novel-intent prompt the heuristic doesn't recognise, ask the architect agent to draft a real behaviour contract, write it into the scaffolded spec, hand off to the coder. End-to-end on real subscription CLIs.
+
+**HTTP stayed responsive throughout** — 5/5 health probes returned 200 in <10ms during the architect-enrich subprocess. F3 fix still holds.
+
+**Evidence bundle:** `target/stress-pass/scenario-tier2/evidence/`:
+- `session-final.json` — full session snapshot (244 KB, 169 ops).
+- `app.main.x07spec.json` — enriched spec on disk.
+
+**Tests:** loom-core grew to 125 passing (was 109 after Tier-1, 121 after Tier-2 wiring, +4 after F8/F9 fixes). New coverage:
 - `architect::tests::operation_doc_is_empty_*` (3) — checks the gate predicate.
 - `architect::tests::agent_enrichment_*` (4) — event-parser validation: schema marker, kind tag, non-empty doc, examples array.
 - `architect::tests::apply_agent_enrichment_*` (2) — disk merge, idempotence, user-doc preservation.

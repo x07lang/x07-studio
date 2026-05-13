@@ -67,20 +67,29 @@ pub fn build_realize_subscription_command(
         // flags below are documented at the top of this module. We pin
         // `--add-dir` to the workspace so the agent can write src/ +
         // tests/ but nothing outside the project.
+        // `claude -p` parses the final positional as the prompt, but
+        // several earlier flags (`--add-dir`, `--allowedTools`, ...) are
+        // variadic in commander.js — they greedily consume every token
+        // until the next flag. A trailing positional gets swallowed and
+        // claude errors with "Input must be provided either through stdin
+        // or as a prompt argument". The `--` terminator forces commander
+        // to stop option parsing so the next token is recognised as the
+        // prompt positional.
         "claude-code" => (
             "claude".to_string(),
             vec![
                 "-p".to_string(),
                 "--permission-mode".to_string(),
                 "acceptEdits".to_string(),
-                "--allowedTools".to_string(),
-                "Edit Write Read Glob Grep Bash(x07 xtal *)".to_string(),
                 "--output-format".to_string(),
                 "stream-json".to_string(),
                 "--include-partial-messages".to_string(),
                 "--verbose".to_string(),
                 "--add-dir".to_string(),
                 workspace.to_string(),
+                "--allowedTools".to_string(),
+                "Edit Write Read Glob Grep Bash(x07 xtal *)".to_string(),
+                "--".to_string(),
                 prompt.to_string(),
             ],
         ),
@@ -336,8 +345,12 @@ mod tests {
         );
         // SUBSCRIPTION COST CHECK: must not pass --bare (forces API key auth).
         assert!(!args.contains(&"--bare".to_string()));
-        // Prompt content is the last positional arg.
-        assert_eq!(args.last().map(String::as_str), Some("do X"));
+        // The prompt is the last positional, preceded by `--`. Without the
+        // terminator, claude's variadic flags (--add-dir, --allowedTools)
+        // swallow the prompt and the CLI errors with "Input must be
+        // provided either through stdin or as a prompt argument".
+        let last_two = &args[args.len() - 2..];
+        assert_eq!(last_two, &["--".to_string(), "do X".to_string()]);
     }
 
     #[test]

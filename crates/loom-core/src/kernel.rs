@@ -2433,13 +2433,19 @@ impl WorkspaceKernel {
             &overrides,
             preferences.as_ref(),
         );
+        // The Architect stage budget in `roles::default_routing` is sized
+        // for the historical no-op log (8s). Tier-2 actually spawns
+        // claude, which needs an LLM-shaped budget; floor at 90s and
+        // allow stage budgets above that to extend it. The downstream
+        // `start_intent_architect_enrich` re-clamps to [20, 240].
         let architect_budget = pipeline
             .stages
             .iter()
             .find(|stage| stage.action == "confirm_spec")
             .and_then(|stage| stage.budget.as_ref())
             .and_then(|budget| budget.wall_clock_ms)
-            .map(|ms| (ms / 1_000).max(1));
+            .map(|ms| (ms / 1_000).max(90))
+            .or(Some(90));
         if let Some(architect_id) = architect_id {
             // Tier-2 architect-agent enrichment: only fires when the spec
             // on disk still has an empty `doc` (i.e. F7's deterministic
@@ -9247,6 +9253,105 @@ fn classify_agent_output_line(line: &str) -> Option<AgentSemanticEvent> {
 
 fn parse_structured_agent_event(line: &str) -> Option<AgentSemanticEvent> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if let Some(event) = build_agent_semantic_event_from_value(&value) {
+        return Some(event);
+    }
+    // claude `-p --output-format stream-json` wraps the agent's text reply
+    // inside `{"type":"assistant","message":{"content":[{"type":"text","text":"…"}]}}`
+    // and the final result inside `{"type":"result","result":"…"}`. The
+    // top-level line is not an agent_event but the inner text may carry
+    // one (often inside markdown code fences). Drill in.
+    parse_structured_agent_event_from_claude_wrapper(&value)
+}
+
+fn parse_structured_agent_event_from_claude_wrapper(
+    value: &serde_json::Value,
+) -> Option<AgentSemanticEvent> {
+    let outer_type = value.get("type").and_then(serde_json::Value::as_str)?;
+    let candidate_text = match outer_type {
+        "assistant" => value
+            .get("message")
+            .and_then(|msg| msg.get("content"))
+            .and_then(serde_json::Value::as_array)?
+            .iter()
+            .find_map(|part| {
+                if part.get("type").and_then(serde_json::Value::as_str) == Some("text") {
+                    part.get("text")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                } else {
+                    None
+                }
+            })?,
+        "result" => value
+            .get("result")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)?,
+        _ => return None,
+    };
+    parse_agent_event_from_freeform_text(&candidate_text)
+}
+
+/// Extract an agent_event JSON object from a freeform text blob the
+/// architect agent emitted (possibly wrapped in markdown code fences or
+/// preceded by prose). Returns `None` when no `x07.studio.agent_event`
+/// schema marker is present.
+fn parse_agent_event_from_freeform_text(text: &str) -> Option<AgentSemanticEvent> {
+    let cleaned = strip_markdown_code_fences(text);
+    let needle = "\"x07.studio.agent_event@0.1.0\"";
+    let cursor = cleaned.find(needle)?;
+    // Walk backwards from the needle to find the opening `{`.
+    let prefix = &cleaned[..cursor];
+    let open = prefix.rfind('{')?;
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    let bytes = cleaned.as_bytes();
+    let mut end = None;
+    for (idx, byte) in bytes.iter().enumerate().skip(open) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match *byte {
+            b'\\' if in_string => escaped = true,
+            b'"' => in_string = !in_string,
+            b'{' if !in_string => depth += 1,
+            b'}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(idx + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
+    let candidate = &cleaned[open..end];
+    let value: serde_json::Value = serde_json::from_str(candidate).ok()?;
+    build_agent_semantic_event_from_value(&value)
+}
+
+fn strip_markdown_code_fences(text: &str) -> String {
+    let trimmed = text.trim();
+    if let Some(rest) = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```JSON"))
+        .or_else(|| trimmed.strip_prefix("```"))
+    {
+        let body = rest.trim_start_matches('\n').trim_start_matches('\r');
+        if let Some(inner) = body.strip_suffix("```") {
+            return inner.trim().to_string();
+        }
+        if let Some(end) = body.rfind("```") {
+            return body[..end].trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn build_agent_semantic_event_from_value(value: &serde_json::Value) -> Option<AgentSemanticEvent> {
     if value.get("schema_version")?.as_str()? != "x07.studio.agent_event@0.1.0" {
         return None;
     }
@@ -9278,7 +9383,7 @@ fn parse_structured_agent_event(line: &str) -> Option<AgentSemanticEvent> {
         kind: kind.to_string(),
         line: summary.to_string(),
         artifact,
-        structured: Some(value),
+        structured: Some(value.clone()),
     })
 }
 
@@ -10107,6 +10212,44 @@ mod tests {
         let parsed = super::parse_structured_agent_event(line).expect("event parses");
         assert_eq!(parsed.kind, "spec_enrichment");
         assert!(parsed.structured.is_some());
+    }
+
+    #[test]
+    fn parse_structured_agent_event_drills_into_claude_stream_json_assistant() {
+        // The shape claude `-p --output-format stream-json` emits for an
+        // assistant turn whose text content is a markdown-fenced JSON
+        // payload. The agent_event lives inside `message.content[0].text`.
+        let line = r#"{"type":"assistant","message":{"id":"msg_x","role":"assistant","content":[{"type":"text","text":"```json\n{\"schema_version\":\"x07.studio.agent_event@0.1.0\",\"kind\":\"spec_enrichment\",\"doc\":\"Deduplicate u8 bytes preserving first occurrence order. Reject empty input.\"}\n```"}],"model":"claude-opus-4-7"},"session_id":"sess","uuid":"u1"}"#;
+        let parsed = super::parse_structured_agent_event(line).expect("wrapped event parses");
+        assert_eq!(parsed.kind, "spec_enrichment");
+        let structured = parsed.structured.expect("structured payload");
+        assert!(structured
+            .get("doc")
+            .and_then(serde_json::Value::as_str)
+            .unwrap()
+            .contains("Deduplicate"));
+    }
+
+    #[test]
+    fn parse_structured_agent_event_drills_into_claude_result_envelope() {
+        let line = r#"{"type":"result","subtype":"success","result":"{\"schema_version\":\"x07.studio.agent_event@0.1.0\",\"kind\":\"spec_enrichment\",\"doc\":\"Ok.\"}","session_id":"sess"}"#;
+        let parsed = super::parse_structured_agent_event(line).expect("result envelope parses");
+        assert_eq!(parsed.kind, "spec_enrichment");
+    }
+
+    #[test]
+    fn parse_structured_agent_event_handles_text_with_prose_before_json() {
+        // The agent may preface the JSON with prose. We should still find
+        // the embedded event by scanning for the schema_version marker.
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Sure, here is the enrichment you asked for:\n\n```json\n{\"schema_version\":\"x07.studio.agent_event@0.1.0\",\"kind\":\"spec_enrichment\",\"doc\":\"x\"}\n```\n\nLet me know if you need more."}]}}"#;
+        let parsed = super::parse_structured_agent_event(line).expect("prose-wrapped event parses");
+        assert_eq!(parsed.kind, "spec_enrichment");
+    }
+
+    #[test]
+    fn parse_structured_agent_event_returns_none_when_no_schema_marker() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"I don't know how to enrich this."}]}}"#;
+        assert!(super::parse_structured_agent_event(line).is_none());
     }
 
     #[test]
