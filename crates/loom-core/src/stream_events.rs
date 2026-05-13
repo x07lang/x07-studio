@@ -19,6 +19,7 @@ pub fn event_kind(event: &AgentStreamEvent) -> &'static str {
         AgentStreamEvent::ToolResult { .. } => "tool_result",
         AgentStreamEvent::AgentMessage { .. } => "agent_message",
         AgentStreamEvent::Done { .. } => "done",
+        AgentStreamEvent::McpCall { .. } => "mcp_call",
     }
 }
 
@@ -132,6 +133,7 @@ fn parse_codex_stream(agent_id: &str, value: &Value) -> Option<AgentStreamEvent>
             value
                 .get("tool")
                 .or_else(|| value.get("tool_name"))
+                .or_else(|| value.get("tool_id"))
                 .or_else(|| value.get("name"))
                 .and_then(Value::as_str)
                 .unwrap_or("tool"),
@@ -146,6 +148,7 @@ fn parse_codex_stream(agent_id: &str, value: &Value) -> Option<AgentStreamEvent>
             value
                 .get("tool")
                 .or_else(|| value.get("tool_name"))
+                .or_else(|| value.get("tool_id"))
                 .or_else(|| value.get("name"))
                 .and_then(Value::as_str)
                 .unwrap_or("tool"),
@@ -203,6 +206,7 @@ fn parts_event(agent_id: &str, value: &Value) -> Option<AgentStreamEvent> {
                 agent_id,
                 part.get("tool")
                     .or_else(|| part.get("tool_name"))
+                    .or_else(|| part.get("tool_id"))
                     .or_else(|| part.get("name"))
                     .and_then(Value::as_str)
                     .unwrap_or("tool"),
@@ -215,6 +219,7 @@ fn parts_event(agent_id: &str, value: &Value) -> Option<AgentStreamEvent> {
                 agent_id,
                 part.get("tool")
                     .or_else(|| part.get("tool_name"))
+                    .or_else(|| part.get("tool_id"))
                     .or_else(|| part.get("name"))
                     .and_then(Value::as_str)
                     .unwrap_or("tool"),
@@ -247,6 +252,17 @@ fn agent_message_event(agent_id: &str, text: &str) -> AgentStreamEvent {
 }
 
 fn tool_use_event(agent_id: &str, tool: &str, mut input: Value) -> AgentStreamEvent {
+    if let Some((server, normalized_tool)) = mcp_tool(tool) {
+        return AgentStreamEvent::McpCall {
+            id: Uuid::new_v4(),
+            at: now_string(),
+            agent_id: agent_id.to_string(),
+            tool: normalized_tool,
+            server,
+            input,
+            output: None,
+        };
+    }
     if let Some(diff) = live_diff_for_tool(tool, &input) {
         ensure_object(&mut input).insert(
             "live_diff".to_string(),
@@ -260,6 +276,22 @@ fn tool_use_event(agent_id: &str, tool: &str, mut input: Value) -> AgentStreamEv
         tool: tool.to_string(),
         input,
     }
+}
+
+fn mcp_tool(tool: &str) -> Option<(String, String)> {
+    if let Some(rest) = tool.strip_prefix("mcp__") {
+        let mut parts = rest.splitn(2, "__");
+        let server = parts.next()?.replace('_', "-");
+        let name = parts.next().unwrap_or(rest).replace("__", ".");
+        return Some((server, name));
+    }
+    if let Some(rest) = tool.strip_prefix("mcp.") {
+        let mut parts = rest.splitn(2, '.');
+        let server = parts.next().unwrap_or("mcp").to_string();
+        let name = parts.next().unwrap_or(rest).to_string();
+        return Some((server, name));
+    }
+    None
 }
 
 fn tool_result_event(
@@ -402,6 +434,28 @@ mod tests {
                 assert_eq!(tool, "Edit");
                 assert!(success);
                 assert_eq!(snippet.as_deref(), Some("patched src/main.x07.json"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mcp_tool_use_as_transparent_call() {
+        let line =
+            r#"{"type":"tool_call","tool_id":"mcp.x07.search_v1","input":{"query":"trust"}}"#;
+
+        let event = parse_stream_line("openai-codex", line).expect("event");
+
+        match event {
+            loom_types::api::AgentStreamEvent::McpCall {
+                server,
+                tool,
+                input,
+                ..
+            } => {
+                assert_eq!(server, "x07");
+                assert_eq!(tool, "search_v1");
+                assert_eq!(input["query"], "trust");
             }
             other => panic!("unexpected event: {other:?}"),
         }

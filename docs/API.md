@@ -81,6 +81,13 @@ Returns the canonical rendered binding catalog exposed by `loom-adapters`.
 - `POST /sessions/{session_id}/invoke`
 - `GET /sessions/{session_id}/ladder`
 - `POST /sessions/{session_id}/ladder/climb`
+- `GET /sessions/{session_id}/trust/posture`
+- `POST /sessions/{session_id}/diff`
+- `GET /sessions/{session_id}/proof/{behavior_id}`
+- `GET /sessions/{session_id}/cassettes/ribbon`
+- `GET /sessions/{session_id}/incidents/{incident_id}/quickfix`
+- `GET /sessions/{session_id}/certificate`
+- `POST /sessions/{session_id}/certificate/refresh`
 - `GET /sessions/{session_id}/cassette`
 - `POST /sessions/{session_id}/cassette/branch`
 - `POST /sessions/{session_id}/ask`
@@ -105,6 +112,13 @@ Create session request:
   "task_type": "bug_fix"
 }
 ```
+
+Session creation is intentionally only the workspace/session shell. To start
+from a user prompt, first `POST /v1/sessions`, then call
+`POST /v1/sessions/{session_id}/intent/formalize` with the prompt or existing
+spec. The preferred request shape is `{title, task_type}`, but Cycle 4 keeps
+the browser-compatible aliases `{intent_text, mode}` at the API boundary.
+`task_type` / `mode` defaults to `new_behavior` when omitted.
 
 Dispatch event request:
 
@@ -537,7 +551,8 @@ success, emits `build.stage.done` followed by a deterministic
 `GET /v1/sessions/{session_id}/turns` returns a typed chronological projection
 for the browser Timeline. Turn variants include `user_intent`,
 `agent_clarify`, `user_answer`, `agent_draft`, `user_approved`,
-`build_stage`, `verified`, `incident`, and `repair`.
+`build_stage`, `verified`, `incident`, `repair`, `agent_stream`, `mcp_call`,
+`quorum_realize`, and `trust_posture_changed`.
 
 Try-It request:
 
@@ -568,8 +583,36 @@ Shipping ladder:
 ```
 
 The ladder projects four rungs: `local_preview`, `shareable`, `team`, and
-`production`. Each rung reports satisfied state, missing evidence, and artifact
-evidence. Climbing records the trust command associated with the target rung.
+`production`. Each rung reports satisfied state, missing evidence, artifact
+evidence, and explicit `gates` for the browser's shipping review. Climbing
+records the trust command associated with the target rung; successful profile
+certification also satisfies the matching rung gate even when the profile file
+is external to the project.
+
+Cycle 4 trust and review endpoints:
+
+- `GET /v1/sessions/{session_id}/trust/posture` returns
+  `x07.studio.trust_posture@0.1.0` with worlds, capability reads, budget
+  summary, proof coverage, posture color, and deltas from the latest captured
+  posture.
+- `POST /v1/sessions/{session_id}/diff` accepts
+  `x07.studio.semantic_diff_request@0.1.0` and returns
+  `x07.studio.semantic_diff@0.1.0`. Refs can point at `current`, an operation
+  id, a timeline turn id, a hash, or a quorum proposal.
+- `GET /v1/sessions/{session_id}/proof/{behavior_id}` returns
+  `x07.studio.proof_evidence@0.1.0` by joining plain-English behavior promise
+  ids with the latest verify/proof artifacts.
+- `GET /v1/sessions/{session_id}/incidents/{incident_id}/quickfix` returns
+  `x07.studio.quickfix_record@0.1.0` from `.x07-wasm/incidents`,
+  `target/xtal/violations`, `target/xtal/ingest`, and the latest repair
+  patchset if present.
+- `GET /v1/sessions/{session_id}/cassettes/ribbon` returns
+  `x07.studio.cassette_ribbon@0.1.0`, an ordered list of replay boundary
+  entries under `.x07_rr`.
+- `GET /v1/sessions/{session_id}/certificate` returns
+  `x07.studio.certificate_summary@0.1.0` from certificate, verify, and trust
+  artifacts. `POST /certificate/refresh` runs `xtal.certify` best-effort before
+  returning the same summary shape.
 
 Intent quorum request:
 
@@ -742,6 +785,8 @@ Call tool request:
 
 - `POST /v1/sessions/{session_id}/realize/quorum` runs Claude Code and Codex
   realization in staged workspaces and returns `RealizeQuorumRound`.
+  `schema_version` defaults to `x07.studio.realize_quorum_request@0.1.0` when
+  older clients omit it.
 - `POST /v1/sessions/{session_id}/realize/pick` applies the chosen quorum
   proposal, then reruns `impl.check` and `xtal.verify`.
 - `POST /v1/sessions/{session_id}/autopilot/start` runs the bounded autopilot
@@ -755,6 +800,8 @@ Call tool request:
   a sync code; `POST /v1/sync/{code}/claim` returns it with the session.
 - `POST /v1/sessions/{session_id}/ladder/release` submits the selected ladder
   rung through x07lp deploy bindings and records `ReleaseStatus`.
+  `schema_version` defaults to `x07.studio.release_request@0.1.0` when older
+  clients omit it.
 - `GET /v1/sessions/{session_id}/ladder/release/{release_id}` returns the latest
   recorded release status.
 - `POST /v1/sessions/{session_id}/incidents/watch` starts a bounded background

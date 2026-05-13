@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use loom_types::api::{
-    AgentStreamEvent, RealizeQuorumRound, SessionTurn, TurnEvidence, TurnQuestion,
+    AgentStreamEvent, RealizeQuorumRound, SessionTurn, TrustPosture, TurnEvidence, TurnQuestion,
 };
 use loom_types::artifacts::{IntentPacket, IntentSource, OpRecord, PlainEnglishSummary};
 use loom_types::session::SessionSnapshot;
@@ -142,13 +142,22 @@ fn op_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
             });
         } else if op.op.starts_with("agent.event.") && op.op.contains(".stream_") {
             if let Some((agent_id, event)) = stream_event_from_op(op) {
-                turns.push(SessionTurn::AgentStream {
-                    id: stable_turn_id(session.session_id, &format!("agent-stream:{}", op.id)),
-                    at: op.started_at.clone(),
-                    agent_id,
-                    event,
-                    op_id: op.id,
-                });
+                if matches!(event, AgentStreamEvent::McpCall { .. }) {
+                    turns.push(SessionTurn::McpCall {
+                        id: stable_turn_id(session.session_id, &format!("mcp-call:{}", op.id)),
+                        at: op.started_at.clone(),
+                        call: event,
+                        op_id: op.id,
+                    });
+                } else {
+                    turns.push(SessionTurn::AgentStream {
+                        id: stable_turn_id(session.session_id, &format!("agent-stream:{}", op.id)),
+                        at: op.started_at.clone(),
+                        agent_id,
+                        event,
+                        op_id: op.id,
+                    });
+                }
             }
         } else if op.op == "agent.event.quorum.realize" {
             if let Some(round) = realize_quorum_from_op(op) {
@@ -175,13 +184,17 @@ fn op_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
                         .and_then(|v| v.as_array())
                         .map(|arr| {
                             arr.iter()
-                                .filter_map(|item| item.as_str().map(str::to_string))
+                                .filter_map(|item| item.as_str())
+                                .filter(|path| is_visible_agent_write(path))
+                                .map(str::to_string)
                                 .collect()
                         })
                         .unwrap_or_default();
                     if let Some(modified) = audit.get("modified").and_then(|v| v.as_array()) {
                         for item in modified {
-                            if let Some(text) = item.as_str() {
+                            if let Some(text) =
+                                item.as_str().filter(|path| is_visible_agent_write(path))
+                            {
                                 files.push(text.to_string());
                             }
                         }
@@ -197,6 +210,14 @@ fn op_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
                 wrote_files,
                 op_ids: vec![op.id],
             });
+        } else if op.op == "posture.captured" {
+            if let Some(posture) = posture_from_op(op) {
+                turns.push(SessionTurn::TrustPostureChanged {
+                    id: stable_turn_id(session.session_id, &format!("posture:{}", op.id)),
+                    at: op.started_at.clone(),
+                    posture,
+                });
+            }
         } else if op.op.starts_with("agent.handoff.") || op.op.starts_with("agent.run.") {
             let agent_id = op.op.rsplit('.').next().unwrap_or("agent").to_string();
             turns.push(SessionTurn::AgentDraft {
@@ -283,7 +304,9 @@ fn turn_at(turn: &SessionTurn) -> &str {
         | SessionTurn::Repair { at, .. }
         | SessionTurn::AgentRealize { at, .. }
         | SessionTurn::AgentStream { at, .. }
-        | SessionTurn::QuorumRealize { at, .. } => at,
+        | SessionTurn::QuorumRealize { at, .. }
+        | SessionTurn::TrustPostureChanged { at, .. }
+        | SessionTurn::McpCall { at, .. } => at,
     }
 }
 
@@ -315,6 +338,14 @@ fn realize_quorum_from_op(op: &OpRecord) -> Option<RealizeQuorumRound> {
         .and_then(|value| serde_json::from_value(value).ok())
 }
 
+fn posture_from_op(op: &OpRecord) -> Option<TrustPosture> {
+    op.report_json
+        .as_ref()
+        .and_then(|value| value.get("posture"))
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
 fn stable_turn_id(session_id: Uuid, key: &str) -> Uuid {
     let mut hasher = Sha256::new();
     hasher.update(session_id.as_bytes());
@@ -323,6 +354,10 @@ fn stable_turn_id(session_id: Uuid, key: &str) -> Uuid {
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&digest[..16]);
     Uuid::from_bytes(bytes)
+}
+
+fn is_visible_agent_write(path: &str) -> bool {
+    !path.starts_with(".x07/studio/sessions/")
 }
 
 #[cfg(test)]
@@ -440,6 +475,31 @@ mod tests {
         assert!(matches!(
             turns.first(),
             Some(loom_types::api::SessionTurn::Verified { .. })
+        ));
+    }
+
+    #[test]
+    fn agent_realize_turn_hides_internal_studio_session_writes() {
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "demo", "/workspace", TaskType::NewBehavior);
+        let mut realize = op(session_id, Uuid::from_u128(8), "agent.realize.claude-code");
+        realize.status = OperationStatus::Failed;
+        realize.report_json = Some(serde_json::json!({
+            "write_audit": {
+                "created": [".x07/studio/sessions/session.json"],
+                "modified": [],
+                "deleted": [],
+                "violations": []
+            }
+        }));
+        session.op_log = vec![realize];
+
+        let turns = project_session_turns(&session);
+
+        assert!(matches!(
+            turns.first(),
+            Some(loom_types::api::SessionTurn::AgentRealize { wrote_files, .. }) if wrote_files.is_empty()
         ));
     }
 }

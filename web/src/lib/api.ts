@@ -27,6 +27,8 @@ import {
 	type AskAnswer,
 	type BindingDescriptor,
 	type CassetteEntry,
+	type CassetteRibbon,
+	type CertificateSummary,
 	type CertifyRunOptions,
 	type DocPreviewResponse,
 	type FormalizeIntentResponse,
@@ -39,8 +41,10 @@ import {
 	type LadderState,
 	type LiveDiff,
 	type PlainEnglishSummary,
+	type ProofEvidence,
 	type ProviderProbeResponse,
 	type ProviderProfile,
+	type QuickfixRecord,
 	type QuorumRound,
 	type PickRealizeProposalResponse,
 	type RealizeQuorumRound,
@@ -48,6 +52,8 @@ import {
 	type ReplayCapsule,
 	type ReplayExportResponse,
 	type RequestIntentRevisionResponse,
+	type SemanticDiff,
+	type SemanticDiffRequest,
 	type SessionSnapshot,
 	type SessionStreamEvent,
 	type SessionTurn,
@@ -55,6 +61,7 @@ import {
 	type SyncClaimResponse,
 	type SyncCode,
 	type TaskType,
+	type TrustPosture,
 	type TryItRequest,
 	type TryItResult,
 	type VoiceTranscript,
@@ -551,8 +558,64 @@ export class StudioApi {
 				profile_path: index === 0 ? null : `arch/trust/profiles/${id}.json`,
 				satisfied: index === 0,
 				missing: index === 0 ? [] : [`arch/trust/profiles/${id}.json`],
-				evidence: index === 0 ? ['demo verify evidence'] : []
+				evidence: index === 0 ? ['demo verify evidence'] : [],
+				gates: [
+					{
+						id: `${id}-gate`,
+						label: `${['Local preview', 'Shareable', 'Team', 'Production'][index]} gate`,
+						description: 'Demo trust gate',
+						currently_satisfied: index === 0
+					}
+				]
 			}))
+		};
+	}
+
+	async trustPosture(session: SessionSnapshot): Promise<TrustPosture> {
+		if (!this.demoMode) {
+			return await request<TrustPosture>(`/v1/sessions/${session.session_id}/trust/posture`);
+		}
+		return demoTrustPosture(session);
+	}
+
+	async semanticDiff(session: SessionSnapshot, req: SemanticDiffRequest): Promise<SemanticDiff> {
+		if (!this.demoMode) {
+			return await request<SemanticDiff>(`/v1/sessions/${session.session_id}/diff`, {
+				method: 'POST',
+				body: JSON.stringify({
+					schema_version: 'x07.studio.semantic_diff_request@0.1.0',
+					mode: 'project',
+					...req
+				})
+			});
+		}
+		return {
+			schema_version: 'x07.studio.semantic_diff@0.1.0',
+			from: req.from,
+			to: req.to,
+			headline: 'stays solve-pure · no trust delta',
+			trust_delta_color: 'green',
+			raw: { demo: true },
+			world_changes: [],
+			capability_changes: [],
+			budget_changes: [],
+			proof_changes: []
+		};
+	}
+
+	async proofEvidence(session: SessionSnapshot, behaviorId: string): Promise<ProofEvidence> {
+		if (!this.demoMode) {
+			return await request<ProofEvidence>(`/v1/sessions/${session.session_id}/proof/${behaviorId}`);
+		}
+		return {
+			schema_version: 'x07.studio.proof_evidence@0.1.0',
+			session_id: session.session_id,
+			behavior_id: behaviorId,
+			status: 'proved',
+			citations: [{ kind: 'proof', file: 'target/xtal/verify/summary.json', region: 'summary' }],
+			obligations: [{ id: behaviorId, goal: behaviorId.replaceAll('-', ' '), status: 'proved', note: 'Demo proof evidence' }],
+			z3_ms: 12,
+			assumptions: []
 		};
 	}
 
@@ -595,6 +658,7 @@ export class StudioApi {
 			return await request<RealizeQuorumRound>(`/v1/sessions/${session.session_id}/realize/quorum`, {
 				method: 'POST',
 				body: JSON.stringify({
+					schema_version: 'x07.studio.realize_quorum_request@0.1.0',
 					agent_ids: agentIds,
 					timeout_seconds: options.timeoutSeconds ?? null
 				})
@@ -740,6 +804,33 @@ export class StudioApi {
 		);
 	}
 
+	async certificateSummary(session: SessionSnapshot): Promise<CertificateSummary> {
+		if (!this.demoMode) {
+			return await request<CertificateSummary>(`/v1/sessions/${session.session_id}/certificate`);
+		}
+		return {
+			schema_version: 'x07.studio.certificate_summary@0.1.0',
+			session_id: session.session_id,
+			profile: 'verified_core_pure_v1',
+			operational_entry: session.intent?.targets[0]?.entry ?? 'main',
+			issued_at: new Date().toISOString(),
+			expires_at: null,
+			proof_summary: { demo: true },
+			trust_report: { demo: true },
+			html_summary_path: 'target/xtal/cert/summary.html',
+			signature: 'demo-signature'
+		};
+	}
+
+	async refreshCertificate(session: SessionSnapshot): Promise<CertificateSummary> {
+		if (!this.demoMode) {
+			return await request<CertificateSummary>(`/v1/sessions/${session.session_id}/certificate/refresh`, {
+				method: 'POST'
+			});
+		}
+		return this.certificateSummary(session);
+	}
+
 	async scanIncidents(session: SessionSnapshot) {
 		if (!this.demoMode) {
 			return await request(`/v1/sessions/${session.session_id}/incidents/scan`, { method: 'POST' });
@@ -768,11 +859,34 @@ export class StudioApi {
 		return next;
 	}
 
+	async incidentQuickfix(session: SessionSnapshot, incidentId: string): Promise<QuickfixRecord> {
+		if (!this.demoMode) {
+			return await request<QuickfixRecord>(
+				`/v1/sessions/${session.session_id}/incidents/${incidentId}/quickfix`
+			);
+		}
+		return {
+			schema_version: 'x07.studio.quickfix_record@0.1.0',
+			diagnostic_code: 'X07-DEMO',
+			severity: 'warning',
+			summary: `Demo quickfix for ${incidentId}`,
+			patch_ast: { operations: [] },
+			citations: [{ kind: 'incident', file: `.x07-wasm/incidents/${incidentId}`, region: 'run.report.json' }]
+		};
+	}
+
 	async cassetteEntries(session: SessionSnapshot): Promise<CassetteEntry[]> {
 		if (!this.demoMode) {
 			return await request<CassetteEntry[]>(`/v1/sessions/${session.session_id}/cassette`);
 		}
 		return [];
+	}
+
+	async cassetteRibbon(session: SessionSnapshot): Promise<CassetteRibbon> {
+		if (!this.demoMode) {
+			return await request<CassetteRibbon>(`/v1/sessions/${session.session_id}/cassettes/ribbon`);
+		}
+		return { schema_version: 'x07.studio.cassette_ribbon@0.1.0', boundaries: [] };
 	}
 
 	async branchCassette(session: SessionSnapshot, fromEntry: number, newTitle: string): Promise<string | null> {
@@ -1688,6 +1802,34 @@ function labelsFromGraph(graph: unknown): string[] {
 			return String((node as { label?: unknown }).label ?? '').trim();
 		})
 		.filter(Boolean);
+}
+
+function demoTrustPosture(session: SessionSnapshot): TrustPosture {
+	const verified = session.op_log.some((op) => op.op === 'xtal.verify' && op.status === 'succeeded');
+	return {
+		schema_version: 'x07.studio.trust_posture@0.1.0',
+		session_id: session.session_id,
+		captured_at: new Date().toISOString(),
+		trust_profile: verified ? 'verified_core_pure_v1' : 'local_preview',
+		worlds: ['solve-pure'],
+		capabilities: [],
+		budgets: {
+			local_cap_ms: null,
+			arch_profile: null,
+			prover_seconds_used: verified ? 1 : 0,
+			prover_seconds_cap: 30
+		},
+		proof_coverage: {
+			support_pct: verified ? 100 : 0,
+			proved_pct: verified ? 87 : 0,
+			proof_count: verified ? 1 : 0,
+			assumptions_open: session.intent?.ambiguities.length ?? 0
+		},
+		deltas: verified
+			? [{ at: new Date().toISOString(), kind: 'proof-coverage', summary: 'proof coverage computed' }]
+			: [],
+		posture_color: verified ? 'green' : 'amber'
+	};
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

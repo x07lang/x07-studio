@@ -3,18 +3,25 @@
   "schemas": [
     "x07.studio.agent_stream_event.schema.json",
     "x07.studio.autopilot_state.schema.json",
+    "x07.studio.cassette_ribbon.schema.json",
+    "x07.studio.certificate_summary.schema.json",
     "x07.studio.intent_packet.schema.json",
     "x07.studio.lineage_graph.schema.json",
     "x07.studio.live_diff.schema.json",
     "x07.studio.op_record.schema.json",
+    "x07.studio.proof_evidence.schema.json",
     "x07.studio.provider_profile.schema.json",
     "x07.studio.provider_probe_report.schema.json",
+    "x07.studio.quickfix_record.schema.json",
     "x07.studio.realize_quorum_round.schema.json",
+    "x07.studio.recipe.schema.json",
     "x07.studio.release_status.schema.json",
     "x07.studio.replay_capsule.schema.json",
+    "x07.studio.semantic_diff.schema.json",
     "x07.studio.session_contract.schema.json",
     "x07.studio.session_snapshot.schema.json",
     "x07.studio.sync_code.schema.json",
+    "x07.studio.trust_posture.schema.json",
     "x07.studio.voice_transcript.schema.json"
   ]
 }

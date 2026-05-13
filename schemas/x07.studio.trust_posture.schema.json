@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.trust_posture@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "session_id", "captured_at", "trust_profile", "worlds", "capabilities", "budgets", "proof_coverage", "deltas", "posture_color"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.trust_posture@0.1.0" },
+    "session_id": { "type": "string" },
+    "captured_at": { "type": "string" },
+    "trust_profile": { "type": "string" },
+    "worlds": { "type": "array", "items": { "type": "string" } },
+    "capabilities": { "type": "array", "items": { "type": "object" } },
+    "budgets": { "type": "object" },
+    "proof_coverage": { "type": "object" },
+    "deltas": { "type": "array", "items": { "type": "object" } },
+    "posture_color": { "type": "string" }
+  }
+}

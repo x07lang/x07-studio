@@ -6,17 +6,23 @@
 		AskAnswer,
 		AutopilotState,
 		CassetteEntry,
+		CassetteRibbon,
+		CertificateSummary,
 		HealthResponse,
 		IntentAnswer,
 		IntentInputMode,
 		LadderState,
+		ProofEvidence,
+		QuickfixRecord,
 		ReleaseStatus,
 		ReplayExportResponse,
+		SemanticDiff,
 		SessionSnapshot,
 		SessionStreamEvent,
 		SessionTurn,
 		StudioMemory,
 		SyncCode,
+		TrustPosture,
 		TryItRequest,
 		TryItResult,
 		VoiceTranscript,
@@ -30,6 +36,18 @@
 	import Header from '$lib/components/Header.svelte';
 	import MemoryChip from '$lib/components/MemoryChip.svelte';
 	import MemoryDrawer from '$lib/components/MemoryDrawer.svelte';
+	import ProofExplorer from '$lib/components/ProofExplorer.svelte';
+	import CompareLens from '$lib/components/CompareLens.svelte';
+	import CertificateView from '$lib/components/CertificateView.svelte';
+	import Welcome from '$lib/components/Welcome.svelte';
+	import CommandPalette from '$lib/components/CommandPalette.svelte';
+	import { insertOptimistic, reconcile, type OptimisticTurn } from '$lib/store/optimistic';
+	import {
+		closeCommandPalette,
+		commandPaletteOpen,
+		openCommandPalette
+	} from '$lib/store/commandPalette';
+	import type { Recipe } from '$lib/studio';
 
 	const api = new StudioApi();
 
@@ -41,6 +59,7 @@
 	let tryResult: TryItResult | null = null;
 	let askAnswer: AskAnswer | null = null;
 	let cassettes: CassetteEntry[] = [];
+	let cassetteRibbon: CassetteRibbon | null = null;
 	let visualParseResult: VisualResponse | null = null;
 	let visualEmitResult: VisualResponse | null = null;
 	let memory: StudioMemory | null = null;
@@ -48,25 +67,45 @@
 	let autopilot: AutopilotState | null = null;
 	let releaseStatus: ReleaseStatus | null = null;
 	let replayExport: ReplayExportResponse | null = null;
+	let trustPosture: TrustPosture | null = null;
+	let proofEvidence: ProofEvidence | null = null;
+	let quickfix: QuickfixRecord | null = null;
+	let semanticDiff: SemanticDiff | null = null;
+	let certificate: CertificateSummary | null = null;
+	let certificateOpen = false;
+	let compareOpen = false;
 	let incidentNotice = 0;
 	let memoryOpen = false;
 	let busy = false;
+	let realizeBusy = false;
+	let invokeBusy = false;
 	let status = 'Starting Studio';
 	let detailsOpen = false;
 	let unsubscribe: (() => void) | null = null;
+	let optimisticTurns: OptimisticTurn[] = [];
 
-	onMount(async () => {
-		const params = new URLSearchParams(window.location.search);
-		detailsOpen = params.get('mode') === 'expert' || params.get('details') === 'open';
-		await refresh();
-		const claim = params.get('claim');
-		if (claim) await claimSync(claim);
-		if (selected) subscribe(selected.session_id);
+	onMount(() => {
+		void (async () => {
+			const params = new URLSearchParams(window.location.search);
+			detailsOpen = params.get('mode') === 'expert' || params.get('details') === 'open';
+			await refresh();
+			const claim = params.get('claim');
+			if (claim) await claimSync(claim);
+			if (selected) subscribe(selected.session_id);
+		})();
 	});
 
 	onDestroy(() => {
 		unsubscribe?.();
 	});
+
+	function handleGlobalKeydown(event: KeyboardEvent) {
+		const key = event.key.toLowerCase();
+		if ((event.metaKey || event.ctrlKey) && (key === 'k' || event.code === 'KeyK')) {
+			event.preventDefault();
+			openCommandPalette();
+		}
+	}
 
 	async function refresh() {
 		health = await api.health();
@@ -86,7 +125,11 @@
 			return;
 		}
 		turns = await api.listTurns(selected.session_id);
+		for (const turn of turns) optimisticTurns = reconcile(optimisticTurns, turn);
+		if (optimisticTurns.length) turns = [...turns, ...optimisticTurns.filter((turn) => turn.optimistic)];
 		ladder = await api.ladderState(selected).catch(() => null);
+		trustPosture = await api.trustPosture(selected).catch(() => null);
+		cassetteRibbon = await api.cassetteRibbon(selected).catch(() => null);
 	}
 
 	function subscribe(sessionId: string) {
@@ -126,6 +169,13 @@
 				await runBindingShortcut(text);
 				return;
 			}
+			optimisticTurns = insertOptimistic(optimisticTurns, {
+				kind: 'user_intent',
+				id: `optimistic-${Date.now()}`,
+				at: new Date().toISOString(),
+				raw: text,
+				source_kind: detail.voiceTranscript ? 'voice' : 'text'
+			});
 			const session = await api.createSession(text.slice(0, 80), 'new_behavior');
 			replaceSelected(session);
 			subscribe(session.session_id);
@@ -157,6 +207,10 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	async function startRecipe(recipe: Recipe) {
+		await compose({ text: recipe.intent_text, auto: true, voiceTranscript: null });
 	}
 
 	async function runBindingShortcut(text: string) {
@@ -214,10 +268,12 @@
 	async function invoke(req: TryItRequest) {
 		if (!selected) return;
 		busy = true;
+		invokeBusy = true;
 		try {
 			tryResult = await api.invoke(selected, req);
 			status = 'Try-It run finished';
 		} finally {
+			invokeBusy = false;
 			busy = false;
 		}
 	}
@@ -225,6 +281,7 @@
 	async function realize() {
 		if (!selected) return;
 		busy = true;
+		realizeBusy = true;
 		try {
 			status = 'Asking Claude Code to fill in the implementation…';
 			const response = await api.realize(selected, { timeoutSeconds: 240 });
@@ -238,6 +295,7 @@
 		} catch (error) {
 			status = `Realize failed: ${(error as Error).message ?? error}`;
 		} finally {
+			realizeBusy = false;
 			busy = false;
 		}
 	}
@@ -275,6 +333,27 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	async function loadQuickfix(incidentId: string) {
+		if (!selected) return;
+		quickfix = await api.incidentQuickfix(selected, incidentId);
+		status = `Quickfix ${quickfix.diagnostic_code}`;
+	}
+
+	async function openProof(behaviorId: string) {
+		if (!selected) return;
+		proofEvidence = await api.proofEvidence(selected, behaviorId);
+	}
+
+	async function compareTurn(turnId: string) {
+		if (!selected) return;
+		semanticDiff = await api.semanticDiff(selected, {
+			from: { kind: 'turn_id', turn_id: turnId },
+			to: { kind: 'current' },
+			mode: 'project'
+		});
+		compareOpen = true;
 	}
 
 	async function ask(question: string) {
@@ -423,6 +502,26 @@
 		}
 	}
 
+	async function openCertificate() {
+		if (!selected) return;
+		certificate = await api.certificateSummary(selected);
+		certificateOpen = true;
+	}
+
+	async function refreshCertificate() {
+		if (!selected) return;
+		certificate = await api.refreshCertificate(selected);
+		status = 'Certificate refreshed';
+	}
+
+	async function runCommand(action: string) {
+		if (action === 'compare' && turns.length) await compareTurn(turns.at(-1)?.id ?? turns[0].id);
+		else if (action === 'build') await build();
+		else if (action === 'autopilot') await startAutopilot();
+		else if (action === 'scan') await scanIncidents();
+		else if (action === 'sync') await mintSync();
+	}
+
 	async function exportReplay() {
 		if (!selected) return;
 		replayExport = await api.exportReplay(selected);
@@ -440,12 +539,16 @@
 	<title>x07 Studio</title>
 </svelte:head>
 
+<svelte:document on:keydown|capture={handleGlobalKeydown} />
+
 <main class="timeline-shell">
 	<Header
 		{health}
 		{syncCode}
 		{detailsOpen}
+		onCommand={openCommandPalette}
 		on:toggleDetails={() => (detailsOpen = !detailsOpen)}
+		on:command={openCommandPalette}
 		on:refresh={refresh}
 		on:sync={mintSync}
 	/>
@@ -476,6 +579,10 @@
 	</section>
 	<MemoryChip ops={selected?.op_log ?? []} on:edit={() => (memoryOpen = true)} />
 
+	{#if !selected?.intent}
+		<Welcome on:start={(event) => startRecipe(event.detail)} />
+	{/if}
+
 	<div class="main-grid">
 		<Timeline
 			{turns}
@@ -483,9 +590,15 @@
 			{detailsOpen}
 			{tryResult}
 			{busy}
+			{realizeBusy}
+			{invokeBusy}
+			{quickfix}
 			on:answer={(event) => answer(event.detail)}
 			on:followup={(event) => followup(event.detail)}
 			on:repair={(event) => repairIncident(event.detail)}
+			on:quickfix={(event) => loadQuickfix(event.detail)}
+			on:proof={(event) => openProof(event.detail)}
+			on:compare={(event) => compareTurn(event.detail)}
 			on:invoke={(event) => invoke(event.detail)}
 			on:realize={realize}
 			on:quorum={runQuorum}
@@ -497,6 +610,8 @@
 			{tryResult}
 			{askAnswer}
 			{cassettes}
+			{cassetteRibbon}
+			{trustPosture}
 			{visualParseResult}
 			{visualEmitResult}
 			{autopilot}
@@ -513,6 +628,7 @@
 			on:autopilot={startAutopilot}
 			on:pauseAutopilot={pauseAutopilot}
 			on:release={(event) => submitRelease(event.detail)}
+			on:certificate={openCertificate}
 			on:exportReplay={exportReplay}
 			on:cassetteLoad={loadCassettes}
 			on:cassetteBranch={(event) => branchCassette(event.detail)}
@@ -528,4 +644,19 @@
 		on:image={(event) => uploadImage(event.detail)}
 	/>
 	<MemoryDrawer {memory} open={memoryOpen} on:close={() => (memoryOpen = false)} on:save={(event) => saveMemory(event.detail)} />
+	<ProofExplorer evidence={proofEvidence} open={Boolean(proofEvidence)} on:close={() => (proofEvidence = null)} />
+	<CompareLens diff={semanticDiff} open={compareOpen}>
+		<button slot="actions" type="button" class="command-button" on:click={() => (compareOpen = false)}>Close</button>
+	</CompareLens>
+	<CertificateView
+		{certificate}
+		open={certificateOpen}
+		on:close={() => (certificateOpen = false)}
+		on:refresh={refreshCertificate}
+	/>
+	<CommandPalette
+		open={$commandPaletteOpen}
+		on:close={closeCommandPalette}
+		on:run={(event) => runCommand(event.detail)}
+	/>
 </main>

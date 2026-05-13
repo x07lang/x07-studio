@@ -4,6 +4,7 @@
 	import type {
 		IntentWitnessKind,
 		OpRecord,
+		QuickfixRecord,
 		SessionSnapshot,
 		SessionTurn,
 		TryItRequest,
@@ -14,12 +15,17 @@
 	import AgentStreamCard from './AgentStreamCard.svelte';
 	import RealizePreview from './RealizePreview.svelte';
 	import QuorumRealize from './QuorumRealize.svelte';
+	import QuickfixCard from './QuickfixCard.svelte';
+	import McpCallCard from './McpCallCard.svelte';
 
 	export let turns: SessionTurn[] = [];
 	export let session: SessionSnapshot | null = null;
 	export let detailsOpen = false;
 	export let tryResult: TryItResult | null = null;
 	export let busy = false;
+	export let realizeBusy = false;
+	export let invokeBusy = false;
+	export let quickfix: QuickfixRecord | null = null;
 
 	const dispatch = createEventDispatcher<{
 		answer: { questionId: string; text: string; witnessKind: IntentWitnessKind };
@@ -29,6 +35,9 @@
 		realize: void;
 		quorum: void;
 		pickProposal: number;
+		proof: string;
+		quickfix: string;
+		compare: string;
 	}>();
 
 	$: opsById = new Map((session?.op_log ?? []).map((op) => [op.id, op]));
@@ -139,11 +148,14 @@
 						summary={turn.summary}
 						{tryResult}
 						{busy}
+						{realizeBusy}
+						{invokeBusy}
 						implementationInPlace={implementationDone()}
 						on:followup={(event) => dispatch('followup', event.detail)}
 						on:invoke={(event) => dispatch('invoke', event.detail)}
 						on:realize={() => dispatch('realize')}
 						on:quorum={() => dispatch('quorum')}
+						on:proof={(event) => dispatch('proof', event.detail)}
 					/>
 				{:else if turn.kind === 'incident'}
 					<header>
@@ -157,6 +169,13 @@
 							Repair this
 						</button>
 					{/if}
+					<QuickfixCard
+						incidentId={turn.incident_id}
+						record={quickfix?.citations.some((citation) => citation.file.includes(turn.incident_id)) ? quickfix : null}
+						{busy}
+						on:load={(event) => dispatch('quickfix', event.detail)}
+						on:apply={(event) => dispatch('repair', event.detail)}
+					/>
 				{:else if turn.kind === 'repair'}
 					<header>
 						<span>Repair</span>
@@ -183,6 +202,16 @@
 						</ul>
 					{:else}
 						<p class="hint">No file changes recorded by the write audit.</p>
+						{#if !turn.ok}
+							<div class="button-row" aria-label="Implementation recovery actions">
+								<button class="command-button primary" type="button" disabled={busy} on:click={() => dispatch('realize')}>
+									{busy ? 'Claude Code is implementing...' : 'Try Claude Code again'}
+								</button>
+								<button class="command-button" type="button" disabled={busy} on:click={() => dispatch('quorum')}>
+									Compare both agents
+								</button>
+							</div>
+						{/if}
 					{/if}
 					<RealizePreview events={streamEvents.filter((event) => 'agent_id' in event && event.agent_id === turn.agent_id)} />
 				{:else if turn.kind === 'agent_stream'}
@@ -191,13 +220,31 @@
 						<time>{turn.at}</time>
 					</header>
 					<AgentStreamCard event={turn.event} />
+				{:else if turn.kind === 'mcp_call'}
+					<header>
+						<span>MCP</span>
+						<time>{turn.at}</time>
+					</header>
+					<McpCallCard event={turn.call} />
 				{:else if turn.kind === 'quorum_realize'}
 					<header>
 						<span>Realize quorum</span>
 						<time>{turn.at}</time>
 					</header>
 					<QuorumRealize round={turn.round} {busy} on:pick={(event) => dispatch('pickProposal', event.detail)} />
+				{:else if turn.kind === 'trust_posture_changed'}
+					<header>
+						<span>Trust posture</span>
+						<time>{turn.at}</time>
+					</header>
+					<p>{turn.posture.worlds.join(', ')} · {Math.round(turn.posture.proof_coverage.proved_pct)}% proof coverage</p>
 				{/if}
+
+				<div class="turn-actions">
+					<button type="button" class="link-button" on:click={() => dispatch('compare', turn.id)}>
+						Compare to…
+					</button>
+				</div>
 
 				{#if detailsOpen}
 					<details open class="turn-evidence">

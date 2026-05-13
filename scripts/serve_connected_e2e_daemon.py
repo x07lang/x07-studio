@@ -206,6 +206,19 @@ def run_agent(command: str, args: list[str]) -> None:
     prompt_path = args[-1] if args else ".x07/studio/handoffs/unknown.md"
     prompt = " ".join(args)
     if "-realize" in prompt_path or "realize" in prompt.lower() or "implementation" in prompt.lower():
+        if command == "claude" and "no-write realize regression" in prompt.lower():
+            print(
+                json.dumps(
+                    {
+                        "schema_version": "x07.studio.agent_event@0.1.0",
+                        "kind": "diagnostic",
+                        "summary": "connected-e2e forced no-write realize failure",
+                    }
+                )
+            )
+            print(json.dumps({"type": "result", "subtype": "error", "exit_code": 1}))
+            print("connected-e2e forced no-write realize failure", file=sys.stderr)
+            raise SystemExit(1)
         # Connected-E2E realize mode: write a non-stub target module
         # body so Studio's stub-scanner stops flagging it. The body is
         # arbitrary — what matters is that body_is_stub() returns false.

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.quickfix_record@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "diagnostic_code", "severity", "summary", "patch_ast", "citations"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.quickfix_record@0.1.0" },
+    "diagnostic_code": { "type": "string" },
+    "severity": { "type": "string" },
+    "summary": { "type": "string" },
+    "patch_ast": {},
+    "citations": { "type": "array", "items": { "type": "object" } }
+  }
+}

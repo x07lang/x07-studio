@@ -4,9 +4,11 @@
 		AskAnswer,
 		AutopilotState,
 		CassetteEntry,
+		CassetteRibbon as CassetteRibbonType,
 		LadderState,
 		ReleaseStatus,
 		SessionSnapshot,
+		TrustPosture,
 		TryItRequest,
 		TryItResult,
 		VisualKind,
@@ -16,6 +18,8 @@
 	import TryItPanel from './TryItPanel.svelte';
 	import ShippingLadder from './ShippingLadder.svelte';
 	import VisualEditor from './VisualEditor.svelte';
+	import TrustCard from './TrustCard.svelte';
+	import CassetteRibbon from './CassetteRibbon.svelte';
 
 	export let session: SessionSnapshot | null = null;
 	export let ladder: LadderState | null = null;
@@ -24,6 +28,8 @@
 	export let autopilot: AutopilotState | null = null;
 	export let releaseStatus: ReleaseStatus | null = null;
 	export let cassettes: CassetteEntry[] = [];
+	export let cassetteRibbon: CassetteRibbonType | null = null;
+	export let trustPosture: TrustPosture | null = null;
 	export let visualParseResult: VisualResponse | null = null;
 	export let visualEmitResult: VisualResponse | null = null;
 	export let busy = false;
@@ -43,6 +49,7 @@
 		autopilot: void;
 		pauseAutopilot: void;
 		release: string;
+		certificate: void;
 		exportReplay: void;
 		cassetteLoad: void;
 		cassetteBranch: { idx: number; title: string };
@@ -56,6 +63,8 @@
 </script>
 
 <aside class="now-panel" data-testid="now-panel">
+	<TrustCard posture={trustPosture} />
+
 	<section class="now-card status-card">
 		<header>
 			<h2>Now</h2>
@@ -101,7 +110,10 @@
 		{releaseStatus}
 		on:climb={(event) => dispatch('climb', event.detail)}
 		on:release={(event) => dispatch('release', event.detail)}
+		on:certificate={() => dispatch('certificate')}
 	/>
+
+	<CassetteRibbon ribbon={cassetteRibbon} />
 
 	<section class="now-card cassette-card">
 		<header>

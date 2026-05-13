@@ -13,6 +13,8 @@ Studio normalizes local coding-agent JSONL output into
 - `reasoning`: intermediate reasoning or planning text.
 - `tool_use`: tool call with bounded JSON input.
 - `tool_result`: tool result with success flag and a short snippet.
+- `mcp_call`: transparent MCP tool call with server, tool, bounded input, and
+  bounded output.
 - `agent_message`: assistant/user-visible message text.
 - `done`: terminal event with exit code.
 
@@ -37,3 +39,10 @@ persists it as:
 
 The web Timeline renders both the compact tool-use card and the live diff panel
 while the realize turn is running.
+
+## MCP Transparency
+
+Tool ids such as `mcp.x07.search_v1` and `mcp__x07__search_v1` are normalized
+as `mcp_call` events. The Timeline renders them with the MCP server and tool
+name visible so agent context lookups, package searches, and bounded x07
+execution calls remain auditable.

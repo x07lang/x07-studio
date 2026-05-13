@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.recipe@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "id", "title", "one_liner", "intent_text", "task_type", "preview_posture"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.recipe@0.1.0" },
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "one_liner": { "type": "string" },
+    "intent_text": { "type": "string" },
+    "task_type": { "type": "string" },
+    "preview_posture": { "type": "object" }
+  }
+}

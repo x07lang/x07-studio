@@ -148,6 +148,17 @@ pub enum SessionTurn {
         round: RealizeQuorumRound,
         op_ids: Vec<Uuid>,
     },
+    TrustPostureChanged {
+        id: Uuid,
+        at: String,
+        posture: TrustPosture,
+    },
+    McpCall {
+        id: Uuid,
+        at: String,
+        call: AgentStreamEvent,
+        op_id: Uuid,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,8 +179,14 @@ pub struct TurnEvidence {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
+    #[serde(alias = "intent_text")]
     pub title: String,
+    #[serde(default = "default_task_type", alias = "mode")]
     pub task_type: TaskType,
+}
+
+fn default_task_type() -> TaskType {
+    TaskType::NewBehavior
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,6 +329,15 @@ pub enum AgentStreamEvent {
         agent_id: String,
         exit_code: i32,
     },
+    McpCall {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        tool: String,
+        server: String,
+        input: Value,
+        output: Option<Value>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,9 +374,15 @@ pub struct RealizeProposal {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealizeQuorumRequest {
+    #[serde(default = "default_realize_quorum_request_schema_version")]
+    pub schema_version: String,
     pub agent_ids: Vec<String>,
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+}
+
+fn default_realize_quorum_request_schema_version() -> String {
+    "x07.studio.realize_quorum_request@0.1.0".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,6 +447,8 @@ pub struct LadderRung {
     pub satisfied: bool,
     pub missing: Vec<String>,
     pub evidence: Vec<String>,
+    #[serde(default)]
+    pub gates: Vec<RungGate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -430,11 +464,187 @@ pub struct ClimbRungRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseRequest {
+    #[serde(default = "default_release_request_schema_version")]
     pub schema_version: String,
     pub rung: String,
     pub environment: String,
     #[serde(default)]
     pub binding_refs: Vec<String>,
+}
+
+fn default_release_request_schema_version() -> String {
+    "x07.studio.release_request@0.1.0".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RungGate {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    pub currently_satisfied: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustPosture {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub captured_at: String,
+    pub trust_profile: String,
+    pub worlds: Vec<String>,
+    pub capabilities: Vec<Capability>,
+    pub budgets: BudgetSummary,
+    pub proof_coverage: ProofCoverage,
+    pub deltas: Vec<PostureDelta>,
+    pub posture_color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Capability {
+    pub id: String,
+    pub source: String,
+    pub justification: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BudgetSummary {
+    pub local_cap_ms: Option<u64>,
+    pub arch_profile: Option<String>,
+    pub prover_seconds_used: u64,
+    pub prover_seconds_cap: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProofCoverage {
+    pub support_pct: f32,
+    pub proved_pct: f32,
+    pub proof_count: u32,
+    pub assumptions_open: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostureDelta {
+    pub at: String,
+    pub kind: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticDiffRequest {
+    #[serde(default = "default_semantic_diff_request_schema_version")]
+    pub schema_version: String,
+    pub from: DiffRef,
+    pub to: DiffRef,
+    #[serde(default = "default_semantic_diff_mode")]
+    pub mode: String,
+}
+
+fn default_semantic_diff_request_schema_version() -> String {
+    "x07.studio.semantic_diff_request@0.1.0".to_string()
+}
+
+fn default_semantic_diff_mode() -> String {
+    "project".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DiffRef {
+    OpId { op_id: Uuid },
+    TurnId { turn_id: Uuid },
+    Hash { hash: String },
+    Current,
+    QuorumProposal { round: Uuid, agent_id: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticDiff {
+    pub schema_version: String,
+    pub from: DiffRef,
+    pub to: DiffRef,
+    pub headline: String,
+    pub trust_delta_color: String,
+    pub raw: Value,
+    pub world_changes: Vec<String>,
+    pub capability_changes: Vec<String>,
+    pub budget_changes: Vec<String>,
+    pub proof_changes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofEvidence {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub behavior_id: String,
+    pub status: String,
+    pub citations: Vec<ProofEvidenceCitation>,
+    pub obligations: Vec<ProofObligation>,
+    pub z3_ms: Option<u64>,
+    pub assumptions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofEvidenceCitation {
+    pub kind: String,
+    pub file: String,
+    pub region: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofObligation {
+    pub id: String,
+    pub goal: String,
+    pub status: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuickfixRecord {
+    pub schema_version: String,
+    pub diagnostic_code: String,
+    pub severity: String,
+    pub summary: String,
+    pub patch_ast: Value,
+    pub citations: Vec<ProofEvidenceCitation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CassetteRibbon {
+    pub schema_version: String,
+    pub boundaries: Vec<BoundaryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoundaryEntry {
+    pub at: String,
+    pub kind: String,
+    pub policy: String,
+    pub summary: String,
+    pub cassette_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CertificateSummary {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub profile: String,
+    pub operational_entry: String,
+    pub issued_at: String,
+    pub expires_at: Option<String>,
+    pub proof_summary: Value,
+    pub trust_report: Value,
+    pub html_summary_path: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Recipe {
+    pub schema_version: String,
+    pub id: String,
+    pub title: String,
+    pub one_liner: String,
+    pub intent_text: String,
+    pub task_type: TaskType,
+    pub preview_posture: TrustPosture,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -860,4 +1070,53 @@ pub enum SessionStreamEvent {
     Heartbeat {
         unix_ms: u64,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CreateSessionRequest, RealizeQuorumRequest, ReleaseRequest};
+    use crate::artifacts::TaskType;
+
+    #[test]
+    fn create_session_accepts_intent_text_and_default_task_type() {
+        let request: CreateSessionRequest =
+            serde_json::from_str(r#"{"intent_text":"Build a sorter"}"#).expect("request");
+
+        assert_eq!(request.title, "Build a sorter");
+        assert_eq!(request.task_type, TaskType::NewBehavior);
+    }
+
+    #[test]
+    fn create_session_accepts_mode_alias() {
+        let request: CreateSessionRequest =
+            serde_json::from_str(r#"{"title":"Fix","mode":"bug_fix"}"#).expect("request");
+
+        assert_eq!(request.title, "Fix");
+        assert_eq!(request.task_type, TaskType::BugFix);
+    }
+
+    #[test]
+    fn realize_quorum_request_accepts_minimal_body() {
+        let request: RealizeQuorumRequest =
+            serde_json::from_str(r#"{"agent_ids":["claude-code"]}"#).expect("request");
+
+        assert_eq!(
+            request.schema_version,
+            "x07.studio.realize_quorum_request@0.1.0"
+        );
+        assert_eq!(request.agent_ids, ["claude-code"]);
+        assert_eq!(request.timeout_seconds, None);
+    }
+
+    #[test]
+    fn release_request_accepts_minimal_body() {
+        let request: ReleaseRequest =
+            serde_json::from_str(r#"{"rung":"shareable","environment":"shareable"}"#)
+                .expect("request");
+
+        assert_eq!(request.schema_version, "x07.studio.release_request@0.1.0");
+        assert_eq!(request.rung, "shareable");
+        assert_eq!(request.environment, "shareable");
+        assert!(request.binding_refs.is_empty());
+    }
 }

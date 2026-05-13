@@ -1,21 +1,28 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import type { PlainEnglishSummary, TryItRequest, TryItResult } from '$lib/studio';
+	import { implementationActionLabel, implementationReadyForSummary } from './resultPreviewState';
 
 	export let summary: PlainEnglishSummary;
 	export let tryResult: TryItResult | null = null;
 	export let busy = false;
+	export let realizeBusy = false;
+	export let invokeBusy = false;
 	export let implementationInPlace = false;
 
 	let copied = false;
 	let showDetails = false;
 	let tryInput = '';
 
+	$: scaffoldOnly = summary.scaffold_only === true;
+	$: implementationReady = implementationReadyForSummary(scaffoldOnly, implementationInPlace);
+
 	const dispatch = createEventDispatcher<{
 		followup: string;
 		invoke: TryItRequest;
 		realize: void;
 		quorum: void;
+		proof: string;
 	}>();
 
 	async function copyInvocation() {
@@ -47,16 +54,21 @@
 		if (result.output_json) return JSON.stringify(result.output_json, null, 2);
 		return '(no output)';
 	}
+
+	function behaviorId(item: string, index: number) {
+		const fallback = item.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+		return summary.behavior_promise_ids?.[index] || fallback || `behavior-${index + 1}`;
+	}
 </script>
 
-<section class="result-preview" data-testid="result-preview" data-scaffold-only={summary.scaffold_only ? 'true' : 'false'}>
+<section class="result-preview" data-testid="result-preview" data-scaffold-only={scaffoldOnly ? 'true' : 'false'}>
 	<header>
 		<h2 data-testid="summary-headline">{summary.headline}</h2>
 	</header>
 
-	{#if summary.scaffold_only || implementationInPlace}
+	{#if scaffoldOnly || implementationInPlace}
 		<section class="realize-cta" data-testid="realize-cta">
-			{#if implementationInPlace && !summary.scaffold_only}
+			{#if implementationReady}
 				<p class="hint">Implementation in place from the latest synthesis / realize operation.</p>
 			{:else}
 				<p class="hint">
@@ -77,16 +89,16 @@
 				type="button"
 				class="command-button primary"
 				on:click={() => dispatch('realize')}
-				disabled={busy || implementationInPlace}
+				disabled={busy || implementationReady}
 				data-testid="realize-cta-button"
 			>
-				{implementationInPlace ? 'Implementation in place' : busy ? 'Claude Code is implementing…' : 'Implement with Claude Code'}
+				{implementationActionLabel(scaffoldOnly, implementationInPlace, realizeBusy)}
 			</button>
 			<button
 				type="button"
 				class="command-button"
 				on:click={() => dispatch('quorum')}
-				disabled={busy || implementationInPlace}
+				disabled={busy || implementationReady}
 				data-testid="realize-quorum-button"
 			>
 				Compare both agents
@@ -98,8 +110,12 @@
 		<div class="result-block">
 			<h3>What it does</h3>
 			<ul>
-				{#each summary.behavior_promises as item}
-					<li>{item}</li>
+				{#each summary.behavior_promises as item, index}
+					<li>
+						<button type="button" class="link-button promise-button" on:click={() => dispatch('proof', behaviorId(item, index))}>
+							{item}
+						</button>
+					</li>
 				{/each}
 			</ul>
 		</div>
@@ -171,7 +187,7 @@
 					disabled={busy || !tryInput.trim()}
 					data-testid="try-inline-run"
 				>
-					{busy ? 'Running…' : 'Run it'}
+					{invokeBusy ? 'Running…' : busy ? 'Working…' : 'Run it'}
 				</button>
 			</div>
 			{#if tryResult}
@@ -235,6 +251,10 @@
 	}
 	.realize-cta .stub-list code {
 		font-family: var(--font-mono, ui-monospace, monospace);
+	}
+	.promise-button {
+		text-align: left;
+		line-height: 1.45;
 	}
 	@media (prefers-color-scheme: light) {
 		.realize-cta {

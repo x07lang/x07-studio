@@ -1,16 +1,22 @@
 pub mod autopilot;
+pub mod cassettes;
+pub mod certificate;
 pub mod event_bus;
 pub mod genpack;
 pub mod incidents;
 pub mod kernel;
 pub mod ladder;
 pub mod memory;
+pub mod proof;
+pub mod quickfix;
 pub mod reducer;
 pub mod replay;
+pub mod semantic_diff;
 pub mod stream_events;
 pub mod summarize;
 pub mod synthesis;
 pub mod timeline;
+pub mod trust_posture;
 pub mod workspace;
 
 pub use event_bus::SessionEventBus;

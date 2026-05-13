@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { RealizeProposal, RealizeQuorumRound } from '$lib/studio';
+	import type { RealizeProposal, RealizeQuorumRound, SemanticDiff as SemanticDiffType } from '$lib/studio';
+	import SemanticDiff from './SemanticDiff.svelte';
 
 	export let round: RealizeQuorumRound;
 	export let busy = false;
@@ -17,6 +18,21 @@
 			.map((line) => `+${line}`)
 			.join('\n')}`;
 	}
+
+	$: localDiff = {
+		schema_version: 'x07.studio.semantic_diff@0.1.0',
+		from: { kind: 'current' as const },
+		to: { kind: 'current' as const },
+		headline: round.proposals.some((proposal) => JSON.stringify(proposal.body).includes('os-net'))
+			? 'adds os-net · review before picking'
+			: 'stays solve-pure · proposals differ in code only',
+		trust_delta_color: round.proposals.some((proposal) => JSON.stringify(proposal.body).includes('os-net')) ? 'red' : 'green',
+		raw: round,
+		world_changes: [],
+		capability_changes: [],
+		budget_changes: [],
+		proof_changes: []
+	} satisfies SemanticDiffType;
 </script>
 
 <section class="quorum-realize" data-testid="quorum-realize">
@@ -24,6 +40,7 @@
 		<h3>Compare both agents</h3>
 		<span>{round.agreed ? 'agreed' : 'different proposals'}</span>
 	</header>
+	<SemanticDiff diff={localDiff} />
 	<div class="proposal-grid">
 		{#each round.proposals as proposal, index}
 			<article class:failed={proposal.status !== 'ok'}>

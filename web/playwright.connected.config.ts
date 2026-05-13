@@ -22,7 +22,7 @@ export default defineConfig({
 			timeout: 120_000
 		},
 		{
-			command: `LOOM_DAEMON_ORIGIN=http://${daemonAddr} npm run dev -- --host 127.0.0.1 --port ${webPort}`,
+			command: `LOOM_DAEMON_ORIGIN=http://${daemonAddr} npm run dev -- --host 127.0.0.1 --port ${webPort} --strictPort`,
 			url: `http://127.0.0.1:${webPort}`,
 			reuseExistingServer: false,
 			timeout: 60_000

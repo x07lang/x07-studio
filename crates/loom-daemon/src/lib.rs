@@ -25,18 +25,19 @@ use loom_types::api::{
     AgentApprovalRequest, AgentApprovalResponse, AgentHandoffResponse, AgentRunRequest,
     AgentRunResponse, ArtifactPreviewRequest, ArtifactPreviewResponse, AutopilotPolicy,
     AutopilotResponse, AutopilotStartRequest, BindingDescriptor, CallMcpToolRequest,
-    CassetteBranchRequest, CassetteEntry, ClimbRungRequest, ConnectMcpRequest, ConnectMcpResponse,
-    CreateSessionRequest, DispatchEventRequest, DocPreviewRequest, DocPreviewResponse,
-    FormalizeIntentRequest, FormalizeIntentResponse, HealthResponse, IntentAnswerRequest,
-    IntentAnswerResponse, IntentClarifyRequest, IntentClarifyResponse, IntentImageUploadResponse,
-    IntentInputMode, LadderState, LiveDiff, McpCallResponse, PickRealizeProposalRequest,
-    PickRealizeProposalResponse, ProbeProviderRequest, ProviderProbeResponse, QuorumRequest,
-    QuorumRound, RealizeQuorumRequest, RealizeQuorumRound, RealizeRequest, RealizeResponse,
-    ReleaseRequest, ReleaseStatus, ReplayExportResponse, ReplayImportRequest,
-    RequestIntentRevisionRequest, RequestIntentRevisionResponse, ResolveApprovalRequest,
-    RunBindingRequest, RunBuildRequest, RunXtalWorkflowRequest, RuntimeComponentState,
-    RuntimeComponentStatus, SaveAgentProfileRequest, SaveProviderProfileRequest, SessionTurn,
-    StudioDefaults, StudioMemory, SyncClaimResponse, SyncCode, SyncStateRequest, TryItRequest,
+    CassetteBranchRequest, CassetteEntry, CassetteRibbon, CertificateSummary, ClimbRungRequest,
+    ConnectMcpRequest, ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest,
+    DocPreviewRequest, DocPreviewResponse, FormalizeIntentRequest, FormalizeIntentResponse,
+    HealthResponse, IntentAnswerRequest, IntentAnswerResponse, IntentClarifyRequest,
+    IntentClarifyResponse, IntentImageUploadResponse, IntentInputMode, LadderState, LiveDiff,
+    McpCallResponse, PickRealizeProposalRequest, PickRealizeProposalResponse, ProbeProviderRequest,
+    ProofEvidence, ProviderProbeResponse, QuickfixRecord, QuorumRequest, QuorumRound,
+    RealizeQuorumRequest, RealizeQuorumRound, RealizeRequest, RealizeResponse, ReleaseRequest,
+    ReleaseStatus, ReplayExportResponse, ReplayImportRequest, RequestIntentRevisionRequest,
+    RequestIntentRevisionResponse, ResolveApprovalRequest, RunBindingRequest, RunBuildRequest,
+    RunXtalWorkflowRequest, RuntimeComponentState, RuntimeComponentStatus, SaveAgentProfileRequest,
+    SaveProviderProfileRequest, SemanticDiff, SemanticDiffRequest, SessionTurn, StudioDefaults,
+    StudioMemory, SyncClaimResponse, SyncCode, SyncStateRequest, TrustPosture, TryItRequest,
     TryItResult, VisualEmitRequest, VisualParseRequest, VisualResponse, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
@@ -115,6 +116,15 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/sessions/{session_id}/ladder", get(ladder_state))
         .route("/v1/sessions/{session_id}/ladder/climb", post(climb_ladder))
         .route(
+            "/v1/sessions/{session_id}/trust/posture",
+            get(trust_posture),
+        )
+        .route("/v1/sessions/{session_id}/diff", post(run_semantic_diff))
+        .route(
+            "/v1/sessions/{session_id}/proof/{behavior_id}",
+            get(proof_evidence),
+        )
+        .route(
             "/v1/sessions/{session_id}/ladder/release",
             post(submit_release),
         )
@@ -123,6 +133,10 @@ pub fn router(state: ApiState) -> Router {
             get(get_release_status),
         )
         .route("/v1/sessions/{session_id}/cassette", get(cassette_entries))
+        .route(
+            "/v1/sessions/{session_id}/cassettes/ribbon",
+            get(cassette_ribbon),
+        )
         .route(
             "/v1/sessions/{session_id}/cassette/branch",
             post(branch_cassette),
@@ -139,6 +153,18 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/v1/sessions/{session_id}/incidents/{incident_id}/repair",
             post(repair_incident),
+        )
+        .route(
+            "/v1/sessions/{session_id}/incidents/{incident_id}/quickfix",
+            get(incident_quickfix),
+        )
+        .route(
+            "/v1/sessions/{session_id}/certificate",
+            get(certificate_summary),
+        )
+        .route(
+            "/v1/sessions/{session_id}/certificate/refresh",
+            post(refresh_certificate),
         )
         .route(
             "/v1/sessions/{session_id}/visual/streampipe/parse",
@@ -1010,6 +1036,38 @@ async fn ladder_state(
     Ok(Json(state))
 }
 
+async fn trust_posture(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<TrustPosture>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let posture = kernel.trust_posture(session_id).map_err(conflict_error)?;
+    Ok(Json(posture))
+}
+
+async fn run_semantic_diff(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<SemanticDiffRequest>,
+) -> Result<Json<SemanticDiff>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let diff = kernel
+        .diff_artifacts(session_id, request)
+        .map_err(conflict_error)?;
+    Ok(Json(diff))
+}
+
+async fn proof_evidence(
+    Path((session_id, behavior_id)): Path<(Uuid, String)>,
+    State(state): State<ApiState>,
+) -> Result<Json<ProofEvidence>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let evidence = kernel
+        .proof_evidence(session_id, &behavior_id)
+        .map_err(conflict_error)?;
+    Ok(Json(evidence))
+}
+
 async fn climb_ladder(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -1064,6 +1122,40 @@ async fn scan_incidents(
     Ok(Json(ops))
 }
 
+async fn incident_quickfix(
+    Path((session_id, incident_id)): Path<(Uuid, String)>,
+    State(state): State<ApiState>,
+) -> Result<Json<QuickfixRecord>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let record = kernel
+        .quickfix_record(session_id, &incident_id)
+        .map_err(conflict_error)?;
+    Ok(Json(record))
+}
+
+async fn certificate_summary(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<CertificateSummary>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let summary = kernel
+        .certificate_summary(session_id)
+        .map_err(conflict_error)?;
+    Ok(Json(summary))
+}
+
+async fn refresh_certificate(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<CertificateSummary>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let summary = kernel
+        .refresh_certificate(session_id)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(summary))
+}
+
 async fn watch_incidents(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -1116,6 +1208,15 @@ async fn cassette_entries(
         .cassette_entries(session_id)
         .map_err(conflict_error)?;
     Ok(Json(entries))
+}
+
+async fn cassette_ribbon(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<CassetteRibbon>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let ribbon = kernel.cassette_ribbon(session_id).map_err(conflict_error)?;
+    Ok(Json(ribbon))
 }
 
 async fn branch_cassette(

@@ -168,6 +168,11 @@
 	gap: 12px;
 }
 
+.turn-actions {
+	display: flex;
+	justify-content: flex-end;
+}
+
 .turn header span,
 .now-card header span {
 	font-size: 11px;

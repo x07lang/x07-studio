@@ -29,7 +29,7 @@ test('connected timeline formalizes, clarifies, builds, tries, and scans inciden
 	await expect(empty.getByTestId('clarify-answer-locked')).toBeVisible({ timeout: 10_000 });
 
 	await page.getByTestId('approve-build').click();
-	await expect(page.getByTestId('turn-verified')).toBeVisible({ timeout: 45_000 });
+	await expect(page.getByTestId('turn-verified').first()).toBeVisible({ timeout: 45_000 });
 	await expect(page.getByTestId('run-invocation')).toContainText('x07 run');
 	await expect(page.getByTestId('shipping-ladder')).toContainText('Local preview');
 
@@ -72,7 +72,7 @@ test('connected verify disables the realize CTA once template synthesis lands', 
 	await card.getByTestId('clarify-answer-submit').click();
 
 	await page.getByTestId('approve-build').click();
-	await expect(page.getByTestId('turn-verified')).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByTestId('turn-verified').first()).toBeVisible({ timeout: 60_000 });
 	await expect(page.getByTestId('summary-headline')).not.toContainText('scaffolded');
 	await expect(page.getByTestId('realize-cta')).toBeVisible();
 	await expect(page.getByTestId('realize-cta')).toContainText('Implementation in place');
@@ -92,6 +92,45 @@ test('connected verify disables the realize CTA once template synthesis lands', 
 	});
 });
 
+test('connected no-write realize failure exposes recovery actions', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto('/');
+	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+	await useManualMode(page);
+
+	await page
+		.getByTestId('composer-input')
+		.fill(
+			'Build a no-write realize regression CLI calculator. It receives one-shot CLI arguments and supports integer add, subtract, multiply, and divide.'
+		);
+	await page.getByTestId('composer-submit').click();
+	await expect(page.getByTestId('turn-user_intent')).toBeVisible({ timeout: 15_000 });
+
+	const card = page.locator('[data-testid="clarify-card"]').first();
+	await expect(card).toBeVisible({ timeout: 20_000 });
+	await card.getByRole('button').nth(0).click();
+	await card.getByTestId('clarify-answer-submit').click();
+
+	await page.getByTestId('approve-build').click();
+	await expect(page.getByTestId('turn-verified').first()).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByTestId('summary-headline')).toContainText('scaffolded');
+	await expect(page.getByTestId('realize-cta-button')).toBeEnabled();
+	await expect(page.getByTestId('realize-cta-button')).toContainText('Implement with Claude Code');
+
+	await page.getByTestId('realize-cta-button').click();
+	const realizeTurn = page.getByTestId('turn-agent_realize');
+	await expect(realizeTurn).toContainText('claude-code ran but reported issues', {
+		timeout: 60_000
+	});
+	await expect(realizeTurn).toContainText('No file changes recorded by the write audit.');
+	await expect(realizeTurn.getByRole('button', { name: 'Try Claude Code again' })).toBeEnabled();
+	await expect(realizeTurn.getByRole('button', { name: 'Compare both agents' })).toBeEnabled();
+
+	await realizeTurn.getByRole('button', { name: 'Compare both agents' }).click();
+	await expect(page.getByTestId('turn-quorum_realize')).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByTestId('timeline')).toContainText('openai-codex', { timeout: 30_000 });
+});
+
 test('connected autopilot clarifies, answers, builds, and climbs local preview', async ({ page }) => {
 	await page.goto('/');
 	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
@@ -104,7 +143,7 @@ test('connected autopilot clarifies, answers, builds, and climbs local preview',
 
 	await expect(page.getByTestId('turn-agent_clarify')).toBeVisible({ timeout: 30_000 });
 	await expect(page.getByTestId('clarify-answer-locked').first()).toBeVisible({ timeout: 30_000 });
-	await expect(page.getByTestId('turn-verified')).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByTestId('turn-verified').first()).toBeVisible({ timeout: 60_000 });
 	await expect(page.getByTestId('shipping-ladder')).toContainText('Local preview');
 });
 
@@ -122,7 +161,7 @@ test('connected timeline runs the Atlas workflow lane', async ({ page }) => {
 	});
 
 	await page.getByTestId('approve-build').click();
-	await expect(page.getByTestId('turn-verified')).toBeVisible({ timeout: 45_000 });
+	await expect(page.getByTestId('turn-verified').first()).toBeVisible({ timeout: 45_000 });
 	await expect(page.getByTestId('shipping-ladder')).toContainText('Production');
 
 	const response = await page.request.get('/v1/sessions');

@@ -1,6 +1,6 @@
 use camino::Utf8Path;
 
-use loom_types::api::{LadderRung, LadderState};
+use loom_types::api::{LadderRung, LadderState, RungGate};
 use loom_types::artifacts::OperationStatus;
 use loom_types::session::SessionSnapshot;
 
@@ -13,6 +13,10 @@ pub fn ladder_state(root: &Utf8Path, session: &SessionSnapshot) -> LadderState {
             for path in spec.required_paths {
                 if root.join(path).exists() || session_has_artifact(session, path) {
                     evidence.push(path.to_string());
+                } else if spec.profile_path == Some(path)
+                    && session_certified_profile(session, path)
+                {
+                    evidence.push(format!("trust profile certified: {path}"));
                 } else {
                     missing.push(path.to_string());
                 }
@@ -27,6 +31,7 @@ pub fn ladder_state(root: &Utf8Path, session: &SessionSnapshot) -> LadderState {
                 label: spec.label.to_string(),
                 profile_path: spec.profile_path.map(str::to_string),
                 satisfied: missing.is_empty(),
+                gates: rung_gates(spec.id, spec.profile_path, &missing),
                 missing,
                 evidence,
             }
@@ -41,6 +46,79 @@ pub fn ladder_state(root: &Utf8Path, session: &SessionSnapshot) -> LadderState {
     LadderState {
         current_rung,
         rungs,
+    }
+}
+
+fn rung_gates(rung_id: &str, profile_path: Option<&str>, missing: &[String]) -> Vec<RungGate> {
+    let mut gates = match rung_id {
+        "local_preview" => vec![
+            gate(
+                "xtal-verify",
+                "XTAL verify",
+                "The current implementation passes the project verify lane.",
+            ),
+            gate(
+                "solve-default",
+                "Solve-world default",
+                "The local preview starts from deterministic solve-world execution.",
+            ),
+        ],
+        "shareable" => vec![
+            gate(
+                "sandbox-profile",
+                "Sandbox profile",
+                "A sandbox trust profile is present before the project is shared.",
+            ),
+            gate(
+                "review-diff",
+                "Review diff gates",
+                "Capability, world, proof, and budget changes are reviewable before sharing.",
+            ),
+        ],
+        "team" => vec![
+            gate(
+                "verified-core",
+                "Verified core",
+                "Team handoff requires the verified-core trust profile.",
+            ),
+            gate(
+                "proof-coverage",
+                "Proof coverage",
+                "Proof and generated-test evidence are available for team review.",
+            ),
+        ],
+        "production" => vec![
+            gate(
+                "certified-capsule",
+                "Certified capsule",
+                "A release capsule can be certified with bundled evidence.",
+            ),
+            gate(
+                "provenance",
+                "Provenance",
+                "Production promotion records provenance and certificate artifacts.",
+            ),
+        ],
+        _ => vec![gate("rung", "Rung gate", "Studio tracks this trust rung.")],
+    };
+    for gate in &mut gates {
+        let profile_missing = profile_path
+            .map(|profile| missing.iter().any(|item| item == profile))
+            .unwrap_or(false);
+        gate.currently_satisfied = !profile_missing
+            && !missing
+                .iter()
+                .any(|item| item.contains("xtal.verify") && gate.id.contains("verify"));
+    }
+    gates
+}
+
+fn gate(id: &str, label: &str, description: &str) -> RungGate {
+    RungGate {
+        id: id.to_string(),
+        label: label.to_string(),
+        description: description.to_string(),
+        currently_satisfied: true,
     }
 }
 
@@ -103,6 +181,17 @@ fn session_has_artifact(session: &SessionSnapshot, path: &str) -> bool {
         .any(|op| op.artifacts.iter().any(|artifact| artifact == path))
 }
 
+fn session_certified_profile(session: &SessionSnapshot, profile_path: &str) -> bool {
+    session.op_log.iter().any(|op| {
+        op.op == "trust.certify.profile"
+            && op.status == OperationStatus::Succeeded
+            && op
+                .command
+                .windows(2)
+                .any(|items| items[0] == "--profile" && items[1] == profile_path)
+    })
+}
+
 fn verified(session: &SessionSnapshot) -> bool {
     session
         .op_log
@@ -155,6 +244,77 @@ mod tests {
 
         assert_eq!(state.current_rung, "local_preview");
         assert!(state.rungs[0].satisfied);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn profile_certification_satisfies_matching_rung_gate() {
+        let root = camino::Utf8PathBuf::from_path_buf(std::env::temp_dir())
+            .expect("utf8 temp")
+            .join(format!("x07-studio-ladder-profile-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("target/xtal/verify")).expect("mkdir");
+        std::fs::write(root.join("x07.json"), "{}").expect("x07");
+        std::fs::write(root.join("target/xtal/verify/summary.json"), "{}").expect("verify");
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "demo", root.to_string(), TaskType::NewBehavior);
+        session.op_log.push(OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id,
+            op: "xtal.verify".to_string(),
+            backend: "test".to_string(),
+            command: Vec::new(),
+            started_at: "1".to_string(),
+            finished_at: Some("1".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: vec!["target/xtal/verify/summary.json".to_string()],
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: None,
+            report_path: None,
+        });
+        session.op_log.push(OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id,
+            op: "trust.certify.profile".to_string(),
+            backend: "test".to_string(),
+            command: vec![
+                "x07".to_string(),
+                "trust".to_string(),
+                "certify".to_string(),
+                "--profile".to_string(),
+                "arch/trust/profiles/verified_core_pure_v1.json".to_string(),
+            ],
+            started_at: "2".to_string(),
+            finished_at: Some("2".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: vec!["target/cert/certificate.json".to_string()],
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: None,
+            report_path: None,
+        });
+
+        let state = ladder_state(root.as_path(), &session);
+
+        assert_eq!(state.current_rung, "team");
+        let team = state
+            .rungs
+            .iter()
+            .find(|rung| rung.id == "team")
+            .expect("team rung");
+        assert!(team.satisfied);
+        assert!(team.gates.iter().all(|gate| gate.currently_satisfied));
         std::fs::remove_dir_all(root).ok();
     }
 }

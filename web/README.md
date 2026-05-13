@@ -15,11 +15,13 @@ projection so the UX and browser tests still exercise the same phase model.
 The composer accepts text intent, voice transcripts, image witnesses, Auto mode,
 and `/binding <id>` commands.
 The main timeline renders typed turns from the daemon, while the side panels
-cover Try-It invocation, shipping ladder state, incidents, cassette history,
-project Q&A, sync codes, local memory, release status, replay export, and
-visual canvas editors. Realize runs stream normalized Claude Code / Codex tool
-events into the timeline; Compare both agents runs a side-by-side quorum diff
-before applying a chosen proposal.
+cover Try-It invocation, trust posture, shipping ladder gates, incidents,
+quickfix records, cassette history, cassette boundary ribbons, project Q&A,
+sync codes, local memory, release status, certificate review, replay export,
+and visual canvas editors. Realize runs stream normalized Claude Code / Codex
+tool and MCP events into the timeline; Compare both agents runs a side-by-side
+quorum diff before applying a chosen proposal. Cycle 4 also adds a command
+palette (`Cmd/Ctrl+K`) and recipe cards for empty workspaces.
 
 ## Local use
 

@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context};
 use base64::Engine;
@@ -25,12 +25,13 @@ use loom_store::FsStore;
 use loom_types::api::{AgentRunMode, ApprovalDecision, AutopilotPolicy, IntentInputMode};
 use loom_types::api::{
     AnswerCitation, ArtifactPreviewResponse, AskAnswer, AskRequest, AutopilotResponse,
-    AutopilotState, CassetteEntry, DocPreviewEntry, DocPreviewResponse, LadderState, LiveDiff,
-    PatchsetPreview, PatchsetTargetPreview, PickRealizeProposalResponse, ProofCitation,
-    QuorumAgent, QuorumDiff, QuorumRound, RealizeProposal, RealizeQuorumRound, ReleaseRequest,
-    ReleaseStatus, ReplayCapsule, ReplayExportResponse, SessionTurn, StudioMemory, SyncCode,
-    TryItInputKind, TryItRequest, TryItResult, TurnQuestion, VisualResponse, VoiceTranscript,
-    WorkspacePathState, WorkspaceRadarResponse,
+    AutopilotState, CassetteEntry, CassetteRibbon, CertificateSummary, DocPreviewEntry,
+    DocPreviewResponse, LadderState, LiveDiff, PatchsetPreview, PatchsetTargetPreview,
+    PickRealizeProposalResponse, ProofCitation, ProofEvidence, QuickfixRecord, QuorumAgent,
+    QuorumDiff, QuorumRound, RealizeProposal, RealizeQuorumRound, ReleaseRequest, ReleaseStatus,
+    ReplayCapsule, ReplayExportResponse, SemanticDiff, SemanticDiffRequest, SessionTurn,
+    StudioMemory, SyncCode, TrustPosture, TryItInputKind, TryItRequest, TryItResult, TurnQuestion,
+    VisualResponse, VoiceTranscript, WorkspacePathState, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
@@ -85,6 +86,7 @@ impl WorkspaceKernel {
         let root = root.into();
         let store = FsStore::new(root.as_path());
         store.init()?;
+        gc_stale_quorum_staging(root.as_path(), Duration::from_secs(7 * 24 * 60 * 60))?;
         let sessions = store.load_sessions()?;
         let mut model = WorkspaceModel::from_sessions(root.to_string(), sessions);
         if model.sessions.is_empty() {
@@ -330,6 +332,94 @@ impl WorkspaceKernel {
         Ok(crate::ladder::ladder_state(self.root.as_path(), session))
     }
 
+    pub fn trust_posture(&self, session_id: Uuid) -> anyhow::Result<TrustPosture> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(crate::trust_posture::current(self.root.as_path(), session))
+    }
+
+    fn capture_trust_posture(&mut self, session_id: Uuid) -> anyhow::Result<SessionSnapshot> {
+        let posture = self.trust_posture(session_id)?;
+        self.append_op(session_id, posture_captured_op(session_id, &posture))
+    }
+
+    pub fn diff_artifacts(
+        &self,
+        session_id: Uuid,
+        request: SemanticDiffRequest,
+    ) -> anyhow::Result<SemanticDiff> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(crate::semantic_diff::between(
+            self.root.as_path(),
+            session,
+            request,
+        ))
+    }
+
+    pub fn proof_evidence(
+        &self,
+        session_id: Uuid,
+        behavior_id: &str,
+    ) -> anyhow::Result<ProofEvidence> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(crate::proof::for_behavior(
+            self.root.as_path(),
+            session,
+            behavior_id,
+        ))
+    }
+
+    pub fn quickfix_record(
+        &self,
+        session_id: Uuid,
+        incident_id: &str,
+    ) -> anyhow::Result<QuickfixRecord> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(crate::quickfix::for_incident(
+            self.root.as_path(),
+            incident_id,
+        ))
+    }
+
+    pub fn cassette_ribbon(&self, session_id: Uuid) -> anyhow::Result<CassetteRibbon> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(crate::cassettes::ribbon(self.root.as_path()))
+    }
+
+    pub fn certificate_summary(&self, session_id: Uuid) -> anyhow::Result<CertificateSummary> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(crate::certificate::summary(self.root.as_path(), session))
+    }
+
+    pub async fn refresh_certificate(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<CertificateSummary> {
+        let _ = self
+            .run_binding(
+                session_id,
+                "xtal.certify",
+                &BTreeMap::from([("cert_all".to_string(), "true".to_string())]),
+            )
+            .await;
+        self.certificate_summary(session_id)
+    }
+
     pub async fn climb_rung(
         &mut self,
         session_id: Uuid,
@@ -339,16 +429,21 @@ impl WorkspaceKernel {
             .get_session(session_id)
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
         let profile = crate::ladder::rung_profile_path(to_rung).unwrap_or("sandbox");
-        self.run_binding(
-            session_id,
-            if to_rung == "local_preview" {
-                "trust.report.sandbox"
-            } else {
-                "trust.certify.profile"
-            },
-            &BTreeMap::from([("profile".to_string(), profile.to_string())]),
-        )
-        .await
+        let snapshot = self
+            .run_binding(
+                session_id,
+                if to_rung == "local_preview" {
+                    "trust.report.sandbox"
+                } else {
+                    "trust.certify.profile"
+                },
+                &BTreeMap::from([("profile".to_string(), profile.to_string())]),
+            )
+            .await?;
+        match self.capture_trust_posture(session_id) {
+            Ok(snapshot) => Ok(snapshot),
+            Err(_) => Ok(snapshot),
+        }
     }
 
     pub async fn release_for_rung(
@@ -1321,8 +1416,11 @@ impl WorkspaceKernel {
             session.revision_notes = revision_notes.to_vec();
         }
         let op = intent_formalize_op(session_id, &intent, input_mode, revision_notes, None, None);
-        let snapshot =
+        let mut snapshot =
             self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op.clone())))?;
+        if let Ok(captured) = self.capture_trust_posture(session_id) {
+            snapshot = captured;
+        }
         self.store.save_session(&snapshot)?;
         Ok((intent, op, snapshot))
     }
@@ -1402,8 +1500,11 @@ impl WorkspaceKernel {
             provider_report,
             voice_transcript,
         );
-        let snapshot =
+        let mut snapshot =
             self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op.clone())))?;
+        if let Ok(captured) = self.capture_trust_posture(session_id) {
+            snapshot = captured;
+        }
         self.store.save_session(&snapshot)?;
         Ok((intent, op, snapshot))
     }
@@ -1548,6 +1649,9 @@ impl WorkspaceKernel {
                     None => return Ok(current),
                 };
             current = self.append_op(session_id, summary_op)?;
+        }
+        if let Ok(captured) = self.capture_trust_posture(session_id) {
+            current = captured;
         }
         Ok(current)
     }
@@ -2348,7 +2452,9 @@ impl WorkspaceKernel {
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .filter_map(|item| item.as_str())
+                    .filter(|path| is_visible_agent_write(path))
+                    .map(str::to_string)
                     .collect()
             })
             .unwrap_or_default();
@@ -3813,6 +3919,35 @@ fn sync_code_is_expired(expires_at: &str) -> bool {
     expires_at <= now
 }
 
+fn gc_stale_quorum_staging(root: &Utf8Path, max_age: Duration) -> anyhow::Result<()> {
+    let quorum_root = root.join(".x07/studio/quorum");
+    let Ok(entries) = fs::read_dir(&quorum_root) else {
+        return Ok(());
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if now
+            .duration_since(modified)
+            .map(|age| age > max_age)
+            .unwrap_or(false)
+        {
+            fs::remove_dir_all(&path)
+                .with_context(|| format!("remove stale quorum staging dir `{}`", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn visual_parse_value(kind: &str, source: serde_json::Value) -> serde_json::Value {
     match kind {
         "streampipe" => serde_json::json!({
@@ -4968,6 +5103,52 @@ fn build_stage_op(session_id: Uuid, stage: &str, round: u32) -> OpRecord {
             "schema_version": "x07.studio.build_stage@0.1.0",
             "stage": stage,
             "round": round,
+        })),
+        report_path: None,
+    }
+}
+
+fn posture_captured_op(session_id: Uuid, posture: &TrustPosture) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "posture.captured".to_string(),
+        backend: "studio-kernel".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "trust".to_string(),
+            "posture".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec!["target/trust/report.json".to_string()],
+        notes: Some(format!(
+            "{} · {} world{} · {} capabilit{}",
+            posture.trust_profile,
+            posture.worlds.len(),
+            if posture.worlds.len() == 1 { "" } else { "s" },
+            posture.capabilities.len(),
+            if posture.capabilities.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        )),
+        stdout: Some(format!(
+            "{} · {:.0}% proof coverage",
+            posture.worlds.join(", "),
+            posture.proof_coverage.proved_pct
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.trust_posture_record@0.1.0",
+            "posture": posture,
         })),
         report_path: None,
     }
@@ -6211,12 +6392,14 @@ keep `xtal.verify` green, and stay inside the write roots below.\n\n",
     out.push_str("\n## Required Loop\n\n");
     out.push_str(
         "1. Read the approved intent + spec below. Note the operation signatures, examples, and witnesses.\n\
-2. Open each stub module and replace the `defn` body with a real implementation in x07AST.\n\
-3. After every meaningful change, run `x07 xtal impl check --project x07.json` and \
+2. Open each listed stub module and replace the `defn` body with a real implementation in x07AST.\n\
+3. You must edit at least one listed stub file with an approved file-edit tool before exiting. \
+A text-only response, diagnostics-only response, or no-op run is a failed realization.\n\
+4. After every meaningful change, run `x07 xtal impl check --project x07.json` and \
 `x07 xtal verify --project x07.json --allow-os-world` to confirm the impl matches the spec.\n\
-4. Do NOT widen the spec, the architecture manifest, the trust profile, or any policy file. \
+5. Do NOT widen the spec, the architecture manifest, the trust profile, or any policy file. \
 If a spec change is needed, emit an `approval` agent_event and STOP.\n\
-5. When verify is clean, exit. Studio will re-run impl.check + xtal.verify and surface a fresh \
+6. When verify is clean, exit. Studio will re-run impl.check + xtal.verify and surface a fresh \
 Verified turn with the summary.\n\n",
     );
     if let Some(intent) = &session.intent {
@@ -6923,6 +7106,12 @@ fn stream_event_summary(event: &loom_types::api::AgentStreamEvent) -> String {
         loom_types::api::AgentStreamEvent::Done { exit_code, .. } => {
             format!("agent stream finished with exit code {exit_code}")
         }
+        loom_types::api::AgentStreamEvent::McpCall {
+            server,
+            tool,
+            input,
+            ..
+        } => format!("mcp call: {server}.{tool} {input}"),
     }
 }
 
@@ -6937,7 +7126,8 @@ fn persist_live_diff(
         | loom_types::api::AgentStreamEvent::ToolUse { id, .. }
         | loom_types::api::AgentStreamEvent::ToolResult { id, .. }
         | loom_types::api::AgentStreamEvent::AgentMessage { id, .. }
-        | loom_types::api::AgentStreamEvent::Done { id, .. } => *id,
+        | loom_types::api::AgentStreamEvent::Done { id, .. }
+        | loom_types::api::AgentStreamEvent::McpCall { id, .. } => *id,
     };
     let relative = format!(".x07/studio/diffs/{session_id}/{event_id}.json");
     let path = root.join(&relative);
@@ -7214,6 +7404,9 @@ fn collect_agent_workspace_snapshot(
         let Some(relative) = relative_workspace_path(root, &path) else {
             continue;
         };
+        if is_internal_studio_session_path(&relative) {
+            continue;
+        }
         if let Some(fingerprint) = file_fingerprint(&path) {
             files.insert(relative, fingerprint);
         }
@@ -7234,6 +7427,14 @@ fn should_skip_agent_snapshot_dir(path: &Path) -> bool {
 fn relative_workspace_path(root: &Path, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
     Some(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn is_internal_studio_session_path(path: &str) -> bool {
+    path.starts_with(".x07/studio/sessions/")
+}
+
+fn is_visible_agent_write(path: &str) -> bool {
+    !is_internal_studio_session_path(path)
 }
 
 fn file_fingerprint(path: &Path) -> Option<String> {
@@ -7557,8 +7758,9 @@ mod tests {
         agent_clarify_handoff_from_session, agent_handoff_from_session,
         atlas_platform_delivery_vars, checked_xtal_verify_run_vars, copy_example_tree,
         entry_from_spec_operation, intent_packet_from_raw, platform_deployment_id_from_report,
-        sha256_hex, should_scaffold_spec, workflow_template_from_intent,
-        xtal_workflow_vars_from_intent, GenpackHandoffContext, WorkflowTemplate, WorkspaceKernel,
+        render_agent_realize_prompt, sha256_hex, should_scaffold_spec, snapshot_agent_workspace,
+        workflow_template_from_intent, xtal_workflow_vars_from_intent, GenpackHandoffContext,
+        WorkflowTemplate, WorkspaceKernel,
     };
 
     #[test]
@@ -7576,6 +7778,46 @@ mod tests {
             vars.get("input").map(String::as_str),
             Some("spec/app.sorter.x07spec.json")
         );
+    }
+
+    #[test]
+    fn realize_prompt_requires_file_edits_before_exit() {
+        let mut session = SessionSnapshot::new(
+            Uuid::nil(),
+            "calculator",
+            "/workspace",
+            TaskType::NewBehavior,
+        );
+        session.intent = Some(IntentPacket::demo(session.session_id, "/workspace"));
+        let agent = AgentProfile {
+            schema_version: "x07.studio.agent_profile@0.1.0".to_string(),
+            id: "claude-code".to_string(),
+            label: "Claude Code".to_string(),
+            command: "claude".to_string(),
+            args: Vec::new(),
+            allowed_verbs: vec![
+                "impl.sync.write".to_string(),
+                "spec.check".to_string(),
+                "xtal.verify".to_string(),
+            ],
+            mcp_tools: Vec::new(),
+            write_roots: vec!["src/".to_string(), "tests/".to_string()],
+            approval_required: false,
+            status: AgentStatus::Available,
+            notes: "test agent".to_string(),
+        };
+        let prompt = render_agent_realize_prompt(
+            &session,
+            &agent,
+            &["claude".to_string(), "prompt.md".to_string()],
+            &["src/app/calculator.x07.json".to_string()],
+            None,
+        );
+
+        assert!(prompt.contains("You must edit at least one listed stub file"));
+        assert!(prompt.contains("text-only response, diagnostics-only response, or no-op run"));
+        assert!(prompt.contains("x07 xtal impl check --project x07.json"));
+        assert!(prompt.contains("src/app/calculator.x07.json"));
     }
 
     #[test]
@@ -9019,6 +9261,25 @@ mod tests {
 
         std::fs::remove_dir_all(source).ok();
         std::fs::remove_dir_all(destination).ok();
+    }
+
+    #[test]
+    fn agent_workspace_snapshot_ignores_studio_session_store() {
+        let root = temp_root();
+        std::fs::create_dir_all(root.join("src")).expect("create src");
+        std::fs::create_dir_all(root.join(".x07/studio/sessions")).expect("create sessions");
+        std::fs::write(root.join("src/main.x07.json"), "{}").expect("write source");
+        std::fs::write(root.join(".x07/studio/sessions/session.json"), "{}")
+            .expect("write session");
+
+        let snapshot = snapshot_agent_workspace(root.as_path());
+
+        assert!(snapshot.files.contains_key("src/main.x07.json"));
+        assert!(!snapshot
+            .files
+            .contains_key(".x07/studio/sessions/session.json"));
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

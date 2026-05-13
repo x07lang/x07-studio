@@ -31,6 +31,10 @@ pub fn plain_english_summary_with_root(
     let scaffold_only = !stub_paths.is_empty();
     let headline = headline_for(session, intent, scaffold_only);
     let behavior_promises = behavior_promises_for(intent);
+    let behavior_promise_ids = behavior_promises
+        .iter()
+        .map(|item| behavior_promise_id(item))
+        .collect();
     let boundaries = boundaries_for(intent);
     let mut evidence = evidence_for(session);
     if scaffold_only {
@@ -49,6 +53,7 @@ pub fn plain_english_summary_with_root(
         schema_version: "x07.studio.plain_english_summary@0.1.0".to_string(),
         headline,
         behavior_promises,
+        behavior_promise_ids,
         boundaries,
         evidence,
         run_invocation,
@@ -56,6 +61,31 @@ pub fn plain_english_summary_with_root(
         scaffold_only,
         stub_paths,
     })
+}
+
+pub fn behavior_promise_id(text: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+        if out.len() >= 64 {
+            break;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "behavior".to_string()
+    } else {
+        out
+    }
 }
 
 /// Walk the workspace's `src/` directory and flag every `*.x07.json`

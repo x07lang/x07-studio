@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "x07.studio.proof_evidence@0.1.0",
+  "type": "object",
+  "required": ["schema_version", "session_id", "behavior_id", "status", "citations", "obligations"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.proof_evidence@0.1.0" },
+    "session_id": { "type": "string" },
+    "behavior_id": { "type": "string" },
+    "status": { "type": "string" },
+    "citations": { "type": "array", "items": { "type": "object" } },
+    "obligations": { "type": "array", "items": { "type": "object" } },
+    "z3_ms": { "type": ["integer", "null"] },
+    "assumptions": { "type": "array", "items": { "type": "string" } }
+  }
+}

@@ -229,6 +229,8 @@ pub struct PlainEnglishSummary {
     pub schema_version: String,
     pub headline: String,
     pub behavior_promises: Vec<String>,
+    #[serde(default)]
+    pub behavior_promise_ids: Vec<String>,
     pub boundaries: Vec<String>,
     pub evidence: Vec<String>,
     pub run_invocation: Option<String>,

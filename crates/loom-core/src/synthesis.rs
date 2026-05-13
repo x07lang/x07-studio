@@ -17,8 +17,8 @@
 //!
 //! * `claude -p` — print mode (non-interactive, single response).
 //! * `claude --permission-mode acceptEdits` — auto-accept file edits.
-//! * `claude --allowedTools "Edit Write Read Glob Grep"` — restrict the
-//!   tools the agent may invoke.
+//! * `claude --allowedTools "Edit Write Read Glob Grep Bash(x07 xtal *)"` —
+//!   restrict the tools the agent may invoke.
 //! * `claude --output-format stream-json --include-partial-messages` —
 //!   structured event output we can parse into the timeline.
 //! * `claude --add-dir <workspace>` — explicit write scope.
@@ -74,7 +74,7 @@ pub fn build_realize_subscription_command(
                 "--permission-mode".to_string(),
                 "acceptEdits".to_string(),
                 "--allowedTools".to_string(),
-                "Edit Write Read Glob Grep".to_string(),
+                "Edit Write Read Glob Grep Bash(x07 xtal *)".to_string(),
                 "--output-format".to_string(),
                 "stream-json".to_string(),
                 "--include-partial-messages".to_string(),
@@ -326,6 +326,14 @@ mod tests {
         assert!(args.contains(&"acceptEdits".to_string()));
         assert!(args.contains(&"--output-format".to_string()));
         assert!(args.contains(&"stream-json".to_string()));
+        let allowed_tools = args
+            .windows(2)
+            .find(|pair| pair[0] == "--allowedTools")
+            .map(|pair| pair[1].as_str());
+        assert_eq!(
+            allowed_tools,
+            Some("Edit Write Read Glob Grep Bash(x07 xtal *)")
+        );
         // SUBSCRIPTION COST CHECK: must not pass --bare (forces API key auth).
         assert!(!args.contains(&"--bare".to_string()));
         // Prompt content is the last positional arg.

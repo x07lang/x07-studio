@@ -7,7 +7,7 @@ export default defineConfig({
 		timeout: 5_000
 	},
 	webServer: {
-		command: 'LOOM_DAEMON_ORIGIN=http://127.0.0.1:9 npm run dev -- --host 127.0.0.1 --port 5178',
+		command: 'LOOM_DAEMON_ORIGIN=http://127.0.0.1:9 npm run dev -- --host 127.0.0.1 --port 5178 --strictPort',
 		url: 'http://127.0.0.1:5178',
 		reuseExistingServer: !process.env.CI,
 		timeout: 60_000

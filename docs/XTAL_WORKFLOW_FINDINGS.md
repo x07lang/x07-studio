@@ -1048,3 +1048,25 @@ This document records friction found while implementing the Studio web surface.
    deterministic manifest digest. The digest is local provenance, not external
    key management; production-grade signed sharing remains a later trust
    decision.
+
+94. Trust posture has to be captured as evidence, not recomputed only in the UI.
+
+   Cycle 4 adds `posture.captured` operation records after intent, build, and
+   ladder transitions. The Trust Card, posture timeline turns, Semantic Diff,
+   and certificate review all read those records plus canonical verify/trust
+   artifacts. This keeps the browser from inventing a trust state that the
+   daemon cannot audit later.
+
+95. Ladder gates need command evidence when profile files are external.
+
+   A successful `trust.certify.profile --profile <path>` can certify a rung
+   even when the trust profile itself is not checked into the project. The
+   ladder now treats that successful command as matching gate evidence, so the
+   Team/Production UI does not get stuck behind a missing local profile file.
+
+96. Incident quickfixes are review records before they are repairs.
+
+   The Quickfix Card reads incident bundles, ingest/violation artifacts, and
+   the latest repair patchset into a deterministic review shape. It does not
+   apply patches implicitly; the user still chooses whether to run the repair
+   lane.

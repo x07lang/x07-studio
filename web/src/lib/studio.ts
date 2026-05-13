@@ -127,6 +127,7 @@ export interface PlainEnglishSummary {
 	schema_version: 'x07.studio.plain_english_summary@0.1.0';
 	headline: string;
 	behavior_promises: string[];
+	behavior_promise_ids?: string[];
 	boundaries: string[];
 	evidence: string[];
 	run_invocation?: string | null;
@@ -155,7 +156,17 @@ export type AgentStreamEvent =
 			snippet?: string | null;
 	  }
 	| { kind: 'agent_message'; id: string; at: string; agent_id: string; text: string }
-	| { kind: 'done'; id: string; at: string; agent_id: string; exit_code: number };
+	| { kind: 'done'; id: string; at: string; agent_id: string; exit_code: number }
+	| {
+			kind: 'mcp_call';
+			id: string;
+			at: string;
+			agent_id: string;
+			tool: string;
+			server: string;
+			input: unknown;
+			output?: unknown;
+	  };
 
 export interface LiveDiff {
 	schema_version: 'x07.studio.live_diff@0.1.0';
@@ -224,7 +235,9 @@ export type SessionTurn =
 			at: string;
 			round: RealizeQuorumRound;
 			op_ids: string[];
-	  };
+	  }
+	| { kind: 'trust_posture_changed'; id: string; at: string; posture: TrustPosture }
+	| { kind: 'mcp_call'; id: string; at: string; call: AgentStreamEvent; op_id: string };
 
 export interface RealizeRequest {
 	agent_id?: string;
@@ -283,11 +296,154 @@ export interface LadderRung {
 	satisfied: boolean;
 	missing: string[];
 	evidence: string[];
+	gates?: RungGate[];
 }
 
 export interface LadderState {
 	current_rung: string;
 	rungs: LadderRung[];
+}
+
+export interface RungGate {
+	id: string;
+	label: string;
+	description: string;
+	currently_satisfied: boolean;
+}
+
+export interface Capability {
+	id: string;
+	source: string;
+	justification: string;
+}
+
+export interface BudgetSummary {
+	local_cap_ms?: number | null;
+	arch_profile?: string | null;
+	prover_seconds_used: number;
+	prover_seconds_cap?: number | null;
+}
+
+export interface ProofCoverage {
+	support_pct: number;
+	proved_pct: number;
+	proof_count: number;
+	assumptions_open: number;
+}
+
+export interface PostureDelta {
+	at: string;
+	kind: string;
+	summary: string;
+}
+
+export interface TrustPosture {
+	schema_version: 'x07.studio.trust_posture@0.1.0';
+	session_id: string;
+	captured_at: string;
+	trust_profile: string;
+	worlds: string[];
+	capabilities: Capability[];
+	budgets: BudgetSummary;
+	proof_coverage: ProofCoverage;
+	deltas: PostureDelta[];
+	posture_color: 'green' | 'amber' | 'red' | string;
+}
+
+export type DiffRef =
+	| { kind: 'op_id'; op_id: string }
+	| { kind: 'turn_id'; turn_id: string }
+	| { kind: 'hash'; hash: string }
+	| { kind: 'current' }
+	| { kind: 'quorum_proposal'; round: string; agent_id: string };
+
+export interface SemanticDiffRequest {
+	schema_version?: 'x07.studio.semantic_diff_request@0.1.0';
+	from: DiffRef;
+	to: DiffRef;
+	mode?: 'project' | 'ast-only' | string;
+}
+
+export interface SemanticDiff {
+	schema_version: 'x07.studio.semantic_diff@0.1.0';
+	from: DiffRef;
+	to: DiffRef;
+	headline: string;
+	trust_delta_color: 'green' | 'amber' | 'red' | string;
+	raw: unknown;
+	world_changes: string[];
+	capability_changes: string[];
+	budget_changes: string[];
+	proof_changes: string[];
+}
+
+export interface ProofEvidenceCitation {
+	kind: string;
+	file: string;
+	region?: string | null;
+}
+
+export interface ProofObligation {
+	id: string;
+	goal: string;
+	status: string;
+	note?: string | null;
+}
+
+export interface ProofEvidence {
+	schema_version: 'x07.studio.proof_evidence@0.1.0';
+	session_id: string;
+	behavior_id: string;
+	status: 'proved' | 'test-evidence' | 'assumed' | string;
+	citations: ProofEvidenceCitation[];
+	obligations: ProofObligation[];
+	z3_ms?: number | null;
+	assumptions: string[];
+}
+
+export interface QuickfixRecord {
+	schema_version: 'x07.studio.quickfix_record@0.1.0';
+	diagnostic_code: string;
+	severity: string;
+	summary: string;
+	patch_ast: unknown;
+	citations: ProofEvidenceCitation[];
+}
+
+export interface BoundaryEntry {
+	at: string;
+	kind: string;
+	policy: string;
+	summary: string;
+	cassette_path: string;
+}
+
+export interface CassetteRibbon {
+	schema_version: 'x07.studio.cassette_ribbon@0.1.0';
+	boundaries: BoundaryEntry[];
+}
+
+export interface CertificateSummary {
+	schema_version: 'x07.studio.certificate_summary@0.1.0';
+	session_id: string;
+	profile: string;
+	operational_entry: string;
+	issued_at: string;
+	expires_at?: string | null;
+	proof_summary: unknown;
+	trust_report: unknown;
+	html_summary_path: string;
+	signature: string;
+}
+
+export interface Recipe {
+	schema_version: 'x07.studio.recipe@0.1.0';
+	id: string;
+	title: string;
+	one_liner: string;
+	intent_text: string;
+	task_type: TaskType;
+	preview_posture: TrustPosture;
 }
 
 export interface QuorumRound {
