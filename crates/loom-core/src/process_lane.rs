@@ -294,7 +294,9 @@ mod tests {
             "agent.realize.openai-codex",
             "xtal.verify",
         ] {
-            session.op_log.push(op(session.session_id, name, OperationStatus::Succeeded));
+            session
+                .op_log
+                .push(op(session.session_id, name, OperationStatus::Succeeded));
         }
 
         let lane = project(&session);
@@ -303,7 +305,10 @@ mod tests {
             .current_index
             .map(|idx| lane.steps[idx].id.as_str())
             .unwrap_or("<none>");
-        assert_ne!(current, "agent_md", "current must not be a pending step before completed activity");
+        assert_ne!(
+            current, "agent_md",
+            "current must not be a pending step before completed activity"
+        );
         // The current pointer should sit on a step after the latest Done step.
         let latest_done_idx = lane
             .steps

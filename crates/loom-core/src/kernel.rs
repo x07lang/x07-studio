@@ -1203,13 +1203,21 @@ impl WorkspaceKernel {
         )
         .unwrap_or_else(|| "baseline-review".to_string());
 
+        let architect_note = {
+            let session = self
+                .model
+                .get_session(session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+            architect_stage_note(&session)
+        };
         self.append_op(
             session_id,
             pipeline_stage_op(
                 session_id,
                 AgentRole::Architect,
                 "confirm_spec",
-                "Spec is already approved; architect lane confirmed the contract boundary.",
+                &architect_note,
             ),
         )?;
 
@@ -1331,7 +1339,10 @@ impl WorkspaceKernel {
                     .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
                 let plan = crate::autopilot::decide_next(&session, &policy);
                 last_decision = Some(plan.decision.clone());
-                k.append_op(session_id, autopilot_decision_op(session_id, &plan.decision))?;
+                k.append_op(
+                    session_id,
+                    autopilot_decision_op(session_id, &plan.decision),
+                )?;
                 plan.action
             };
             // Yield so the runtime can schedule any GET handlers that
@@ -1365,10 +1376,7 @@ impl WorkspaceKernel {
                     false
                 }
                 crate::autopilot::AutopilotAction::AutoBuild => {
-                    let vars = BTreeMap::from([(
-                        "allow_os_world".to_string(),
-                        "true".to_string(),
-                    )]);
+                    let vars = BTreeMap::from([("allow_os_world".to_string(), "true".to_string())]);
                     Self::run_build_pipeline_yielding(
                         &kernel,
                         session_id,
@@ -2153,7 +2161,9 @@ impl WorkspaceKernel {
         if matches!(intent.source, IntentSource::Incident { .. }) {
             // Incident workflow is internal; fall back to the &mut self version.
             let mut k = kernel.lock().await;
-            return k.run_incident_improve_workflow(session_id, intent, &vars).await;
+            return k
+                .run_incident_improve_workflow(session_id, intent, &vars)
+                .await;
         }
 
         if !root.join("x07.json").exists() {
@@ -2187,6 +2197,8 @@ impl WorkspaceKernel {
             if last_op_failed(&snapshot) {
                 return Ok(snapshot);
             }
+            let mut k = kernel.lock().await;
+            k.architect_enrich_after_scaffold(session_id, &vars)?;
         } else {
             let input = vars
                 .get("input")
@@ -2236,8 +2248,7 @@ impl WorkspaceKernel {
             }
         }
 
-        let verified =
-            Self::run_binding_yielding(kernel, session_id, "xtal.verify", &vars).await?;
+        let verified = Self::run_binding_yielding(kernel, session_id, "xtal.verify", &vars).await?;
         let event = if last_op_failed(&verified) {
             SessionEvent::VerificationFailed
         } else {
@@ -2338,30 +2349,20 @@ impl WorkspaceKernel {
                         &BTreeMap::new(),
                     )
                     .await;
-                    let _ = Self::run_binding_yielding(
-                        kernel,
-                        session_id,
-                        "xtal.verify",
-                        &build_vars,
-                    )
-                    .await;
+                    let _ =
+                        Self::run_binding_yielding(kernel, session_id, "xtal.verify", &build_vars)
+                            .await;
                     let k = kernel.lock().await;
-                    current = k
-                        .model
-                        .get_session(session_id)
-                        .cloned()
-                        .unwrap_or(current);
+                    current = k.model.get_session(session_id).cloned().unwrap_or(current);
                 }
             }
             // Emit the summary op (parity with the &mut self version).
             let mut k = kernel.lock().await;
-            let summary_op = match build_plain_english_summary_with_root(
-                &current,
-                Some(k.root.as_path()),
-            ) {
-                Some(op) => op,
-                None => return Ok(current),
-            };
+            let summary_op =
+                match build_plain_english_summary_with_root(&current, Some(k.root.as_path())) {
+                    Some(op) => op,
+                    None => return Ok(current),
+                };
             current = k.append_op(session_id, summary_op)?;
             drop(k);
             // Lint runs through the existing helper; lock briefly to call it.
@@ -2420,14 +2421,23 @@ impl WorkspaceKernel {
 
         {
             let mut k = kernel.lock().await;
-            k.append_op(session_id, role_pipeline_op(session_id, &pipeline, "started"))?;
+            k.append_op(
+                session_id,
+                role_pipeline_op(session_id, &pipeline, "started"),
+            )?;
+            let session = k
+                .model
+                .get_session(session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+            let architect_note = architect_stage_note(&session);
             k.append_op(
                 session_id,
                 pipeline_stage_op(
                     session_id,
                     AgentRole::Architect,
                     "confirm_spec",
-                    "Spec is already approved; architect lane confirmed the contract boundary.",
+                    &architect_note,
                 ),
             )?;
         }
@@ -2442,7 +2452,8 @@ impl WorkspaceKernel {
 
         let prepared = {
             let mut k = kernel.lock().await;
-            k.start_intent_realize(session_id, &coder_id, writer_budget).await?
+            k.start_intent_realize(session_id, &coder_id, writer_budget)
+                .await?
         };
         let run_op_id = prepared.op.id;
         Self::execute_prepared_agent_run_yielding(kernel, prepared).await?;
@@ -2477,17 +2488,24 @@ impl WorkspaceKernel {
             }
             if review.verdict == "accept" {
                 let mut k = kernel.lock().await;
-                k.append_op(session_id, role_pipeline_op(session_id, &pipeline, "accepted"))?;
+                k.append_op(
+                    session_id,
+                    role_pipeline_op(session_id, &pipeline, "accepted"),
+                )?;
                 break;
             }
             if review.verdict == "block" || round_idx == pipeline.max_review_rounds {
                 let mut k = kernel.lock().await;
-                k.append_op(session_id, role_pipeline_op(session_id, &pipeline, "paused"))?;
+                k.append_op(
+                    session_id,
+                    role_pipeline_op(session_id, &pipeline, "paused"),
+                )?;
                 break;
             }
             let prepared = {
                 let mut k = kernel.lock().await;
-                k.start_intent_realize(session_id, &coder_id, writer_budget).await?
+                k.start_intent_realize(session_id, &coder_id, writer_budget)
+                    .await?
             };
             let run_op_id = prepared.op.id;
             Self::execute_prepared_agent_run_yielding(kernel, prepared).await?;
@@ -2712,6 +2730,7 @@ impl WorkspaceKernel {
             if last_op_failed(&snapshot) {
                 return Ok(snapshot);
             }
+            self.architect_enrich_after_scaffold(session_id, &vars)?;
         } else {
             let input = vars
                 .get("input")
@@ -2982,6 +3001,49 @@ impl WorkspaceKernel {
             }
         };
         self.append_op(session_id, op)
+    }
+
+    /// Run the architect's deterministic enrichment over a freshly scaffolded
+    /// spec. Looks up the archetype for `(module_id, entry)` from the intent
+    /// target and, if recognised, fills the spec's `doc` field so the coder
+    /// agent has a concrete behaviour description to implement against.
+    ///
+    /// Best-effort: a missing or unparseable spec is non-fatal (we log a
+    /// no-op op-record and continue). The downstream `spec.check` step will
+    /// surface any structural issue.
+    fn architect_enrich_after_scaffold(
+        &mut self,
+        session_id: Uuid,
+        vars: &BTreeMap<String, String>,
+    ) -> anyhow::Result<()> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let intent = session
+            .intent
+            .as_ref()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
+        let Some(target) = intent.targets.first() else {
+            return Ok(());
+        };
+        let module_id = target.module_id.as_str();
+        let Some(entry) = target.entry.as_deref() else {
+            return Ok(());
+        };
+        let spec_path = vars
+            .get("input")
+            .cloned()
+            .unwrap_or_else(|| format!("spec/{module_id}.x07spec.json"));
+        let report = crate::architect::enrich_scaffolded_spec(
+            self.root.as_path(),
+            &spec_path,
+            module_id,
+            entry,
+        )?;
+        self.append_op(session_id, architect_enrich_op(session_id, &report))?;
+        Ok(())
     }
 
     fn ensure_verify_phase(&mut self, session_id: Uuid) -> anyhow::Result<()> {
@@ -5663,7 +5725,13 @@ fn intent_packet_from_raw(
         "utf8",
     ]);
     let is_checksum = has_any(&["checksum", "crc32", "hash digest", "fingerprint"]);
-    let is_codec = has_any(&["cbor", "msgpack", "messagepack", "json codec", "encode/decode"]);
+    let is_codec = has_any(&[
+        "cbor",
+        "msgpack",
+        "messagepack",
+        "json codec",
+        "encode/decode",
+    ]);
     let is_compress = has_any(&["compress", "decompress", "zstd", "gzip", "deflate"]);
     let is_service = has_any(
         [
@@ -7344,6 +7412,106 @@ fn should_scaffold_spec(root: &Utf8Path, vars: &BTreeMap<String, String>) -> boo
         return true;
     };
     !root.join(input).exists()
+}
+
+/// Derive the architect-stage log message from the session's op-log.
+///
+/// If a prior `architect.enrich_spec` op-record reported a successful
+/// enrichment, surface it in the role pipeline's architect stage so the
+/// Process Lane / op-log doesn't read as if the architect did nothing.
+/// Falls back to a neutral confirmation when no enrichment was recorded.
+fn architect_stage_note(session: &SessionSnapshot) -> String {
+    let latest = session
+        .op_log
+        .iter()
+        .rev()
+        .find(|op| op.op == "architect.enrich_spec");
+    let Some(record) = latest else {
+        return "Spec is already approved; architect lane confirmed the contract boundary."
+            .to_string();
+    };
+    let Some(report) = record.report_json.as_ref() else {
+        return "Spec is already approved; architect lane confirmed the contract boundary."
+            .to_string();
+    };
+    let archetype_recognized = report
+        .get("archetype_recognized")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let doc_added = report
+        .get("doc_added")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let module_id = report
+        .get("module_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let entry = report
+        .get("entry")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let target = format!("{module_id}.{entry}");
+    if doc_added {
+        format!("Architect enriched `{target}` spec with archetype contract before handing off to the coder.")
+    } else if archetype_recognized {
+        format!("Architect confirmed `{target}` spec already carries the archetype contract.")
+    } else {
+        "Spec is already approved; architect lane confirmed the contract boundary.".to_string()
+    }
+}
+
+fn architect_enrich_op(session_id: Uuid, report: &crate::architect::EnrichmentReport) -> OpRecord {
+    let now = now_string();
+    let fields_added = report.fields_added();
+    let archetype_label = format!("{}.{}", report.module_id, report.entry);
+    let note = if !report.archetype_recognized {
+        format!("Architect: no archetype recognised for `{archetype_label}`; spec left as-is.")
+    } else if fields_added == 0 {
+        format!("Architect: archetype `{archetype_label}` already enriched; no changes written.")
+    } else {
+        format!(
+            "Architect enriched `{archetype_label}` spec ({fields_added} field{plural}).",
+            plural = if fields_added == 1 { "" } else { "s" },
+        )
+    };
+    let artifacts = if report.doc_added {
+        vec![report.spec_path.clone()]
+    } else {
+        Vec::new()
+    };
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "architect.enrich_spec".to_string(),
+        backend: "studio-architect".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "architect".to_string(),
+            "enrich-spec".to_string(),
+            archetype_label.clone(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts,
+        notes: Some(note.clone()),
+        stdout: Some(note),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.architect_enrich@0.1.0",
+            "module_id": report.module_id,
+            "entry": report.entry,
+            "spec_path": report.spec_path,
+            "archetype_recognized": report.archetype_recognized,
+            "doc_added": report.doc_added,
+            "fields_added": fields_added,
+        })),
+        report_path: None,
+    }
 }
 
 fn existing_spec_op(session_id: Uuid, input: &str) -> OpRecord {
@@ -9104,7 +9272,7 @@ mod tests {
     use loom_types::session::SessionSnapshot;
 
     use super::{
-        agent_clarify_handoff_from_session, agent_handoff_from_session,
+        agent_clarify_handoff_from_session, agent_handoff_from_session, architect_stage_note,
         atlas_platform_delivery_vars, checked_xtal_verify_run_vars, copy_example_tree,
         entry_from_spec_operation, intent_packet_from_raw, platform_deployment_id_from_report,
         render_agent_realize_prompt, sha256_hex, should_scaffold_spec, snapshot_agent_workspace,
@@ -9323,6 +9491,153 @@ mod tests {
             .op_log
             .iter()
             .any(|item| item.op == "intent.formalize"));
+    }
+
+    #[test]
+    fn architect_enrich_after_scaffold_writes_doc_for_known_archetype() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("normalize helper", TaskType::NewBehavior)
+            .expect("create session");
+
+        let (intent, _, _) = kernel
+            .formalize_intent(
+                session.session_id,
+                "Build a normalize-and-casefold text helper that accepts UTF-8 bytes, NFC-normalizes, then casefolds.",
+                IntentInputMode::Text,
+                &[],
+            )
+            .expect("formalize intent");
+        assert_eq!(intent.targets[0].module_id, "app.text");
+        assert_eq!(intent.targets[0].entry.as_deref(), Some("normalize_v1"));
+
+        let vars = xtal_workflow_vars_from_intent(&intent);
+        let spec_relative = vars
+            .get("input")
+            .cloned()
+            .expect("workflow vars carry spec input path");
+        let spec_path = root.join(&spec_relative);
+        std::fs::create_dir_all(spec_path.parent().expect("spec parent")).expect("mkdir spec");
+        let scaffolded = serde_json::json!({
+            "schema_version": "x07.x07spec@0.1.0",
+            "module_id": "app.text",
+            "operations": [{
+                "id": "op.normalize_v1.v1",
+                "name": "app.text.normalize_v1",
+                "doc": "",
+                "params": [{"name": "payload", "ty": "bytes"}],
+                "result": "bytes",
+                "requires": [],
+                "ensures": [],
+                "ensures_props": [],
+                "invariant": [],
+            }],
+            "sorts": [],
+            "assumptions": [],
+        });
+        std::fs::write(
+            &spec_path,
+            serde_json::to_string_pretty(&scaffolded).unwrap(),
+        )
+        .unwrap();
+
+        kernel
+            .architect_enrich_after_scaffold(session.session_id, &vars)
+            .expect("enrich scaffolded spec");
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&spec_path).unwrap()).unwrap();
+        let doc = on_disk["operations"][0]["doc"]
+            .as_str()
+            .expect("doc string");
+        assert!(doc.contains("NFC"), "doc should mention NFC, got `{doc}`");
+        assert!(
+            doc.contains("casefold"),
+            "doc should mention casefold, got `{doc}`"
+        );
+
+        let session_after = kernel
+            .get_session(session.session_id)
+            .expect("snapshot loaded");
+        let enrich_op = session_after
+            .op_log
+            .iter()
+            .find(|op| op.op == "architect.enrich_spec")
+            .expect("architect.enrich_spec op-record recorded");
+        assert_eq!(enrich_op.status, OperationStatus::Succeeded);
+        let report = enrich_op
+            .report_json
+            .as_ref()
+            .expect("enrich op carries report");
+        assert_eq!(
+            report.get("doc_added").and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            report.get("module_id").and_then(serde_json::Value::as_str),
+            Some("app.text")
+        );
+
+        let note = architect_stage_note(&session_after);
+        assert!(
+            note.contains("app.text.normalize_v1"),
+            "architect note should name the target, got `{note}`"
+        );
+        assert!(
+            note.contains("enriched"),
+            "architect note should reflect enrichment, got `{note}`"
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn architect_enrich_after_scaffold_is_quiet_for_unknown_archetype() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("unknown intent", TaskType::NewBehavior)
+            .expect("create session");
+
+        let (intent, _, _) = kernel
+            .formalize_intent(
+                session.session_id,
+                "Please assemble a thing that does something undefined and bespoke.",
+                IntentInputMode::Text,
+                &[],
+            )
+            .expect("formalize intent");
+        let vars = xtal_workflow_vars_from_intent(&intent);
+
+        kernel
+            .architect_enrich_after_scaffold(session.session_id, &vars)
+            .expect("enrich is non-fatal on unknown archetype");
+
+        let snapshot = kernel
+            .get_session(session.session_id)
+            .expect("snapshot loaded");
+        let enrich_op = snapshot
+            .op_log
+            .iter()
+            .find(|op| op.op == "architect.enrich_spec")
+            .expect("op-record still appended for visibility");
+        let report = enrich_op
+            .report_json
+            .as_ref()
+            .expect("enrich op carries report");
+        assert_eq!(
+            report
+                .get("archetype_recognized")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            report.get("doc_added").and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]

@@ -1229,9 +1229,10 @@ async fn start_autopilot(
     let policy = request
         .and_then(|Json(body)| body.policy)
         .unwrap_or_default();
-    let response = WorkspaceKernel::run_autopilot_yielding(state.kernel.clone(), session_id, policy)
-        .await
-        .map_err(internal_error)?;
+    let response =
+        WorkspaceKernel::run_autopilot_yielding(state.kernel.clone(), session_id, policy)
+            .await
+            .map_err(internal_error)?;
     Ok(Json(response))
 }
 

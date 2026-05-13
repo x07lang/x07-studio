@@ -17,6 +17,7 @@ Severity legend:
 | F4 | FIX | Real `x07 verify` produces proof-support warnings the UI doesn't surface clearly | 1 |
 | F5 | NOTE | Real x07 picks discovery path from a sibling debug build, not `~/.x07/bin/` | infra |
 | F6 | **FIXED** | Intent heuristic doesn't recognize text-normalization / casefold / unicode prompts; falls through to generic `app.main.run_v1` with no semantic guidance, leaving the role-pipeline reviewer in a stall loop | 5 |
+| F7 | **FIXED** | Architect role emits a dummy "spec confirmed" log without enriching the scaffolded spec; coder gets empty `requires/ensures/doc` and produces identity passthrough (deterministic floor — `doc` enrichment from archetype semantics) | 5 |
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 
@@ -188,7 +189,36 @@ The real toolchain actually *delivers more* than the fake — proper AGENT.md, p
 
 Regression test `formalize_intent_recognizes_text_normalization_intents` exercises three text-normalize phrasings against the heuristic.
 
-**Status:** **FIXED.** The heuristic now picks a meaningful target for Unicode-shaped prompts. Followup deferred: the spec scaffolder still doesn't extract concrete `requires/ensures` from the intent text — codex still has to guess at the semantic. That's a deeper improvement (probably "ask the architect to draft requires/ensures from the intent before coder runs") and belongs in a future cycle.
+**Status:** **FIXED.** The heuristic now picks a meaningful target for Unicode-shaped prompts. Followup F7 lands the spec-enrichment piece — see below.
+
+---
+
+## F7 — Architect role emits a dummy log; scaffolded spec ships to coder with no semantic content
+
+**Severity:** **FIXED** (deterministic floor; agent-driven enrichment for novel intents deferred).
+
+**Observed (scenario 5, post-F6):** even after F6 routed the normalize-and-casefold prompt to `app.text.normalize_v1`, the on-disk spec still came out as `bytes -> bytes` with `doc: ""`, `requires: []`, `ensures: []`. Codex had a meaningful target id but no behaviour description to implement against, so it emitted `view.to_bytes(bytes.view(payload))` — an identity passthrough. The reviewer voted `revise`. Loop stalled at scaffold_only=true.
+
+**Root cause:** the role-pipeline architect stage was a no-op. It appended one cosmetic op-record (`role.stage.confirm_spec` with the literal note *"Spec is already approved; architect lane confirmed the contract boundary."*) and immediately handed off to the coder. The architect's actual job — owning the spec contract — was never wired up.
+
+Even when run from the build pipeline (not the role pipeline), `x07 xtal spec scaffold` only takes `--module-id / --op / --param / --result`. There is no flag to seed the operation `doc` or `requires/ensures`. So a freshly scaffolded spec has no semantic content for downstream agents to grip, regardless of which pipeline produced it.
+
+**Evidence:**
+- `target/stress-pass/scenario-5-collab/workspace/spec/app.main.x07spec.json` — `doc: ""`, `requires: []`, `ensures: []`, `params: [{name:"payload", ty:"bytes"}]`.
+- `crates/loom-core/src/kernel.rs:1212` and `:2430` (pre-fix) — both role-pipeline call sites passed the same hard-coded "Spec is already approved" string with no spec read.
+
+**Fix:** new module `crates/loom-core/src/architect.rs` carries a deterministic archetype-semantic table mapping `(module_id, entry)` (the same keys F6 routes to) to a concrete behaviour description. The build pipeline now calls `kernel.architect_enrich_after_scaffold(...)` immediately after `spec.scaffold` succeeds: it reads the scaffolded spec JSON, finds the operation whose `name` matches `{module_id}.{entry}`, and fills the empty `doc` field with the archetype description. The merge is conservative — a non-empty existing `doc` is preserved verbatim, and the call is idempotent. The role pipeline's architect-stage log now reads the latest `architect.enrich_spec` op-record and reports what was actually written (`Architect enriched app.text.normalize_v1 spec with archetype contract before handing off to the coder.`) instead of the previous canned string.
+
+The archetype table covers the F6 targets — `app.text.normalize_v1`, `app.checksum.digest_v1`, `app.codec.roundtrip_v1`, `app.compress.roundtrip_v1` — plus `toy.sorter.sort_u8_asc`, `app.greeter.greet_v1`, `app.calculator.compute_v1`, `app.parser.parse_v1`, `app.validator.validate_v1`, `app.cli.run_v1`, `app.service.handle_v1`. Each entry carries a 2-3 sentence behaviour description naming the inputs, the outputs, the failure mode, and any non-obvious invariant (NFC + casefold ordering, deterministic digest, roundtrip equality, stable sort, etc.).
+
+**Why `doc` only (this pass) and not predicates:** `requires`/`ensures` accept structured S-expression predicates that `x07 xtal spec check` validates strictly. A wrong predicate kills the whole flow. The conservative first move is to enrich the freeform `doc` field, which `spec.check` accepts unconditionally and which is what the coder LLM actually reads. Predicate-based enrichment (length bounds, idempotence checks) is a Tier-1.5 follow-up. Agent-driven enrichment for prompts that hit the generic `app.main.run_v1` fallback is a Tier-2 follow-up.
+
+**Tests:**
+- `architect::tests` (8 tests) cover lookup hits/misses, doc merging into a JSON spec value, idempotence on disk, and the no-op path for unrecognised archetypes.
+- `kernel::tests::architect_enrich_after_scaffold_writes_doc_for_known_archetype` exercises the full intent → vars → enrichment path: a normalize-and-casefold session ends with the on-disk spec carrying a doc string containing "NFC" and "casefold", plus an `architect.enrich_spec` op-record with `doc_added: true` in the session timeline.
+- `kernel::tests::architect_enrich_after_scaffold_is_quiet_for_unknown_archetype` confirms the unknown-archetype path still appends a visible op-record (with `archetype_recognized: false`) instead of silently no-op-ing.
+
+**Status:** **FIXED.** F6 ensures the right target; F7 ensures the spec actually carries the semantic. Together they close the scenario-5 stall loop at the deterministic level. Novel/never-seen intent shapes still route to `app.main.run_v1` and bypass enrichment — agent-driven `doc` extraction for those is the natural Tier-2 follow-up.
 
 ---
 

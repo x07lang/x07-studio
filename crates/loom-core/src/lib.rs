@@ -1,5 +1,6 @@
 pub mod agent_contract;
 pub mod arch_check;
+pub mod architect;
 pub mod autopilot;
 pub mod cassettes;
 pub mod certificate;

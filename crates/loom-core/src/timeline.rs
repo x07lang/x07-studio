@@ -426,13 +426,9 @@ fn collapse_verified_refinement_turns(turns: Vec<SessionTurn>) -> Vec<SessionTur
         let prior_idx = last_verified_index(&collapsed);
         let merge_mode = match (prior_idx.and_then(|i| collapsed.get(i)), &turn) {
             (
-                Some(SessionTurn::Verified {
-                    summary: first,
-                    ..
-                }),
+                Some(SessionTurn::Verified { summary: first, .. }),
                 SessionTurn::Verified {
-                    summary: second,
-                    ..
+                    summary: second, ..
                 },
             ) if summaries_match_except_scaffold(first, second) => {
                 if first.scaffold_only && !second.scaffold_only {
@@ -667,7 +663,11 @@ mod tests {
 
         // Loop progress: agent_realize + agent_event between the two scaffold-only
         // Verified summaries; the collapse must reach across them.
-        let realize = op(session_id, Uuid::from_u128(102), "agent.realize.openai-codex");
+        let realize = op(
+            session_id,
+            Uuid::from_u128(102),
+            "agent.realize.openai-codex",
+        );
         let stream = op(
             session_id,
             Uuid::from_u128(103),
