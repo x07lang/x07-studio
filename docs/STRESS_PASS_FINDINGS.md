@@ -13,7 +13,7 @@ Severity legend:
 |---|---|---|---|
 | F1 | NOTE | HealthRow MIGRATE label reads "schema → 0.5" when `from_schema` is null | 1 |
 | F2 | NOTE | TrustCard pending stays "pending" for >1 min on a fresh real workspace | 1 |
-| F3 | **BLOCK** | Daemon HTTP server returns "Empty reply" after autopilot kicks off real claude/codex | 1 |
+| F3 | **FIXED** | Daemon HTTP server returns "Empty reply" after autopilot kicks off real claude/codex (resolved by yielding-autopilot refactor; lock released around AutoClarify subprocess select-loop) | 1 |
 | F4 | FIX | Real `x07 verify` produces proof-support warnings the UI doesn't surface clearly | 1 |
 | F5 | NOTE | Real x07 picks discovery path from a sibling debug build, not `~/.x07/bin/` | infra |
 
@@ -94,7 +94,11 @@ The work *does* progress on disk: AGENT.md gets written, spec gets drafted, impl
 
 **Diagnostic next step:** add tokio-console instrumentation + log every mutex acquire/release in `kernel.rs::run_role_pipeline` and `kernel.rs::execute_agent_command_streaming`. Re-run scenario 1 to capture the trace.
 
-**Status:** **OPEN — top priority for any production work.**
+**Status:** **FIXED** (commit on top of 915f75a). Root cause was the daemon holding `state.kernel.lock().await` for the entire duration of `kernel.run_autopilot(...)`, including the inner subprocess select-loop. The fix introduces `run_autopilot_yielding` which takes `Arc<Mutex<WorkspaceKernel>>` and acquires/releases the lock per autopilot iteration, and for the `AutoClarify` step specifically releases the lock around the subprocess select-loop (mirroring the pattern the `run_intent_clarify` HTTP handler already used). The `start_autopilot` handler now calls `WorkspaceKernel::run_autopilot_yielding(state.kernel.clone(), ...)` instead of `kernel.run_autopilot(...).await` under a held lock.
+
+**Verification:** with real `claude` running, 5/5 `curl --max-time 3 /v1/health` probes returned HTTP 200 in <2ms (screenshot: `target/stress-pass/scenario-1-text-utils/screenshots/03-f3-fix-mid-clarify.png` — page rendered Process Lane "Clarify assumptions: running" while claude was active and full session state was fetchable).
+
+**Remaining work (deferred F3-followup):** `AutoBuild`, `AutoRealize`, `AutoClimb` still acquire the lock for the duration of their inner `run_build_pipeline` / `run_role_pipeline` / `climb_rung` calls. Those inner methods are `&mut self` and await `x07` CLI subprocesses while holding `&mut`, which means the lock is still held inside those steps. The yielding refactor releases the lock *between* steps and within the long-running AutoClarify select-loop; per-substep release inside the build/realize/climb pipelines is the remaining work for full responsiveness during scenarios 2-5. The current fix is enough to unblock scenario 1.
 
 ---
 

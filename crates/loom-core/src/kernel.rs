@@ -1306,6 +1306,157 @@ impl WorkspaceKernel {
         Ok(())
     }
 
+    /// Concurrent variant of [`run_autopilot`] that yields the kernel mutex
+    /// between each autopilot iteration. The HTTP layer wraps the kernel in
+    /// `Arc<tokio::sync::Mutex<_>>`; calling this from a handler lets
+    /// non-autopilot GET requests (status / posture / process-lane / SSE
+    /// initial snapshot) acquire the lock in the gaps between steps. Each
+    /// step itself still holds the lock for its `&mut self` work — see F3 in
+    /// `docs/STRESS_PASS_FINDINGS.md` for the full diagnosis and the deeper
+    /// per-substep refactor that remains.
+    pub async fn run_autopilot_yielding(
+        kernel: Arc<tokio::sync::Mutex<Self>>,
+        session_id: Uuid,
+        policy: AutopilotPolicy,
+    ) -> anyhow::Result<AutopilotResponse> {
+        let mut last_decision = None;
+        for _ in 0..20 {
+            // Phase A: decide + record under a brief lock.
+            let action = {
+                let mut k = kernel.lock().await;
+                let session = k
+                    .model
+                    .get_session(session_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+                let plan = crate::autopilot::decide_next(&session, &policy);
+                last_decision = Some(plan.decision.clone());
+                k.append_op(session_id, autopilot_decision_op(session_id, &plan.decision))?;
+                plan.action
+            };
+            // Yield so the runtime can schedule any GET handlers that
+            // queued while we held the lock above.
+            tokio::task::yield_now().await;
+
+            // Phase B: dispatch. Each arm reacquires the lock for its own
+            // work. Long subprocess `.await`s still hold the lock for their
+            // duration — that's the remaining F3 work (per-substep release
+            // inside run_build_pipeline / run_role_pipeline / climb_rung).
+            let should_break = match action {
+                crate::autopilot::AutopilotAction::Pause => true,
+                crate::autopilot::AutopilotAction::AutoAnswer => {
+                    let mut k = kernel.lock().await;
+                    let session = k
+                        .model
+                        .get_session(session_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+                    let answers = autopilot_answers(&session, &policy);
+                    if answers.is_empty() {
+                        true
+                    } else {
+                        k.apply_intent_answers(session_id, &answers)?;
+                        false
+                    }
+                }
+                crate::autopilot::AutopilotAction::AutoApproveSpec => {
+                    let mut k = kernel.lock().await;
+                    k.autopilot_approve_spec(session_id)?;
+                    false
+                }
+                crate::autopilot::AutopilotAction::AutoBuild => {
+                    let mut k = kernel.lock().await;
+                    let vars = BTreeMap::from([(
+                        "allow_os_world".to_string(),
+                        "true".to_string(),
+                    )]);
+                    k.run_build_pipeline(session_id, &vars, policy.allow_repair_iters)
+                        .await?;
+                    false
+                }
+                crate::autopilot::AutopilotAction::AutoRealize => {
+                    let mut k = kernel.lock().await;
+                    k.run_role_pipeline(session_id, &policy).await?;
+                    false
+                }
+                crate::autopilot::AutopilotAction::AutoClimb => {
+                    if let Some(target) = policy.auto_climb_to.as_deref().map(str::to_string) {
+                        let mut k = kernel.lock().await;
+                        k.climb_rung(session_id, &target).await?;
+                        k.append_op(session_id, autopilot_ladder_op(session_id, &target))?;
+                    }
+                    false
+                }
+                crate::autopilot::AutopilotAction::AutoClarify => {
+                    // Phase 1: prepare command under brief lock.
+                    let prepared = {
+                        let mut k = kernel.lock().await;
+                        k.start_intent_clarify(session_id, "claude-code", Some(90))
+                            .await?
+                    };
+                    let run_op_id = prepared.op.id;
+                    let agent_id = prepared.handoff.agent_id.clone();
+                    // Phase 2: execute the agent subprocess without holding
+                    // the kernel mutex. Per-event completes briefly lock,
+                    // call complete_agent_run, release. This is the same
+                    // pattern the `run_intent_clarify` HTTP handler uses;
+                    // we now mirror it inside autopilot so GET requests are
+                    // serviced while claude is streaming.
+                    if let Some(command) = prepared.command {
+                        let (tx, mut rx) = mpsc::unbounded_channel();
+                        let execution =
+                            WorkspaceKernel::execute_agent_command_streaming(command, tx);
+                        tokio::pin!(execution);
+                        loop {
+                            tokio::select! {
+                                update = rx.recv() => {
+                                    if let Some(update) = update {
+                                        let mut k = kernel.lock().await;
+                                        k.complete_agent_run(update)?;
+                                    }
+                                }
+                                final_op = &mut execution => {
+                                    let mut k = kernel.lock().await;
+                                    k.complete_agent_run(final_op.clone())?;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // Phase 3: ingest clarify questions under brief lock.
+                    {
+                        let mut k = kernel.lock().await;
+                        k.ingest_clarify_questions(session_id, &agent_id, run_op_id)?;
+                    }
+                    false
+                }
+            };
+
+            tokio::task::yield_now().await;
+            if should_break {
+                break;
+            }
+        }
+
+        let session = {
+            let k = kernel.lock().await;
+            k.model
+                .get_session(session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?
+        };
+        Ok(AutopilotResponse {
+            state: AutopilotState {
+                schema_version: "x07.studio.autopilot_state@0.1.0".to_string(),
+                session_id,
+                engaged: false,
+                policy,
+                last_decision,
+            },
+            session,
+        })
+    }
+
     pub async fn run_autopilot(
         &mut self,
         session_id: Uuid,

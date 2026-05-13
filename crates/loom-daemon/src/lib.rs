@@ -1220,12 +1220,16 @@ async fn start_autopilot(
     State(state): State<ApiState>,
     request: Option<Json<AutopilotStartRequest>>,
 ) -> Result<Json<AutopilotResponse>, (StatusCode, String)> {
+    // F3 fix: autopilot iterates over subprocess-heavy steps (real claude /
+    // codex / x07 can each take 10-60s). Holding `state.kernel.lock()` for the
+    // entire run starves every concurrent HTTP request and makes the UI look
+    // frozen. `run_autopilot_yielding` acquires/releases the kernel mutex per
+    // step so other handlers — including the SSE pump's initial snapshot and
+    // any GET poll between steps — can slip through.
     let policy = request
         .and_then(|Json(body)| body.policy)
         .unwrap_or_default();
-    let mut kernel = state.kernel.lock().await;
-    let response = kernel
-        .run_autopilot(session_id, policy)
+    let response = WorkspaceKernel::run_autopilot_yielding(state.kernel.clone(), session_id, policy)
         .await
         .map_err(internal_error)?;
     Ok(Json(response))
