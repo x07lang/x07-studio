@@ -1,9 +1,13 @@
+pub mod autopilot;
 pub mod event_bus;
 pub mod genpack;
 pub mod incidents;
 pub mod kernel;
 pub mod ladder;
+pub mod memory;
 pub mod reducer;
+pub mod replay;
+pub mod stream_events;
 pub mod summarize;
 pub mod synthesis;
 pub mod timeline;
@@ -11,6 +15,7 @@ pub mod workspace;
 
 pub use event_bus::SessionEventBus;
 pub use kernel::WorkspaceKernel;
+pub use stream_events::parse_stream_line;
 pub use summarize::plain_english_summary_from_session;
 pub use timeline::project_session_turns;
 pub use workspace::WorkspaceModel;

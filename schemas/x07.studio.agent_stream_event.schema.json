@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.agent_stream_event@0.1.0",
+  "title": "AgentStreamEvent",
+  "type": "object",
+  "required": ["kind", "id", "at"],
+  "properties": {
+    "kind": {
+      "enum": ["reasoning", "tool_use", "tool_result", "agent_message", "done"]
+    },
+    "id": { "type": "string" },
+    "at": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "tool": { "type": "string" },
+    "input": true,
+    "success": { "type": "boolean" },
+    "snippet": { "type": ["string", "null"] },
+    "text": { "type": "string" },
+    "exit_code": { "type": "integer" }
+  },
+  "additionalProperties": true
+}

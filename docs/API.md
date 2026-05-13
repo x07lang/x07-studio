@@ -737,3 +737,32 @@ Call tool request:
   }
 }
 ```
+
+## Cycle 3 endpoints
+
+- `POST /v1/sessions/{session_id}/realize/quorum` runs Claude Code and Codex
+  realization in staged workspaces and returns `RealizeQuorumRound`.
+- `POST /v1/sessions/{session_id}/realize/pick` applies the chosen quorum
+  proposal, then reruns `impl.check` and `xtal.verify`.
+- `POST /v1/sessions/{session_id}/autopilot/start` runs the bounded autopilot
+  loop with an optional policy.
+- `POST /v1/sessions/{session_id}/autopilot/pause` records a pause decision.
+- `GET /v1/sessions/{session_id}/diffs/live` streams normalized `LiveDiff`
+  frames extracted from streamed Edit / Write tool-use events.
+- `POST /v1/sessions/{session_id}/intent/voice` formalizes a voice transcript
+  directly and records the transcript confidence on the intent operation.
+- `POST /v1/sync/sessions/{code}/state` persists a session-local state blob on
+  a sync code; `POST /v1/sync/{code}/claim` returns it with the session.
+- `POST /v1/sessions/{session_id}/ladder/release` submits the selected ladder
+  rung through x07lp deploy bindings and records `ReleaseStatus`.
+- `GET /v1/sessions/{session_id}/ladder/release/{release_id}` returns the latest
+  recorded release status.
+- `POST /v1/sessions/{session_id}/incidents/watch` starts a bounded background
+  incident watcher for the session and immediately returns the current ingest.
+- `POST /v1/sessions/{session_id}/replay/export` writes a local replay capsule.
+- `POST /v1/replay/import` imports a replay capsule into the local session
+  store.
+
+Streamed agent events continue to arrive on
+`GET /v1/sessions/{session_id}/stream` as ordinary `Op` frames with
+`agent.event.<agent_id>.stream_<kind>` operation names.

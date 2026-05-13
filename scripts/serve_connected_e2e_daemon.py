@@ -50,6 +50,52 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\\n", encoding="utf-8")
 
 
+def intent_target(cwd: Path) -> tuple[str, str, Path]:
+    specs = sorted((cwd / "spec").glob("*.x07spec.json"))
+    for spec in specs:
+        try:
+            payload = json.loads(spec.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        module_id = payload.get("module_id") or spec.name.removesuffix(".x07spec.json")
+        operation = (payload.get("operations") or [{}])[0]
+        entry = str(operation.get("name") or f"{module_id}.run_v1").split(".")[-1]
+        return module_id, entry, cwd / "src" / f"{module_id.replace('.', '/')}.x07.json"
+    return "app.main", "run_v1", cwd / "src/main.x07.json"
+
+
+def target_module_body(module_id: str, entry: str, stub: bool, agent: str = "agent") -> object:
+    full = f"{module_id}.{entry}"
+    body = ["bytes.empty"] if stub else [
+        "begin",
+        ["let", "n", ["bytes.len", "payload"]],
+        ["let", "out", ["view.to_bytes", ["bytes.view", "payload"]]],
+        ["for", "i", 0, "n",
+            ["set", "out",
+                ["bytes.set_u8", "out", "i",
+                    ["+", ["bytes.get_u8", "out", "i"], 0]]]],
+        "out",
+    ]
+    if agent == "codex":
+        body = ["begin", ["let", "out", ["view.to_bytes", ["bytes.view", "payload"]]], "out"]
+    return {
+        "kind": "module",
+        "module_id": module_id,
+        "schema_version": "x07.x07ast@0.8.0",
+        "imports": [],
+        "decls": [
+            {"kind": "export", "names": [full]},
+            {
+                "kind": "defn",
+                "name": full,
+                "params": [{"name": "payload", "ty": "bytes"}],
+                "result": "bytes",
+                "body": body,
+            },
+        ],
+    }
+
+
 def run_x07(args: list[str]) -> None:
     cwd = Path.cwd()
     if args[:3] == ["service", "genpack", "schema"]:
@@ -108,25 +154,8 @@ def run_x07(args: list[str]) -> None:
         # Studio's stub-scanner flags scaffold_only=true. The connected
         # realize test then asks the fake claude to overwrite this with
         # a non-trivial body.
-        write_json(
-            cwd / "src/main.x07.json",
-            {
-                "kind": "module",
-                "module_id": "app.main",
-                "schema_version": "x07.x07ast@0.8.0",
-                "imports": [],
-                "decls": [
-                    {"kind": "export", "names": ["app.main.run_v1"]},
-                    {
-                        "kind": "defn",
-                        "name": "app.main.run_v1",
-                        "params": [{"name": "payload", "ty": "bytes"}],
-                        "result": "bytes",
-                        "body": ["bytes.empty"],
-                    },
-                ],
-            },
-        )
+        module_id, entry, target = intent_target(cwd)
+        write_json(target, target_module_body(module_id, entry, stub=True))
         return
 
     if args[:3] == ["xtal", "impl", "check"]:
@@ -175,52 +204,31 @@ def run_x07_wasm(args: list[str]) -> None:
 
 def run_agent(command: str, args: list[str]) -> None:
     prompt_path = args[-1] if args else ".x07/studio/handoffs/unknown.md"
-    if "-realize" in prompt_path:
-        # Connected-E2E realize mode: write a non-stub `src/main.x07.json`
+    prompt = " ".join(args)
+    if "-realize" in prompt_path or "realize" in prompt.lower() or "implementation" in prompt.lower():
+        # Connected-E2E realize mode: write a non-stub target module
         # body so Studio's stub-scanner stops flagging it. The body is
         # arbitrary — what matters is that body_is_stub() returns false.
         cwd = Path.cwd()
-        target = cwd / "src" / "main.x07.json"
+        module_id, entry, target = intent_target(cwd)
+        body = target_module_body(module_id, entry, stub=False, agent=command)
         target.parent.mkdir(parents=True, exist_ok=True)
-        write_json(
-            target,
-            {
-                "kind": "module",
-                "module_id": "app.main",
-                "schema_version": "x07.x07ast@0.8.0",
-                "imports": [],
-                "decls": [
-                    {"kind": "export", "names": ["app.main.run_v1"]},
-                    {
-                        "kind": "defn",
-                        "name": "app.main.run_v1",
-                        "params": [{"name": "payload", "ty": "bytes"}],
-                        "result": "bytes",
-                        "body": [
-                            "begin",
-                            ["let", "n", ["bytes.len", "payload"]],
-                            ["let", "out", ["view.to_bytes", ["bytes.view", "payload"]]],
-                            ["for", "i", 0, "n",
-                                ["set", "out",
-                                    ["bytes.set_u8", "out", "i",
-                                        ["+", ["bytes.get_u8", "out", "i"], 0]]]],
-                            "out",
-                        ],
-                    },
-                ],
-            },
-        )
+        print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": f"{command} is editing {target.relative_to(cwd)}"}]}}))
+        print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Write", "input": {"file_path": str(target.relative_to(cwd)), "content": json.dumps(body)}}]}}))
+        write_json(target, body)
+        print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "name": "Write", "content": f"wrote {target.relative_to(cwd)}", "is_error": False}]}}))
         print(
             json.dumps(
                 {
                     "schema_version": "x07.studio.agent_event@0.1.0",
                     "kind": "write",
-                    "summary": f"{command} filled in app.main.run_v1",
-                    "artifact": "src/main.x07.json",
+                    "summary": f"{command} filled in {module_id}.{entry}",
+                    "artifact": str(target.relative_to(cwd)),
                 }
             )
         )
-        print(f"write: src/main.x07.json")
+        print(json.dumps({"type": "result", "subtype": "success", "exit_code": 0}))
+        print(f"write: {target.relative_to(cwd)}")
         return
     if "-clarify" in prompt_path:
         # Connected-E2E clarify mode: emit two structured clarify_question
@@ -282,6 +290,9 @@ def main() -> int:
     if tool == "x07lp" and args[:1] == ["accept"]:
         result["deployment_id"] = "connected-e2e-atlas"
         result["exec_id"] = "connected-e2e-atlas"
+    if tool == "x07lp" and args[:1] in [["run"], ["status"], ["query"]]:
+        result["deployment_id"] = option(args, "--deployment", "connected-e2e-atlas")
+        result["state"] = "ready"
     report = {
         "schema_version": "x07.connected_e2e.report@0.1.0",
         "ok": True,

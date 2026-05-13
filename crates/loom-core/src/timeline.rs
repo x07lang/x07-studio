@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use loom_types::api::{SessionTurn, TurnEvidence, TurnQuestion};
+use loom_types::api::{
+    AgentStreamEvent, RealizeQuorumRound, SessionTurn, TurnEvidence, TurnQuestion,
+};
 use loom_types::artifacts::{IntentPacket, IntentSource, OpRecord, PlainEnglishSummary};
 use loom_types::session::SessionSnapshot;
 
@@ -138,6 +140,25 @@ fn op_turns(session: &SessionSnapshot) -> Vec<SessionTurn> {
                 incident_id: incident_id_from_op(op).unwrap_or_else(|| "latest".to_string()),
                 op_ids: vec![op.id],
             });
+        } else if op.op.starts_with("agent.event.") && op.op.contains(".stream_") {
+            if let Some((agent_id, event)) = stream_event_from_op(op) {
+                turns.push(SessionTurn::AgentStream {
+                    id: stable_turn_id(session.session_id, &format!("agent-stream:{}", op.id)),
+                    at: op.started_at.clone(),
+                    agent_id,
+                    event,
+                    op_id: op.id,
+                });
+            }
+        } else if op.op == "agent.event.quorum.realize" {
+            if let Some(round) = realize_quorum_from_op(op) {
+                turns.push(SessionTurn::QuorumRealize {
+                    id: stable_turn_id(session.session_id, &format!("quorum-realize:{}", op.id)),
+                    at: op.started_at.clone(),
+                    round,
+                    op_ids: vec![op.id],
+                });
+            }
         } else if op.op.starts_with("agent.realize.") {
             let agent_id = op
                 .op
@@ -260,8 +281,38 @@ fn turn_at(turn: &SessionTurn) -> &str {
         | SessionTurn::Verified { at, .. }
         | SessionTurn::Incident { at, .. }
         | SessionTurn::Repair { at, .. }
-        | SessionTurn::AgentRealize { at, .. } => at,
+        | SessionTurn::AgentRealize { at, .. }
+        | SessionTurn::AgentStream { at, .. }
+        | SessionTurn::QuorumRealize { at, .. } => at,
     }
+}
+
+fn stream_event_from_op(op: &OpRecord) -> Option<(String, AgentStreamEvent)> {
+    let agent_id = op
+        .report_json
+        .as_ref()
+        .and_then(|value| value.get("agent_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            let rest = op.op.strip_prefix("agent.event.")?;
+            rest.split(".stream_").next().map(str::to_string)
+        })?;
+    let event = op
+        .report_json
+        .as_ref()
+        .and_then(|value| value.get("event"))
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())?;
+    Some((agent_id, event))
+}
+
+fn realize_quorum_from_op(op: &OpRecord) -> Option<RealizeQuorumRound> {
+    op.report_json
+        .as_ref()
+        .and_then(|value| value.get("round"))
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
 }
 
 fn stable_turn_id(session_id: Uuid, key: &str) -> Uuid {

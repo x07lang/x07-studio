@@ -2,8 +2,10 @@
 	import { createEventDispatcher } from 'svelte';
 	import type {
 		AskAnswer,
+		AutopilotState,
 		CassetteEntry,
 		LadderState,
+		ReleaseStatus,
 		SessionSnapshot,
 		TryItRequest,
 		TryItResult,
@@ -19,6 +21,8 @@
 	export let ladder: LadderState | null = null;
 	export let tryResult: TryItResult | null = null;
 	export let askAnswer: AskAnswer | null = null;
+	export let autopilot: AutopilotState | null = null;
+	export let releaseStatus: ReleaseStatus | null = null;
 	export let cassettes: CassetteEntry[] = [];
 	export let visualParseResult: VisualResponse | null = null;
 	export let visualEmitResult: VisualResponse | null = null;
@@ -36,6 +40,10 @@
 		sync: void;
 		claimSync: string;
 		quorum: void;
+		autopilot: void;
+		pauseAutopilot: void;
+		release: string;
+		exportReplay: void;
 		cassetteLoad: void;
 		cassetteBranch: { idx: number; title: string };
 		visualParse: { kind: VisualKind; source: unknown };
@@ -56,6 +64,16 @@
 		<button type="button" class="command-button primary" disabled={!session || busy} on:click={() => dispatch('build')} data-testid="approve-build">
 			Approve &amp; Build
 		</button>
+		<button type="button" class="command-button primary" disabled={!session || busy} on:click={() => dispatch('autopilot')} data-testid="start-autopilot">
+			Run autopilot
+		</button>
+		{#if autopilot?.last_decision}
+			<div class="autopilot-state" data-testid="autopilot-state">
+				<strong>{autopilot.last_decision.stage}</strong>
+				<span>{autopilot.last_decision.reason}</span>
+				<button type="button" class="link-button" disabled={busy} on:click={() => dispatch('pauseAutopilot')}>Pause</button>
+			</div>
+		{/if}
 		<button type="button" class="command-button" disabled={!session || busy} on:click={() => dispatch('scan')}>
 			Scan incidents
 		</button>
@@ -69,12 +87,21 @@
 			</button>
 		</div>
 		<button type="button" class="command-button" disabled={!session || busy} on:click={() => dispatch('quorum')} data-testid="run-quorum">
-			Run quorum
+			Compare both agents
+		</button>
+		<button type="button" class="command-button" disabled={!session || busy} on:click={() => dispatch('exportReplay')}>
+			Export replay
 		</button>
 	</section>
 
 	<TryItPanel result={tryResult} {busy} on:invoke={(event) => dispatch('invoke', event.detail)} />
-	<ShippingLadder {ladder} {busy} on:climb={(event) => dispatch('climb', event.detail)} />
+	<ShippingLadder
+		{ladder}
+		{busy}
+		{releaseStatus}
+		on:climb={(event) => dispatch('climb', event.detail)}
+		on:release={(event) => dispatch('release', event.detail)}
+	/>
 
 	<section class="now-card cassette-card">
 		<header>

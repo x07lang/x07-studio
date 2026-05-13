@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.live_diff@0.1.0",
+  "title": "LiveDiff",
+  "type": "object",
+  "required": ["schema_version", "path", "unified_diff"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.live_diff@0.1.0" },
+    "path": { "type": "string" },
+    "before": { "type": ["string", "null"] },
+    "after": { "type": ["string", "null"] },
+    "unified_diff": { "type": "string" }
+  },
+  "additionalProperties": false
+}

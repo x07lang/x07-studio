@@ -23,18 +23,21 @@ use uuid::Uuid;
 use loom_core::WorkspaceKernel;
 use loom_types::api::{
     AgentApprovalRequest, AgentApprovalResponse, AgentHandoffResponse, AgentRunRequest,
-    AgentRunResponse, ArtifactPreviewRequest, ArtifactPreviewResponse, BindingDescriptor,
-    CallMcpToolRequest, CassetteBranchRequest, CassetteEntry, ClimbRungRequest, ConnectMcpRequest,
-    ConnectMcpResponse, CreateSessionRequest, DispatchEventRequest, DocPreviewRequest,
-    DocPreviewResponse, FormalizeIntentRequest, FormalizeIntentResponse, HealthResponse,
-    IntentAnswerRequest, IntentAnswerResponse, IntentClarifyRequest, IntentClarifyResponse,
-    IntentImageUploadResponse, LadderState, McpCallResponse, ProbeProviderRequest,
-    ProviderProbeResponse, QuorumRequest, QuorumRound, RealizeRequest, RealizeResponse,
+    AgentRunResponse, ArtifactPreviewRequest, ArtifactPreviewResponse, AutopilotPolicy,
+    AutopilotResponse, AutopilotStartRequest, BindingDescriptor, CallMcpToolRequest,
+    CassetteBranchRequest, CassetteEntry, ClimbRungRequest, ConnectMcpRequest, ConnectMcpResponse,
+    CreateSessionRequest, DispatchEventRequest, DocPreviewRequest, DocPreviewResponse,
+    FormalizeIntentRequest, FormalizeIntentResponse, HealthResponse, IntentAnswerRequest,
+    IntentAnswerResponse, IntentClarifyRequest, IntentClarifyResponse, IntentImageUploadResponse,
+    IntentInputMode, LadderState, LiveDiff, McpCallResponse, PickRealizeProposalRequest,
+    PickRealizeProposalResponse, ProbeProviderRequest, ProviderProbeResponse, QuorumRequest,
+    QuorumRound, RealizeQuorumRequest, RealizeQuorumRound, RealizeRequest, RealizeResponse,
+    ReleaseRequest, ReleaseStatus, ReplayExportResponse, ReplayImportRequest,
     RequestIntentRevisionRequest, RequestIntentRevisionResponse, ResolveApprovalRequest,
     RunBindingRequest, RunBuildRequest, RunXtalWorkflowRequest, RuntimeComponentState,
     RuntimeComponentStatus, SaveAgentProfileRequest, SaveProviderProfileRequest, SessionTurn,
-    StudioDefaults, StudioMemory, SyncClaimResponse, SyncCode, TryItRequest, TryItResult,
-    VisualEmitRequest, VisualParseRequest, VisualResponse, WorkspaceRadarResponse,
+    StudioDefaults, StudioMemory, SyncClaimResponse, SyncCode, SyncStateRequest, TryItRequest,
+    TryItResult, VisualEmitRequest, VisualParseRequest, VisualResponse, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -53,11 +56,19 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/sessions", get(list_sessions).post(create_session))
         .route("/v1/sessions/{session_id}", get(get_session))
         .route("/v1/sessions/{session_id}/stream", get(stream_session))
+        .route(
+            "/v1/sessions/{session_id}/diffs/live",
+            get(stream_live_diffs),
+        )
         .route("/v1/sessions/{session_id}/turns", get(list_turns))
         .route("/v1/sessions/{session_id}/events", post(dispatch_event))
         .route(
             "/v1/sessions/{session_id}/intent/formalize",
             post(formalize_intent),
+        )
+        .route(
+            "/v1/sessions/{session_id}/intent/voice",
+            post(formalize_voice_intent),
         )
         .route(
             "/v1/sessions/{session_id}/intent/revision",
@@ -85,8 +96,32 @@ pub fn router(state: ApiState) -> Router {
             "/v1/sessions/{session_id}/realize",
             post(realize_with_agent),
         )
+        .route(
+            "/v1/sessions/{session_id}/realize/quorum",
+            post(realize_quorum),
+        )
+        .route(
+            "/v1/sessions/{session_id}/realize/pick",
+            post(pick_realize_proposal),
+        )
+        .route(
+            "/v1/sessions/{session_id}/autopilot/start",
+            post(start_autopilot),
+        )
+        .route(
+            "/v1/sessions/{session_id}/autopilot/pause",
+            post(pause_autopilot),
+        )
         .route("/v1/sessions/{session_id}/ladder", get(ladder_state))
         .route("/v1/sessions/{session_id}/ladder/climb", post(climb_ladder))
+        .route(
+            "/v1/sessions/{session_id}/ladder/release",
+            post(submit_release),
+        )
+        .route(
+            "/v1/sessions/{session_id}/ladder/release/{release_id}",
+            get(get_release_status),
+        )
         .route("/v1/sessions/{session_id}/cassette", get(cassette_entries))
         .route(
             "/v1/sessions/{session_id}/cassette/branch",
@@ -96,6 +131,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/v1/sessions/{session_id}/incidents/scan",
             post(scan_incidents),
+        )
+        .route(
+            "/v1/sessions/{session_id}/incidents/watch",
+            post(watch_incidents),
         )
         .route(
             "/v1/sessions/{session_id}/incidents/{incident_id}/repair",
@@ -138,6 +177,12 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/providers", get(list_providers).post(save_provider))
         .route("/v1/sync/codes", get(mint_sync_code))
         .route("/v1/sync/{code}/claim", post(claim_sync_code))
+        .route("/v1/sync/sessions/{code}/state", post(save_sync_state))
+        .route(
+            "/v1/sessions/{session_id}/replay/export",
+            post(export_replay),
+        )
+        .route("/v1/replay/import", post(import_replay))
         .route("/v1/memory", get(load_memory).post(save_memory))
         .route("/v1/providers/probe", post(probe_provider))
         .route("/v1/agents", get(list_agents).post(save_agent))
@@ -456,6 +501,52 @@ async fn stream_session(
         .into_response())
 }
 
+async fn stream_live_diffs(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    let (bus, existing) = {
+        let kernel = state.kernel.lock().await;
+        let session = kernel.get_session(session_id).ok_or_else(not_found)?;
+        let existing = session
+            .op_log
+            .iter()
+            .filter_map(live_diff_from_op)
+            .collect::<Vec<_>>();
+        (kernel.event_bus(), existing)
+    };
+    let initial = futures::stream::iter(
+        existing
+            .into_iter()
+            .filter_map(|diff| Event::default().json_data(diff).ok().map(Ok)),
+    );
+    let receiver = bus.subscribe(session_id);
+    let live = BroadcastStream::new(receiver).filter_map(|event| async move {
+        let event = event.ok()?;
+        match event {
+            loom_types::api::SessionStreamEvent::Op { op } => live_diff_from_op(&op)
+                .and_then(|diff| Event::default().json_data(diff).ok().map(Ok)),
+            _ => None,
+        }
+    });
+    let stream = initial.chain(live);
+    let boxed: Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> = Box::pin(stream);
+    Ok(Sse::new(boxed)
+        .keep_alive(KeepAlive::default())
+        .into_response())
+}
+
+fn live_diff_from_op(op: &loom_types::artifacts::OpRecord) -> Option<LiveDiff> {
+    let value = op
+        .report_json
+        .as_ref()?
+        .get("event")?
+        .get("input")?
+        .get("live_diff")?
+        .clone();
+    serde_json::from_value(value).ok()
+}
+
 async fn dispatch_event(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -473,6 +564,28 @@ async fn formalize_intent(
     State(state): State<ApiState>,
     Json(request): Json<FormalizeIntentRequest>,
 ) -> Result<Json<FormalizeIntentResponse>, (StatusCode, String)> {
+    formalize_intent_request(session_id, state, request).await
+}
+
+async fn formalize_voice_intent(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(mut request): Json<FormalizeIntentRequest>,
+) -> Result<Json<FormalizeIntentResponse>, (StatusCode, String)> {
+    request.input_mode = IntentInputMode::Voice;
+    if request.raw.trim().is_empty() {
+        if let Some(transcript) = &request.voice_transcript {
+            request.raw = transcript.text.clone();
+        }
+    }
+    formalize_intent_request(session_id, state, request).await
+}
+
+async fn formalize_intent_request(
+    session_id: Uuid,
+    state: ApiState,
+    request: FormalizeIntentRequest,
+) -> Result<Json<FormalizeIntentResponse>, (StatusCode, String)> {
     let mut kernel = state.kernel.lock().await;
     let (intent, op, session) = kernel
         .formalize_intent_with_provider(
@@ -481,6 +594,7 @@ async fn formalize_intent(
             request.input_mode,
             &request.revision_notes,
             request.provider_profile_id.as_deref(),
+            request.voice_transcript.as_ref(),
         )
         .await
         .map_err(conflict_error)?;
@@ -829,6 +943,64 @@ async fn realize_with_agent(
     }))
 }
 
+async fn realize_quorum(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<RealizeQuorumRequest>,
+) -> Result<Json<RealizeQuorumRound>, (StatusCode, String)> {
+    let agent_ids = if request.agent_ids.is_empty() {
+        vec!["claude-code".to_string(), "openai-codex".to_string()]
+    } else {
+        request.agent_ids
+    };
+    let mut kernel = state.kernel.lock().await;
+    let round = kernel
+        .run_realize_quorum(session_id, &agent_ids, request.timeout_seconds)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(round))
+}
+
+async fn pick_realize_proposal(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    Json(request): Json<PickRealizeProposalRequest>,
+) -> Result<Json<PickRealizeProposalResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let response = kernel
+        .pick_latest_quorum_proposal(session_id, request.proposal_index)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(response))
+}
+
+async fn start_autopilot(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    request: Option<Json<AutopilotStartRequest>>,
+) -> Result<Json<AutopilotResponse>, (StatusCode, String)> {
+    let policy = request
+        .and_then(|Json(body)| body.policy)
+        .unwrap_or_default();
+    let mut kernel = state.kernel.lock().await;
+    let response = kernel
+        .run_autopilot(session_id, policy)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(response))
+}
+
+async fn pause_autopilot(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<AutopilotResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let response = kernel
+        .pause_autopilot(session_id, AutopilotPolicy::default())
+        .map_err(internal_error)?;
+    Ok(Json(response))
+}
+
 async fn ladder_state(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -851,6 +1023,36 @@ async fn climb_ladder(
     Ok(Json(snapshot))
 }
 
+async fn submit_release(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+    request: Option<Json<ReleaseRequest>>,
+) -> Result<Json<ReleaseStatus>, (StatusCode, String)> {
+    let body = request.map(|Json(body)| body).unwrap_or(ReleaseRequest {
+        schema_version: "x07.studio.release_request@0.1.0".to_string(),
+        rung: "shareable".to_string(),
+        environment: "shareable".to_string(),
+        binding_refs: Vec::new(),
+    });
+    let mut kernel = state.kernel.lock().await;
+    let status = kernel
+        .release_for_rung(session_id, body)
+        .await
+        .map_err(internal_error)?;
+    Ok(Json(status))
+}
+
+async fn get_release_status(
+    Path((session_id, release_id)): Path<(Uuid, String)>,
+    State(state): State<ApiState>,
+) -> Result<Json<ReleaseStatus>, (StatusCode, String)> {
+    let kernel = state.kernel.lock().await;
+    let status = kernel
+        .release_status(session_id, &release_id)
+        .map_err(conflict_error)?;
+    Ok(Json(status))
+}
+
 async fn scan_incidents(
     Path(session_id): Path<Uuid>,
     State(state): State<ApiState>,
@@ -860,6 +1062,37 @@ async fn scan_incidents(
         .ingest_incidents(session_id)
         .map_err(conflict_error)?;
     Ok(Json(ops))
+}
+
+async fn watch_incidents(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<Vec<loom_types::artifacts::OpRecord>>, (StatusCode, String)> {
+    let initial = {
+        let mut kernel = state.kernel.lock().await;
+        kernel
+            .ingest_incidents(session_id)
+            .map_err(conflict_error)?
+    };
+    spawn_incident_watch(state, session_id);
+    Ok(Json(initial))
+}
+
+fn spawn_incident_watch(state: ApiState, session_id: Uuid) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        for _ in 0..240 {
+            interval.tick().await;
+            let mut kernel = state.kernel.lock().await;
+            if kernel.get_session(session_id).is_none() {
+                break;
+            }
+            if let Err(error) = kernel.ingest_incidents(session_id) {
+                tracing::warn!(%session_id, %error, "incident watcher stopped");
+                break;
+            }
+        }
+    });
 }
 
 async fn repair_incident(
@@ -1061,8 +1294,45 @@ async fn claim_sync_code(
     State(state): State<ApiState>,
 ) -> Result<Json<SyncClaimResponse>, (StatusCode, String)> {
     let mut kernel = state.kernel.lock().await;
-    let session = kernel.claim_sync_code(&code).map_err(conflict_error)?;
-    Ok(Json(SyncClaimResponse { session }))
+    let (session, state_blob) = kernel.claim_sync_code(&code).map_err(conflict_error)?;
+    Ok(Json(SyncClaimResponse {
+        session,
+        state_blob,
+    }))
+}
+
+async fn save_sync_state(
+    Path(code): Path<String>,
+    State(state): State<ApiState>,
+    Json(request): Json<SyncStateRequest>,
+) -> Result<Json<SyncCode>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let code = kernel
+        .save_sync_state(&code, request.state_blob)
+        .map_err(conflict_error)?;
+    Ok(Json(code))
+}
+
+async fn export_replay(
+    Path(session_id): Path<Uuid>,
+    State(state): State<ApiState>,
+) -> Result<Json<ReplayExportResponse>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let response = kernel
+        .export_replay_capsule(session_id)
+        .map_err(internal_error)?;
+    Ok(Json(response))
+}
+
+async fn import_replay(
+    State(state): State<ApiState>,
+    Json(request): Json<ReplayImportRequest>,
+) -> Result<Json<SessionSnapshot>, (StatusCode, String)> {
+    let mut kernel = state.kernel.lock().await;
+    let session = kernel
+        .import_replay_capsule(request.capsule)
+        .map_err(internal_error)?;
+    Ok(Json(session))
 }
 
 async fn load_memory(

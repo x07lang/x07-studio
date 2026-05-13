@@ -135,6 +135,62 @@ export interface PlainEnglishSummary {
 	stub_paths?: string[];
 }
 
+export type AgentStreamEvent =
+	| { kind: 'reasoning'; id: string; at: string; text: string }
+	| {
+			kind: 'tool_use';
+			id: string;
+			at: string;
+			agent_id: string;
+			tool: string;
+			input: unknown;
+	  }
+	| {
+			kind: 'tool_result';
+			id: string;
+			at: string;
+			agent_id: string;
+			tool: string;
+			success: boolean;
+			snippet?: string | null;
+	  }
+	| { kind: 'agent_message'; id: string; at: string; agent_id: string; text: string }
+	| { kind: 'done'; id: string; at: string; agent_id: string; exit_code: number };
+
+export interface LiveDiff {
+	schema_version: 'x07.studio.live_diff@0.1.0';
+	path: string;
+	before?: string | null;
+	after?: string | null;
+	unified_diff: string;
+}
+
+export interface RealizeProposal {
+	schema_version: 'x07.studio.realize_proposal@0.1.0';
+	agent_id: string;
+	path: string;
+	body: unknown;
+	digest: string;
+	stdout_excerpt: string;
+	stderr_excerpt: string;
+	status: 'ok' | 'no_write' | 'audit_fail' | 'spawn_fail' | string;
+}
+
+export interface RealizeQuorumRound {
+	schema_version: 'x07.studio.realize_quorum_round@0.1.0';
+	session_id: string;
+	started_at: string;
+	finished_at?: string | null;
+	proposals: RealizeProposal[];
+	agreed: boolean;
+	judge?: string | null;
+}
+
+export interface PickRealizeProposalResponse {
+	round: RealizeQuorumRound;
+	session: SessionSnapshot;
+}
+
 export type SessionTurn =
 	| { kind: 'user_intent'; id: string; at: string; raw: string; source_kind: string }
 	| { kind: 'agent_clarify'; id: string; at: string; agent_id: string; questions: TurnQuestion[] }
@@ -152,6 +208,21 @@ export type SessionTurn =
 			agent_id: string;
 			ok: boolean;
 			wrote_files: string[];
+			op_ids: string[];
+	  }
+	| {
+			kind: 'agent_stream';
+			id: string;
+			at: string;
+			agent_id: string;
+			event: AgentStreamEvent;
+			op_id: string;
+	  }
+	| {
+			kind: 'quorum_realize';
+			id: string;
+			at: string;
+			round: RealizeQuorumRound;
 			op_ids: string[];
 	  };
 
@@ -225,6 +296,34 @@ export interface QuorumRound {
 	diff: Array<{ label: string; detail: string }>;
 }
 
+export interface AutopilotPolicy {
+	auto_answer_min_confidence: number;
+	max_clarify_rounds: number;
+	auto_climb_to?: string | null;
+	allow_repair_iters: number;
+	allow_quorum: boolean;
+}
+
+export interface AutopilotDecision {
+	at: string;
+	stage: string;
+	action: string;
+	reason: string;
+}
+
+export interface AutopilotState {
+	schema_version: 'x07.studio.autopilot_state@0.1.0';
+	session_id: string;
+	engaged: boolean;
+	policy: AutopilotPolicy;
+	last_decision?: AutopilotDecision | null;
+}
+
+export interface AutopilotResponse {
+	state: AutopilotState;
+	session: SessionSnapshot;
+}
+
 export interface CassetteEntry {
 	idx: number;
 	kind: string;
@@ -242,10 +341,44 @@ export interface SyncCode {
 	code: string;
 	expires_at: string;
 	session_id: string;
+	state_blob?: unknown;
 }
 
 export interface SyncClaimResponse {
 	session: SessionSnapshot;
+	state_blob?: unknown;
+}
+
+export interface VoiceTranscript {
+	schema_version: 'x07.studio.voice_transcript@0.1.0';
+	text: string;
+	confidence: number;
+	language: string;
+	recorded_at: string;
+}
+
+export interface ReleaseStatus {
+	schema_version: 'x07.studio.release_status@0.1.0';
+	release_id: string;
+	rung: string;
+	environment: string;
+	status: OperationStatus;
+	op_ids: string[];
+	message: string;
+}
+
+export interface ReplayCapsule {
+	schema_version: 'x07.studio.replay_capsule@0.1.0';
+	capsule_id: string;
+	session: SessionSnapshot;
+	manifest: unknown;
+	signature: unknown;
+}
+
+export interface ReplayExportResponse {
+	capsule_id: string;
+	artifact: string;
+	signature: unknown;
 }
 
 export type VisualKind = 'streampipe' | 'statemachine' | 'tasks';

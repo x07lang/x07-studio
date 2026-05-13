@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.release_status@0.1.0",
+  "title": "ReleaseStatus",
+  "type": "object",
+  "required": ["schema_version", "release_id", "rung", "environment", "status", "op_ids", "message"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.release_status@0.1.0" },
+    "release_id": { "type": "string" },
+    "rung": { "type": "string" },
+    "environment": { "type": "string" },
+    "status": { "enum": ["pending", "running", "succeeded", "failed"] },
+    "op_ids": { "type": "array", "items": { "type": "string" } },
+    "message": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -1010,3 +1010,41 @@ This document records friction found while implementing the Studio web surface.
    `summary.plain_english` op. Users with a working subscription agent can
    still click "Implement with Claude Code" to upgrade the floor; users
    without one get a working Try-It at zero cost.
+
+89. Realize progress has to be eventful, not binary.
+
+   The first subscription-realize path only showed running/done. Studio now
+   parses Claude Code stream-json and Codex JSONL into normalized
+   `AgentStreamEvent` records, stores Edit/Write live diffs, and renders those
+   events directly in the Timeline. Unknown agent output still remains visible
+   through the older semantic event observer, but structured streams now carry
+   the primary progress surface.
+
+90. Multi-agent quorum needs isolated proposal workspaces.
+
+   Running two agents against the same `src/` path would make the second agent
+   overwrite the first before a human could compare them. Realize quorum now
+   stages each agent under `.x07/studio/quorum/<round>/<agent>/`, computes a
+   digest for the proposed module body, and applies only the selected proposal
+   to the live workspace before rerunning `impl.check` and `xtal.verify`.
+
+91. Autopilot must be a reducer driver, not a bypass.
+
+   The cycle-3 autopilot loop records every decision as an op and uses the same
+   reducer events and canonical bindings as the manual path. It auto-answers
+   only high-confidence clarify questions, then moves through spec approval,
+   build, realization, and optional ladder climb until policy says to pause.
+
+92. Cross-device continuity needs state, not just a session id.
+
+   Sync codes still stay local and expiry-bounded, but they now carry a
+   session-local state blob so a phone claim can restore the selected session,
+   current status, and timeline position without introducing hosted identity.
+
+93. Release and replay are user-facing lifecycle artifacts.
+
+   The Shipping Ladder now has a release submit path over x07lp deploy
+   bindings, and sessions can export/import local replay capsules with a
+   deterministic manifest digest. The digest is local provenance, not external
+   key management; production-grade signed sharing remains a later trust
+   decision.

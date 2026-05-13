@@ -2,12 +2,17 @@ import { expect, test } from '@playwright/test';
 
 test.describe.configure({ mode: 'serial' });
 
+async function useManualMode(page: import('@playwright/test').Page) {
+	await page.getByLabel('Auto').uncheck();
+}
+
 test('connected timeline formalizes, clarifies, builds, tries, and scans incidents', async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto('/');
 
 	await expect(page.getByRole('heading', { name: 'x07 Studio' })).toBeVisible();
 	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+	await useManualMode(page);
 
 	await page
 		.getByTestId('composer-input')
@@ -28,15 +33,15 @@ test('connected timeline formalizes, clarifies, builds, tries, and scans inciden
 	await expect(page.getByTestId('run-invocation')).toContainText('x07 run');
 	await expect(page.getByTestId('shipping-ladder')).toContainText('Local preview');
 
-	// Build emits a stub impl (xtal impl sync), so Try-It now refuses
-	// politely with the stub_impl message. The "Latest verify evidence"
-	// proof citation is gated behind the realize step (covered by the
-	// dedicated realize test below).
+	// The fake toolchain now writes the implementation to the same
+	// intent-derived path that verify records, so Try-It should use the
+	// verified artifact instead of tripping the old orphan-stub guard.
 	await page.getByTestId('try-it-panel').getByRole('textbox').first().fill('[2,1]');
 	await page.getByTestId('try-it-panel').getByRole('button', { name: 'Run it' }).click();
-	await expect(page.getByTestId('try-it-panel')).toContainText('stub', {
+	await expect(page.getByTestId('try-it-panel')).toContainText('"ok": true', {
 		timeout: 15_000
 	});
+	await expect(page.getByTestId('try-it-panel')).toContainText('Latest verify evidence');
 
 	await page.getByRole('button', { name: 'Scan incidents' }).click();
 	await expect(page.getByTestId('turn-incident')).toContainText('demo-incident', {
@@ -46,16 +51,14 @@ test('connected timeline formalizes, clarifies, builds, tries, and scans inciden
 	await expect(page.getByTestId('turn-repair')).toContainText('latest', { timeout: 15_000 });
 });
 
-test('connected verify produces a scaffold flag + realize CTA', async ({ page }) => {
-	// The fake-toolchain `xtal impl sync` emits a stub body, so Studio's
-	// stub-scanner should tag the Verified turn as scaffolded and surface
-	// the Implement-with-Claude CTA. The full realize HTTP round-trip is
-	// covered by a focused Rust kernel test plus the manual live-drive in
-	// scripts/realize-live-test.sh; the connected E2E here verifies the
-	// scaffold-detection projection wires through to the UI.
+test('connected verify disables the realize CTA once template synthesis lands', async ({ page }) => {
+	// The fake connected toolchain now writes to the intent-derived module
+	// path, so template synthesis produces a non-stub implementation and
+	// the realize CTA becomes a disabled "implementation in place" marker.
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto('/');
 	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+	await useManualMode(page);
 
 	await page
 		.getByTestId('composer-input')
@@ -70,9 +73,39 @@ test('connected verify produces a scaffold flag + realize CTA', async ({ page })
 
 	await page.getByTestId('approve-build').click();
 	await expect(page.getByTestId('turn-verified')).toBeVisible({ timeout: 60_000 });
-	await expect(page.getByTestId('summary-headline')).toContainText('scaffolded');
+	await expect(page.getByTestId('summary-headline')).not.toContainText('scaffolded');
 	await expect(page.getByTestId('realize-cta')).toBeVisible();
-	await expect(page.getByTestId('realize-cta-button')).toBeEnabled();
+	await expect(page.getByTestId('realize-cta')).toContainText('Implementation in place');
+	await expect(page.getByTestId('realize-cta-button')).toBeDisabled();
+
+	const response = await page.request.get('/v1/sessions');
+	const sessions = (await response.json()) as Array<{ title: string; op_log: Array<{ op: string }> }>;
+	const greeter = sessions.find((session) =>
+		session.title.startsWith('Build a small CLI greeting tool')
+	);
+	expect(greeter?.op_log.some((op) => op.op === 'synthesis.template')).toBe(true);
+
+	await page.getByTestId('try-it-panel').getByRole('textbox').first().fill('Bodik');
+	await page.getByTestId('try-it-panel').getByRole('button', { name: 'Run it' }).click();
+	await expect(page.getByTestId('try-it-panel')).toContainText('"ok": true', {
+		timeout: 15_000
+	});
+});
+
+test('connected autopilot clarifies, answers, builds, and climbs local preview', async ({ page }) => {
+	await page.goto('/');
+	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+	await expect(page.getByLabel('Auto')).toBeChecked();
+
+	await page
+		.getByTestId('composer-input')
+		.fill('Build a small greeter that says hello to the supplied name and rejects empty input.');
+	await page.getByTestId('composer-submit').click();
+
+	await expect(page.getByTestId('turn-agent_clarify')).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByTestId('clarify-answer-locked').first()).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByTestId('turn-verified')).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByTestId('shipping-ladder')).toContainText('Local preview');
 });
 
 test('connected timeline runs the Atlas workflow lane', async ({ page }) => {
@@ -80,6 +113,7 @@ test('connected timeline runs the Atlas workflow lane', async ({ page }) => {
 		'Use docs/examples/wasm_showcases/x07_atlas to build x07 Atlas with profile validation, trace replay, release pack verification, provenance, deploy planning, and SLO evidence.';
 	await page.goto('/?details=open');
 	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+	await useManualMode(page);
 
 	await page.getByTestId('composer-input').fill(prompt);
 	await page.getByTestId('composer-submit').click();
@@ -103,6 +137,7 @@ test('connected handoff embeds detected service genpack schema', async ({ page }
 	const prompt = 'Build an API gateway service for account reads with request validation.';
 	await page.goto('/?details=open');
 	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+	await useManualMode(page);
 
 	await page.getByTestId('composer-input').fill(prompt);
 	await page.getByTestId('composer-submit').click();
@@ -132,6 +167,7 @@ test('connected continuity tools run quorum, sync claims, cassette branches, and
 	const prompt = 'Build an API gateway service with a replay cassette and visual task flow.';
 	await page.goto('/?details=open');
 	await expect(page.getByText('Connected to Loom daemon')).toBeVisible();
+	await useManualMode(page);
 
 	await page.getByTestId('composer-input').fill(prompt);
 	await page.getByTestId('composer-submit').click();

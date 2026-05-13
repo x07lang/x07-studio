@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.autopilot_state@0.1.0",
+  "title": "AutopilotState",
+  "type": "object",
+  "required": ["schema_version", "session_id", "engaged", "policy"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.autopilot_state@0.1.0" },
+    "session_id": { "type": "string" },
+    "engaged": { "type": "boolean" },
+    "policy": { "type": "object" },
+    "last_decision": { "type": ["object", "null"] }
+  },
+  "additionalProperties": false
+}

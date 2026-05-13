@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.voice_transcript@0.1.0",
+  "title": "VoiceTranscript",
+  "type": "object",
+  "required": ["schema_version", "text", "confidence", "language", "recorded_at"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.voice_transcript@0.1.0" },
+    "text": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "language": { "type": "string" },
+    "recorded_at": { "type": "string" }
+  },
+  "additionalProperties": false
+}

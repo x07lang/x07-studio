@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { LadderState } from '$lib/studio';
+	import type { LadderState, ReleaseStatus } from '$lib/studio';
 
 	export let ladder: LadderState | null = null;
+	export let releaseStatus: ReleaseStatus | null = null;
 	export let busy = false;
 
 	const dispatch = createEventDispatcher<{
 		climb: string;
+		release: string;
 	}>();
 
 	$: nextRung = ladder?.rungs.find((rung) => !rung.satisfied) ?? null;
@@ -33,6 +35,18 @@
 			<button type="button" class="command-button" disabled={busy} on:click={() => dispatch('climb', nextRung.id)}>
 				Climb to {nextRung.label}
 			</button>
+		{/if}
+		{#if ladder.current_rung !== 'local_preview'}
+			<button type="button" class="command-button primary" disabled={busy} on:click={() => dispatch('release', ladder.current_rung)}>
+				Submit release
+			</button>
+		{/if}
+		{#if releaseStatus}
+			<div class="release-status" data-testid="release-status">
+				<strong>{releaseStatus.release_id}</strong>
+				<span>{releaseStatus.status} / {releaseStatus.environment}</span>
+				<small>{releaseStatus.message}</small>
+			</div>
 		{/if}
 	{:else}
 		<p>Run a build to calculate the ladder.</p>

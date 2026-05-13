@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.replay_capsule@0.1.0",
+  "title": "ReplayCapsule",
+  "type": "object",
+  "required": ["schema_version", "capsule_id", "session", "manifest", "signature"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.replay_capsule@0.1.0" },
+    "capsule_id": { "type": "string" },
+    "session": { "type": "object" },
+    "manifest": { "type": "object" },
+    "signature": { "type": "object" }
+  },
+  "additionalProperties": false
+}

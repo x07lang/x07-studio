@@ -4,11 +4,14 @@
 	import { StudioApi } from '$lib/api';
 	import type {
 		AskAnswer,
+		AutopilotState,
 		CassetteEntry,
 		HealthResponse,
 		IntentAnswer,
 		IntentInputMode,
 		LadderState,
+		ReleaseStatus,
+		ReplayExportResponse,
 		SessionSnapshot,
 		SessionStreamEvent,
 		SessionTurn,
@@ -16,6 +19,7 @@
 		SyncCode,
 		TryItRequest,
 		TryItResult,
+		VoiceTranscript,
 		VisualKind,
 		VisualResponse
 	} from '$lib/studio';
@@ -23,6 +27,9 @@
 	import Timeline from '$lib/components/Timeline.svelte';
 	import Composer from '$lib/components/Composer.svelte';
 	import NowPanel from '$lib/components/NowPanel.svelte';
+	import Header from '$lib/components/Header.svelte';
+	import MemoryChip from '$lib/components/MemoryChip.svelte';
+	import MemoryDrawer from '$lib/components/MemoryDrawer.svelte';
 
 	const api = new StudioApi();
 
@@ -38,6 +45,11 @@
 	let visualEmitResult: VisualResponse | null = null;
 	let memory: StudioMemory | null = null;
 	let syncCode: SyncCode | null = null;
+	let autopilot: AutopilotState | null = null;
+	let releaseStatus: ReleaseStatus | null = null;
+	let replayExport: ReplayExportResponse | null = null;
+	let incidentNotice = 0;
+	let memoryOpen = false;
 	let busy = false;
 	let status = 'Starting Studio';
 	let detailsOpen = false;
@@ -47,6 +59,8 @@
 		const params = new URLSearchParams(window.location.search);
 		detailsOpen = params.get('mode') === 'expert' || params.get('details') === 'open';
 		await refresh();
+		const claim = params.get('claim');
+		if (claim) await claimSync(claim);
 		if (selected) subscribe(selected.session_id);
 	});
 
@@ -80,6 +94,8 @@
 		unsubscribe = api.subscribeSession(sessionId, (event) => {
 			handleStreamEvent(event);
 		});
+		const session = sessions.find((item) => item.session_id === sessionId) ?? selected;
+		if (session) void api.watchIncidents(session).catch(() => null);
 	}
 
 	function handleStreamEvent(event: SessionStreamEvent) {
@@ -91,6 +107,7 @@
 			const index = op_log.findIndex((op) => op.id === event.op.id);
 			if (index >= 0) op_log[index] = event.op;
 			else op_log.push(event.op);
+			if (event.op.op.includes('.incident.')) incidentNotice += 1;
 			replaceSelected({ ...selected, op_log });
 		}
 		void refreshDerived();
@@ -101,9 +118,10 @@
 		sessions = [session, ...sessions.filter((item) => item.session_id !== session.session_id)];
 	}
 
-	async function compose(text: string) {
+	async function compose(detail: { text: string; auto?: boolean; voiceTranscript?: VoiceTranscript | null }) {
 		busy = true;
 		try {
+			const text = detail.text;
 			if (text.startsWith('/binding ')) {
 				await runBindingShortcut(text);
 				return;
@@ -111,11 +129,30 @@
 			const session = await api.createSession(text.slice(0, 80), 'new_behavior');
 			replaceSelected(session);
 			subscribe(session.session_id);
-			const formalized = await api.formalizeIntent(session, text, 'text' as IntentInputMode, []);
+			const inputMode = detail.voiceTranscript ? ('voice' as IntentInputMode) : ('text' as IntentInputMode);
+			const formalized = await api.formalizeIntent(
+				session,
+				text,
+				inputMode,
+				[],
+				undefined,
+				detail.voiceTranscript ?? null
+			);
 			replaceSelected(formalized.session);
 			status = 'Intent captured';
-			await api.clarifyIntent(formalized.session, 'claude-code', { timeoutSeconds: 90 }).catch(() => null);
-			selected = await api.getSession(formalized.session.session_id);
+			if (detail.auto) {
+				const response = await api.startAutopilot(formalized.session, {
+					allow_quorum: false,
+					auto_climb_to: 'local_preview'
+				});
+				if (response) {
+					autopilot = response.state;
+					replaceSelected(response.session);
+				}
+			} else {
+				await api.clarifyIntent(formalized.session, 'claude-code', { timeoutSeconds: 90 }).catch(() => null);
+				selected = await api.getSession(formalized.session.session_id);
+			}
 			await refreshDerived();
 		} finally {
 			busy = false;
@@ -221,6 +258,7 @@
 	async function scanIncidents() {
 		if (!selected) return;
 		await api.scanIncidents(selected);
+		incidentNotice = 0;
 		selected = await api.getSession(selected.session_id);
 		await refreshDerived();
 		status = 'Incident scan complete';
@@ -247,6 +285,13 @@
 
 	async function mintSync() {
 		syncCode = await api.mintSyncCode();
+		if (syncCode) {
+			syncCode = await api.saveSyncState(syncCode.code, {
+				selected: selected?.session_id,
+				status,
+				turns
+			});
+		}
 		status = syncCode ? `Sync code ${syncCode.code}` : 'Sync unavailable in demo mode';
 	}
 
@@ -259,21 +304,69 @@
 		replaceSelected(claimed.session);
 		subscribe(claimed.session.session_id);
 		await refreshDerived();
-		status = `Claimed sync code ${code.trim().toUpperCase()}`;
+		status = claimed.state_blob
+			? `Claimed sync code ${code.trim().toUpperCase()} with saved state`
+			: `Claimed sync code ${code.trim().toUpperCase()}`;
 	}
 
 	async function runQuorum() {
 		if (!selected) return;
 		busy = true;
 		try {
-			const round = await api.runIntentQuorum(selected, ['openai-codex', 'claude-code'], {
-				timeoutSeconds: 90
+			const round = await api.realizeQuorum(selected, ['claude-code', 'openai-codex'], {
+				timeoutSeconds: 240
 			});
 			selected = await api.getSession(selected.session_id);
 			await refreshDerived();
-			status = round ? `Quorum round ${round.round} complete` : 'Quorum unavailable in demo mode';
+			status = round ? `Realize quorum compared ${round.proposals.length} proposal(s)` : 'Quorum unavailable in demo mode';
 		} finally {
 			busy = false;
+		}
+	}
+
+	async function pickProposal(index: number) {
+		if (!selected) return;
+		busy = true;
+		try {
+			const response = await api.pickRealizeProposal(selected, index);
+			if (response) {
+				replaceSelected(response.session);
+				await refreshDerived();
+				status = `Picked proposal ${index + 1}`;
+			}
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function startAutopilot() {
+		if (!selected) return;
+		busy = true;
+		try {
+			const response = await api.startAutopilot(selected, {
+				allow_quorum: false,
+				auto_climb_to: null,
+				allow_repair_iters: 3
+			});
+			if (response) {
+				autopilot = response.state;
+				replaceSelected(response.session);
+				await refreshDerived();
+				status = response.state.last_decision?.reason ?? 'Autopilot stopped';
+			}
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function pauseAutopilot() {
+		if (!selected) return;
+		const response = await api.pauseAutopilot(selected);
+		if (response) {
+			autopilot = response.state;
+			replaceSelected(response.session);
+			await refreshDerived();
+			status = 'Autopilot paused';
 		}
 	}
 
@@ -318,6 +411,29 @@
 		}).catch(() => undefined);
 		status = `Image witness added: ${detail.file.name}`;
 	}
+
+	async function submitRelease(rung: string) {
+		if (!selected) return;
+		busy = true;
+		try {
+			releaseStatus = await api.submitRelease(selected, rung);
+			status = releaseStatus ? `Release ${releaseStatus.release_id}: ${releaseStatus.status}` : 'Release unavailable';
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function exportReplay() {
+		if (!selected) return;
+		replayExport = await api.exportReplay(selected);
+		status = replayExport ? `Replay capsule ${replayExport.capsule_id} exported` : 'Replay export unavailable';
+	}
+
+	async function saveMemory(patch: Partial<StudioMemory>) {
+		memory = await api.saveMemory(patch);
+		memoryOpen = false;
+		status = 'Memory updated';
+	}
 </script>
 
 <svelte:head>
@@ -325,18 +441,14 @@
 </svelte:head>
 
 <main class="timeline-shell">
-	<header class="app-header">
-		<div>
-			<h1>x07 Studio</h1>
-			<p>{health.workspace_root}</p>
-		</div>
-		<div class="header-actions">
-			<button class="command-button" type="button" on:click={() => (detailsOpen = !detailsOpen)} aria-pressed={detailsOpen}>
-				Show details
-			</button>
-			<button class="command-button" type="button" on:click={refresh}>Refresh</button>
-		</div>
-	</header>
+	<Header
+		{health}
+		{syncCode}
+		{detailsOpen}
+		on:toggleDetails={() => (detailsOpen = !detailsOpen)}
+		on:refresh={refresh}
+		on:sync={mintSync}
+	/>
 
 	<section class="session-radar" aria-label="Session radar">
 		<div>
@@ -355,7 +467,14 @@
 			<span>Sync</span>
 			<strong>{syncCode?.code ?? 'not minted'}</strong>
 		</div>
+		{#if replayExport}
+			<div>
+				<span>Replay</span>
+				<strong>{replayExport.capsule_id}</strong>
+			</div>
+		{/if}
 	</section>
+	<MemoryChip ops={selected?.op_log ?? []} on:edit={() => (memoryOpen = true)} />
 
 	<div class="main-grid">
 		<Timeline
@@ -369,6 +488,8 @@
 			on:repair={(event) => repairIncident(event.detail)}
 			on:invoke={(event) => invoke(event.detail)}
 			on:realize={realize}
+			on:quorum={runQuorum}
+			on:pickProposal={(event) => pickProposal(event.detail)}
 		/>
 		<NowPanel
 			session={selected}
@@ -378,6 +499,8 @@
 			{cassettes}
 			{visualParseResult}
 			{visualEmitResult}
+			{autopilot}
+			{releaseStatus}
 			{busy}
 			on:build={build}
 			on:invoke={(event) => invoke(event.detail)}
@@ -387,6 +510,10 @@
 			on:sync={mintSync}
 			on:claimSync={(event) => claimSync(event.detail)}
 			on:quorum={runQuorum}
+			on:autopilot={startAutopilot}
+			on:pauseAutopilot={pauseAutopilot}
+			on:release={(event) => submitRelease(event.detail)}
+			on:exportReplay={exportReplay}
 			on:cassetteLoad={loadCassettes}
 			on:cassetteBranch={(event) => branchCassette(event.detail)}
 			on:visualParse={(event) => visualParse(event.detail)}
@@ -394,5 +521,11 @@
 		/>
 	</div>
 
-	<Composer {busy} on:compose={(event) => compose(event.detail.text)} on:image={(event) => uploadImage(event.detail)} />
+	<Composer
+		{busy}
+		incidentCount={incidentNotice}
+		on:compose={(event) => compose(event.detail)}
+		on:image={(event) => uploadImage(event.detail)}
+	/>
+	<MemoryDrawer {memory} open={memoryOpen} on:close={() => (memoryOpen = false)} on:save={(event) => saveMemory(event.detail)} />
 </main>

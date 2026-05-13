@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import type { SessionSnapshot, VisualKind, VisualResponse } from '$lib/studio';
+	import Canvas from './visual/Canvas.svelte';
+	import VisualNode from './visual/Node.svelte';
+	import VisualEdge from './visual/Edge.svelte';
 
 	type VisualNode = { id: string; label: string };
 	type VisualEdge = { from: string; to: string; label: string };
@@ -74,6 +77,23 @@
 			nodes: graph.nodes.filter((node) => node.id !== id),
 			edges: graph.edges.filter((edge) => edge.from !== id && edge.to !== id)
 		};
+	}
+
+	function renameNode(detail: { id: string; label: string }) {
+		graph = {
+			nodes: graph.nodes.map((node) => node.id === detail.id ? { ...node, label: detail.label } : node),
+			edges: graph.edges
+		};
+	}
+
+	function nodePosition(index: number) {
+		return { x: 24 + (index % 2) * 170, y: 24 + Math.floor(index / 2) * 92 };
+	}
+
+	function nodeCenter(id: string) {
+		const index = graph.nodes.findIndex((node) => node.id === id);
+		const pos = nodePosition(Math.max(0, index));
+		return { x: pos.x + 84, y: pos.y + 32 };
 	}
 
 	function connectSequential() {
@@ -178,14 +198,17 @@
 		</button>
 	</div>
 
-	<div class="visual-canvas" aria-label="Visual graph canvas">
-		{#each graph.nodes as node}
-			<div class="visual-node">
-				<input bind:value={node.label} aria-label={`Node ${node.id} label`} />
-				<button type="button" class="link-button" on:click={() => removeNode(node.id)}>Remove</button>
-			</div>
+	<Canvas>
+		{#each graph.edges as edge}
+			{@const from = nodeCenter(edge.from)}
+			{@const to = nodeCenter(edge.to)}
+			<VisualEdge fromX={from.x} fromY={from.y} toX={to.x} toY={to.y} label={edge.label} />
 		{/each}
-	</div>
+		{#each graph.nodes as node, index}
+			{@const pos = nodePosition(index)}
+			<VisualNode id={node.id} label={node.label} x={pos.x} y={pos.y} on:label={(event) => renameNode(event.detail)} on:remove={(event) => removeNode(event.detail)} />
+		{/each}
+	</Canvas>
 
 	{#if graph.edges.length}
 		<div class="visual-edges">

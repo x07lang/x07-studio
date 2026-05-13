@@ -95,7 +95,9 @@ fn scan_dir(dir: &Path, allowed: &HashSet<PathBuf>, hits: &mut Vec<String>) {
         for (lineno, line) in contents.lines().enumerate() {
             let trimmed = line.trim_start();
             // Comments and doc lines may discuss the contract.
-            if trimmed.starts_with("//") || trimmed.starts_with("///") || trimmed.starts_with("//!")
+            if trimmed.starts_with("//")
+                || trimmed.starts_with("///")
+                || trimmed.starts_with("//!")
                 || trimmed.starts_with('#')
                 || trimmed.starts_with('*')
             {

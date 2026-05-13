@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.sync_code@0.1.0",
+  "title": "SyncCode",
+  "type": "object",
+  "required": ["code", "expires_at", "session_id"],
+  "properties": {
+    "code": { "type": "string" },
+    "expires_at": { "type": "string" },
+    "session_id": { "type": "string" },
+    "state_blob": true
+  },
+  "additionalProperties": false
+}

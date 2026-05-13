@@ -11,6 +11,9 @@
 	} from '$lib/studio';
 	import ClarifyQuestionCard from './ClarifyQuestionCard.svelte';
 	import ResultPreview from './ResultPreview.svelte';
+	import AgentStreamCard from './AgentStreamCard.svelte';
+	import RealizePreview from './RealizePreview.svelte';
+	import QuorumRealize from './QuorumRealize.svelte';
 
 	export let turns: SessionTurn[] = [];
 	export let session: SessionSnapshot | null = null;
@@ -24,6 +27,8 @@
 		repair: string;
 		invoke: TryItRequest;
 		realize: void;
+		quorum: void;
+		pickProposal: number;
 	}>();
 
 	$: opsById = new Map((session?.op_log ?? []).map((op) => [op.id, op]));
@@ -31,6 +36,18 @@
 	function turnOps(ids: string[]): OpRecord[] {
 		return ids.map((id) => opsById.get(id)).filter((op): op is OpRecord => Boolean(op));
 	}
+
+	function implementationDone() {
+		return (session?.op_log ?? []).some(
+			(op) =>
+				(op.op === 'synthesis.template' || op.op.startsWith('agent.realize.')) &&
+				op.status === 'succeeded'
+		);
+	}
+
+	$: streamEvents = turns
+		.filter((turn): turn is Extract<SessionTurn, { kind: 'agent_stream' }> => turn.kind === 'agent_stream')
+		.map((turn) => turn.event);
 </script>
 
 <section class="timeline" aria-label="Session timeline" data-testid="timeline">
@@ -122,8 +139,11 @@
 						summary={turn.summary}
 						{tryResult}
 						{busy}
+						implementationInPlace={implementationDone()}
 						on:followup={(event) => dispatch('followup', event.detail)}
 						on:invoke={(event) => dispatch('invoke', event.detail)}
+						on:realize={() => dispatch('realize')}
+						on:quorum={() => dispatch('quorum')}
 					/>
 				{:else if turn.kind === 'incident'}
 					<header>
@@ -164,6 +184,19 @@
 					{:else}
 						<p class="hint">No file changes recorded by the write audit.</p>
 					{/if}
+					<RealizePreview events={streamEvents.filter((event) => 'agent_id' in event && event.agent_id === turn.agent_id)} />
+				{:else if turn.kind === 'agent_stream'}
+					<header>
+						<span>{turn.agent_id}</span>
+						<time>{turn.at}</time>
+					</header>
+					<AgentStreamCard event={turn.event} />
+				{:else if turn.kind === 'quorum_realize'}
+					<header>
+						<span>Realize quorum</span>
+						<time>{turn.at}</time>
+					</header>
+					<QuorumRealize round={turn.round} {busy} on:pick={(event) => dispatch('pickProposal', event.detail)} />
 				{/if}
 
 				{#if detailsOpen}

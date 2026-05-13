@@ -20,6 +20,8 @@ import {
 	type AgentProfile,
 	type AgentRunMode,
 	type AgentRunResponse,
+	type AutopilotPolicy,
+	type AutopilotResponse,
 	type ApprovalDecision,
 	type ArtifactPreviewResponse,
 	type AskAnswer,
@@ -35,10 +37,16 @@ import {
 	type IntentInputMode,
 	type IntentPacket,
 	type LadderState,
+	type LiveDiff,
 	type PlainEnglishSummary,
 	type ProviderProbeResponse,
 	type ProviderProfile,
 	type QuorumRound,
+	type PickRealizeProposalResponse,
+	type RealizeQuorumRound,
+	type ReleaseStatus,
+	type ReplayCapsule,
+	type ReplayExportResponse,
 	type RequestIntentRevisionResponse,
 	type SessionSnapshot,
 	type SessionStreamEvent,
@@ -49,6 +57,7 @@ import {
 	type TaskType,
 	type TryItRequest,
 	type TryItResult,
+	type VoiceTranscript,
 	type VisualKind,
 	type VisualResponse,
 	type RepairRunOptions,
@@ -220,7 +229,8 @@ export class StudioApi {
 		raw: string,
 		inputMode: IntentInputMode,
 		revisionNotes: string[],
-		providerProfileId?: string
+		providerProfileId?: string,
+		voiceTranscript?: VoiceTranscript | null
 	): Promise<FormalizeIntentResponse> {
 		if (!this.demoMode) {
 			try {
@@ -232,7 +242,8 @@ export class StudioApi {
 							raw,
 							input_mode: inputMode,
 							revision_notes: revisionNotes,
-							provider_profile_id: providerProfileId || null
+							provider_profile_id: providerProfileId || null,
+							voice_transcript: voiceTranscript ?? null
 						})
 					}
 				);
@@ -253,6 +264,36 @@ export class StudioApi {
 		]);
 		this.replaceDemo(next);
 		return { intent: next.intent!, op: next.op_log.at(-1)!, session: next };
+	}
+
+	async formalizeVoiceIntent(
+		session: SessionSnapshot,
+		transcript: VoiceTranscript,
+		revisionNotes: string[] = [],
+		providerProfileId?: string
+	): Promise<FormalizeIntentResponse> {
+		if (!this.demoMode) {
+			try {
+				const response = await request<FormalizeIntentResponse>(
+					`/v1/sessions/${session.session_id}/intent/voice`,
+					{
+						method: 'POST',
+						body: JSON.stringify({
+							raw: transcript.text,
+							input_mode: 'voice',
+							revision_notes: revisionNotes,
+							provider_profile_id: providerProfileId || null,
+							voice_transcript: transcript
+						})
+					}
+				);
+				this.replaceDemo(response.session);
+				return response;
+			} catch {
+				this.demoMode = true;
+			}
+		}
+		return this.formalizeIntent(session, transcript.text, 'voice', revisionNotes, providerProfileId, transcript);
 	}
 
 	async requestIntentRevision(
@@ -545,6 +586,123 @@ export class StudioApi {
 		};
 	}
 
+	async realizeQuorum(
+		session: SessionSnapshot,
+		agentIds: string[] = ['claude-code', 'openai-codex'],
+		options: { timeoutSeconds?: number } = {}
+	): Promise<RealizeQuorumRound | null> {
+		if (!this.demoMode) {
+			return await request<RealizeQuorumRound>(`/v1/sessions/${session.session_id}/realize/quorum`, {
+				method: 'POST',
+				body: JSON.stringify({
+					agent_ids: agentIds,
+					timeout_seconds: options.timeoutSeconds ?? null
+				})
+			});
+		}
+		return {
+			schema_version: 'x07.studio.realize_quorum_round@0.1.0',
+			session_id: session.session_id,
+			started_at: String(Date.now()),
+			finished_at: String(Date.now()),
+			agreed: false,
+			judge: null,
+			proposals: [
+				{
+					schema_version: 'x07.studio.realize_proposal@0.1.0',
+					agent_id: 'claude-code',
+					path: 'src/main.x07.json',
+					body: { agent: 'claude-code' },
+					digest: 'demo-claude',
+					stdout_excerpt: 'demo proposal',
+					stderr_excerpt: '',
+					status: 'ok'
+				},
+				{
+					schema_version: 'x07.studio.realize_proposal@0.1.0',
+					agent_id: 'openai-codex',
+					path: 'src/main.x07.json',
+					body: { agent: 'openai-codex' },
+					digest: 'demo-codex',
+					stdout_excerpt: 'demo proposal',
+					stderr_excerpt: '',
+					status: 'ok'
+				}
+			]
+		};
+	}
+
+	async pickRealizeProposal(
+		session: SessionSnapshot,
+		proposalIndex: number
+	): Promise<PickRealizeProposalResponse | null> {
+		if (!this.demoMode) {
+			const response = await request<PickRealizeProposalResponse>(
+				`/v1/sessions/${session.session_id}/realize/pick`,
+				{
+					method: 'POST',
+					body: JSON.stringify({ proposal_index: proposalIndex })
+				}
+			);
+			this.replaceDemo(response.session);
+			return response;
+		}
+		return null;
+	}
+
+	async startAutopilot(
+		session: SessionSnapshot,
+		policy?: Partial<AutopilotPolicy>
+	): Promise<AutopilotResponse | null> {
+		const resolvedPolicy = {
+			auto_answer_min_confidence: 0.7,
+			max_clarify_rounds: 3,
+			auto_climb_to: null,
+			allow_repair_iters: 3,
+			allow_quorum: false,
+			...policy
+		};
+		if (!this.demoMode) {
+			const response = await request<AutopilotResponse>(
+				`/v1/sessions/${session.session_id}/autopilot/start`,
+				{
+					method: 'POST',
+					body: JSON.stringify({ policy: resolvedPolicy })
+				}
+			);
+			this.replaceDemo(response.session);
+			return response;
+		}
+		let next = await this.runBuildPipeline(session, { maxRepairRounds: policy?.allow_repair_iters ?? 3 });
+		return {
+			state: {
+				schema_version: 'x07.studio.autopilot_state@0.1.0',
+				session_id: next.session_id,
+				engaged: false,
+				policy: {
+					...resolvedPolicy
+				},
+				last_decision: {
+					at: String(Date.now()),
+					stage: 'complete',
+					action: 'auto',
+					reason: 'Demo autopilot completed the build pipeline.'
+				}
+			},
+			session: next
+		};
+	}
+
+	async pauseAutopilot(session: SessionSnapshot): Promise<AutopilotResponse | null> {
+		if (this.demoMode) return null;
+		const response = await request<AutopilotResponse>(
+			`/v1/sessions/${session.session_id}/autopilot/pause`,
+			{ method: 'POST' }
+		);
+		this.replaceDemo(response.session);
+		return response;
+	}
+
 	async climbRung(session: SessionSnapshot, toRung: string): Promise<SessionSnapshot> {
 		if (!this.demoMode) {
 			const next = await request<SessionSnapshot>(`/v1/sessions/${session.session_id}/ladder/climb`, {
@@ -559,9 +717,39 @@ export class StudioApi {
 		return next;
 	}
 
+	async submitRelease(session: SessionSnapshot, rung: string): Promise<ReleaseStatus | null> {
+		if (this.demoMode) return null;
+		return await request<ReleaseStatus>(`/v1/sessions/${session.session_id}/ladder/release`, {
+			method: 'POST',
+			body: JSON.stringify({
+				schema_version: 'x07.studio.release_request@0.1.0',
+				rung,
+				environment: rung === 'team' ? 'team-staging' : rung,
+				binding_refs: []
+			})
+		});
+	}
+
+	async getReleaseStatus(
+		session: SessionSnapshot,
+		releaseId: string
+	): Promise<ReleaseStatus | null> {
+		if (this.demoMode) return null;
+		return await request<ReleaseStatus>(
+			`/v1/sessions/${session.session_id}/ladder/release/${encodeURIComponent(releaseId)}`
+		);
+	}
+
 	async scanIncidents(session: SessionSnapshot) {
 		if (!this.demoMode) {
 			return await request(`/v1/sessions/${session.session_id}/incidents/scan`, { method: 'POST' });
+		}
+		return [];
+	}
+
+	async watchIncidents(session: SessionSnapshot) {
+		if (!this.demoMode) {
+			return await request(`/v1/sessions/${session.session_id}/incidents/watch`, { method: 'POST' });
 		}
 		return [];
 	}
@@ -622,9 +810,42 @@ export class StudioApi {
 		});
 	}
 
+	async saveSyncState(code: string, stateBlob: unknown): Promise<SyncCode | null> {
+		if (this.demoMode) return null;
+		return await request<SyncCode>(`/v1/sync/sessions/${encodeURIComponent(code)}/state`, {
+			method: 'POST',
+			body: JSON.stringify({ state_blob: stateBlob })
+		});
+	}
+
 	async loadMemory(): Promise<StudioMemory | null> {
 		if (this.demoMode) return null;
 		return await request<StudioMemory>('/v1/memory');
+	}
+
+	async saveMemory(patch: Partial<StudioMemory>): Promise<StudioMemory | null> {
+		if (this.demoMode) return null;
+		return await request<StudioMemory>('/v1/memory', {
+			method: 'POST',
+			body: JSON.stringify(patch)
+		});
+	}
+
+	async exportReplay(session: SessionSnapshot): Promise<ReplayExportResponse | null> {
+		if (this.demoMode) return null;
+		return await request<ReplayExportResponse>(`/v1/sessions/${session.session_id}/replay/export`, {
+			method: 'POST'
+		});
+	}
+
+	async importReplay(capsule: ReplayCapsule): Promise<SessionSnapshot | null> {
+		if (this.demoMode) return null;
+		const session = await request<SessionSnapshot>('/v1/replay/import', {
+			method: 'POST',
+			body: JSON.stringify({ capsule })
+		});
+		this.replaceDemo(session);
+		return session;
 	}
 
 	async visualParse(
@@ -675,6 +896,24 @@ export class StudioApi {
 			try {
 				const event = JSON.parse(message.data) as SessionStreamEvent;
 				listener(event);
+			} catch {
+				// drop malformed frames; the next correct one will catch the client up
+			}
+		};
+		source.onerror = () => {
+			// EventSource auto-reconnects with the same URL; nothing to do here.
+		};
+		return () => source.close();
+	}
+
+	subscribeLiveDiffs(sessionId: string, listener: (diff: LiveDiff) => void): () => void {
+		if (this.demoMode || typeof EventSource === 'undefined') {
+			return () => undefined;
+		}
+		const source = new EventSource(`/v1/sessions/${sessionId}/diffs/live`);
+		source.onmessage = (message) => {
+			try {
+				listener(JSON.parse(message.data) as LiveDiff);
 			} catch {
 				// drop malformed frames; the next correct one will catch the client up
 			}

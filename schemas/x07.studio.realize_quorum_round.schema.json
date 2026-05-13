@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "x07.studio.realize_quorum_round@0.1.0",
+  "title": "RealizeQuorumRound",
+  "type": "object",
+  "required": ["schema_version", "session_id", "started_at", "proposals", "agreed"],
+  "properties": {
+    "schema_version": { "const": "x07.studio.realize_quorum_round@0.1.0" },
+    "session_id": { "type": "string" },
+    "started_at": { "type": "string" },
+    "finished_at": { "type": ["string", "null"] },
+    "agreed": { "type": "boolean" },
+    "judge": { "type": ["string", "null"] },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["schema_version", "agent_id", "path", "body", "digest", "status"],
+        "properties": {
+          "schema_version": { "const": "x07.studio.realize_proposal@0.1.0" },
+          "agent_id": { "type": "string" },
+          "path": { "type": "string" },
+          "body": true,
+          "digest": { "type": "string" },
+          "stdout_excerpt": { "type": "string" },
+          "stderr_excerpt": { "type": "string" },
+          "status": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

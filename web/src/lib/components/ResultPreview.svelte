@@ -5,6 +5,7 @@
 	export let summary: PlainEnglishSummary;
 	export let tryResult: TryItResult | null = null;
 	export let busy = false;
+	export let implementationInPlace = false;
 
 	let copied = false;
 	let showDetails = false;
@@ -14,6 +15,7 @@
 		followup: string;
 		invoke: TryItRequest;
 		realize: void;
+		quorum: void;
 	}>();
 
 	async function copyInvocation() {
@@ -52,14 +54,18 @@
 		<h2 data-testid="summary-headline">{summary.headline}</h2>
 	</header>
 
-	{#if summary.scaffold_only}
+	{#if summary.scaffold_only || implementationInPlace}
 		<section class="realize-cta" data-testid="realize-cta">
-			<p class="hint">
-				The spec compiled and verify passed against a placeholder body, but the
-				implementation under <code>src/</code> is still a stub. Have Claude Code
-				fill it in — Studio will rerun <code>impl.check</code> + <code>xtal.verify</code>
-				after the agent finishes and surface a fresh Verified turn.
-			</p>
+			{#if implementationInPlace && !summary.scaffold_only}
+				<p class="hint">Implementation in place from the latest synthesis / realize operation.</p>
+			{:else}
+				<p class="hint">
+					The spec compiled and verify passed against a placeholder body, but the
+					implementation under <code>src/</code> is still a stub. Have Claude Code
+					fill it in — Studio will rerun <code>impl.check</code> + <code>xtal.verify</code>
+					after the agent finishes and surface a fresh Verified turn.
+				</p>
+			{/if}
 			{#if summary.stub_paths && summary.stub_paths.length}
 				<ul class="stub-list">
 					{#each summary.stub_paths as path}
@@ -71,10 +77,19 @@
 				type="button"
 				class="command-button primary"
 				on:click={() => dispatch('realize')}
-				disabled={busy}
+				disabled={busy || implementationInPlace}
 				data-testid="realize-cta-button"
 			>
-				{busy ? 'Claude Code is implementing…' : 'Implement with Claude Code'}
+				{implementationInPlace ? 'Implementation in place' : busy ? 'Claude Code is implementing…' : 'Implement with Claude Code'}
+			</button>
+			<button
+				type="button"
+				class="command-button"
+				on:click={() => dispatch('quorum')}
+				disabled={busy || implementationInPlace}
+				data-testid="realize-quorum-button"
+			>
+				Compare both agents
 			</button>
 		</section>
 	{/if}

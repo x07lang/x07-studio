@@ -158,18 +158,35 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
             "begin",
             ["let", "n", ["bytes.len", "payload"]],
             ["let", "out", ["view.to_bytes", ["bytes.view", "payload"]]],
-            ["for", "i", 0, "n",
-                ["for", "j", 0, ["-", "n", ["+", "i", 1]],
-                    ["begin",
+            [
+                "for",
+                "i",
+                0,
+                "n",
+                [
+                    "for",
+                    "j",
+                    0,
+                    ["-", "n", ["+", "i", 1]],
+                    [
+                        "begin",
                         ["let", "a", ["bytes.get_u8", "out", "j"]],
                         ["let", "k", ["+", "j", 1]],
                         ["let", "c", ["bytes.get_u8", "out", "k"]],
-                        ["if", [">u", "a", "c"],
-                            ["begin",
+                        [
+                            "if",
+                            [">u", "a", "c"],
+                            [
+                                "begin",
                                 ["set", "out", ["bytes.set_u8", "out", "j", "c"]],
                                 ["set", "out", ["bytes.set_u8", "out", "k", "a"]],
-                                0],
-                            0]]]],
+                                0
+                            ],
+                            0
+                        ]
+                    ]
+                ]
+            ],
             "out"
         ]));
     }
@@ -178,12 +195,19 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
         return Some(json!([
             "begin",
             ["let", "n", ["bytes.len", "payload"]],
-            ["if", ["=", "n", 0],
-                ["return", ["bytes.empty"]],
-                0],
+            ["if", ["=", "n", 0], ["return", ["bytes.empty"]], 0],
             ["let", "out", ["bytes.lit", "Hello, "]],
-            ["for", "i", 0, "n",
-                ["set", "out", ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]]],
+            [
+                "for",
+                "i",
+                0,
+                "n",
+                [
+                    "set",
+                    "out",
+                    ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]
+                ]
+            ],
             ["set", "out", ["bytes.push_u8", "out", 33]],
             "out"
         ]));
@@ -193,9 +217,12 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
         // hands off to the subscription agent for the actual arithmetic.
         return Some(json!([
             "begin",
-            ["if", ["=", ["bytes.len", "payload"], 0],
+            [
+                "if",
+                ["=", ["bytes.len", "payload"], 0],
                 ["return", ["bytes.empty"]],
-                0],
+                0
+            ],
             ["view.to_bytes", ["bytes.view", "payload"]]
         ]));
     }
@@ -207,8 +234,17 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
             ["let", "n", ["bytes.len", "payload"]],
             ["let", "out", ["bytes.empty"]],
             ["set", "out", ["bytes.push_u8", "out", "n"]],
-            ["for", "i", 0, "n",
-                ["set", "out", ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]]],
+            [
+                "for",
+                "i",
+                0,
+                "n",
+                [
+                    "set",
+                    "out",
+                    ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]
+                ]
+            ],
             "out"
         ]));
     }
@@ -217,9 +253,12 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
         // ask Claude Code / Codex to fill in the real fetch loop.
         return Some(json!([
             "begin",
-            ["if", ["=", ["bytes.len", "payload"], 0],
+            [
+                "if",
+                ["=", ["bytes.len", "payload"], 0],
                 ["return", ["bytes.empty"]],
-                0],
+                0
+            ],
             ["view.to_bytes", ["bytes.view", "payload"]]
         ]));
     }
@@ -236,21 +275,15 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
     }
     if lowered.contains("incident") {
         // Incident handler: pass-through.
-        return Some(json!([
-            "view.to_bytes", ["bytes.view", "payload"]
-        ]));
+        return Some(json!(["view.to_bytes", ["bytes.view", "payload"]]));
     }
     if lowered.contains("gateway") || lowered.contains("service") {
         // Service handler floor: echo the request payload.
-        return Some(json!([
-            "view.to_bytes", ["bytes.view", "payload"]
-        ]));
+        return Some(json!(["view.to_bytes", ["bytes.view", "payload"]]));
     }
     // Catch-all for `app.main` / `app.cli`: pass-through.
     if lowered.starts_with("app.") {
-        return Some(json!([
-            "view.to_bytes", ["bytes.view", "payload"]
-        ]));
+        return Some(json!(["view.to_bytes", ["bytes.view", "payload"]]));
     }
     None
 }

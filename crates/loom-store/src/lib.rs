@@ -384,6 +384,7 @@ mod tests {
             code: "A1B2C3D4".to_string(),
             expires_at: "9999999999".to_string(),
             session_id: Uuid::nil(),
+            state_blob: None,
         };
 
         store

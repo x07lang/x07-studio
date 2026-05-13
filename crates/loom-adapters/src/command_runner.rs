@@ -298,13 +298,21 @@ async fn wait_with_streaming_output(
             chunk = chunk_rx.recv() => {
                 if let Some(chunk) = chunk {
                     match chunk {
-                        StreamChunk::Stdout(bytes) => stdout.extend(bytes),
-                        StreamChunk::Stderr(bytes) => stderr.extend(bytes),
+                        StreamChunk::Stdout(bytes) => {
+                            stdout.extend(&bytes);
+                            let _ = updates.send(CommandStreamUpdate {
+                                stdout: String::from_utf8_lossy(&bytes).to_string(),
+                                stderr: String::new(),
+                            });
+                        }
+                        StreamChunk::Stderr(bytes) => {
+                            stderr.extend(&bytes);
+                            let _ = updates.send(CommandStreamUpdate {
+                                stdout: String::new(),
+                                stderr: String::from_utf8_lossy(&bytes).to_string(),
+                            });
+                        }
                     }
-                    let _ = updates.send(CommandStreamUpdate {
-                        stdout: String::from_utf8_lossy(&stdout).to_string(),
-                        stderr: String::from_utf8_lossy(&stderr).to_string(),
-                    });
                 }
             }
             status = child.wait() => {

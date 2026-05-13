@@ -17,7 +17,7 @@ intent -> spec -> realization -> verify -> repair -> trust/certify -> ingest -> 
 
 - **Real x07 CLI execution** using the documented machine-output contract (`--json`, `--report-out`, `--quiet-json`) through the canonical x07 / x07-wasm / x07lp CLIs.
 - **Binding-first lifecycle commands** for XTAL authoring, test generation, implementation sync, verify/repair/certify, incident ingest/improve, x07 core checks, x07-wasm web/device/workload/deploy lanes, and selected platform query/control reads.
-- **Unified Timeline browser surface** over typed session turns, plain-English verified summaries, runnable `x07 run` invocations, follow-up refinements, Try-It execution, shipping ladder state, incident repair, cassette replay branches, persistent sync codes, local memory, live quorum, and visual graph editors.
+- **Unified Timeline browser surface** over typed session turns, plain-English verified summaries, runnable `x07 run` invocations, follow-up refinements, Try-It execution, shipping ladder state, incident repair, cassette replay branches, persistent sync codes with state blobs, local memory, live agent stream events, realize quorum comparison, autopilot, release submission, replay export, and visual canvas editors.
 - **Genpack-aware agent handoffs** that embed local x07 service archetype schema and grammar for service-shaped intents before Codex or Claude drafts artifacts.
 - **Real MCP transport** for both:
   - HTTP JSON-RPC over `/mcp` with `initialize`, `notifications/initialized`, session headers, and `tools/list` / `tools/call`
@@ -44,6 +44,9 @@ x07-studio/
 │   ├── XTAL_WORKFLOW_FINDINGS.md
 │   ├── COMMAND_BINDINGS.md
 │   ├── CYCLE_2_NOTES.md
+│   ├── CYCLE_3_NOTES.md
+│   ├── STREAM_EVENTS.md
+│   ├── AUTOPILOT.md
 │   └── design/xtal-studio-ui-mockup.png
 ├── web/
 │   └── src/

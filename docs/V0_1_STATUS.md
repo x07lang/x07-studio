@@ -78,8 +78,9 @@
 - plain-English verified summaries now include a runnable `x07 run ... --stdin` invocation and deterministic follow-up refinements
 - Try-It endpoint and browser panel invoke verified artifacts with text, file, base64, or argv input and return proof citations next to output
 - shipping ladder projects local preview, shareable, team, and production rungs and records trust commands when climbing
-- incident scan and repair endpoints ingest `.x07-wasm/incidents`, `target/xtal/violations`, and `target/xtal/ingest` bundles into the Timeline
+- incident scan, watch, and repair endpoints ingest `.x07-wasm/incidents`, `target/xtal/violations`, and `target/xtal/ingest` bundles into the Timeline
 - cassette history, replaying branch creation, project Q&A with citations, persistent daemon sync codes, append-only local memory, live parallel intent quorum rounds, image witnesses, visual parse/emit endpoints, and visual graph editors are wired through Loom and the browser shell
+- Cycle 3 live realization surfaces are wired: normalized Claude Code / Codex stream events, persisted live diffs, side-by-side realize quorum, proposal picking, autopilot decisions, voice composer transcripts, sync state blobs, memory preference application, x07lp release status, replay capsule export/import, and canvas-based visual graph editing
 
 ## Still intentionally thin in v0.1
 
@@ -90,6 +91,7 @@
 - no compiler-backed persisted proof cache yet
 - no persisted audio capture or local STT model selection yet
 - visual graph editors cover the current `streampipe`, `statemachine`, and `tasks` graph exchange layer; future domain-specific editors can build on the same API
+- replay capsule signing is currently a deterministic local manifest digest, not an external key-management system
 
 ## Validation done here
 

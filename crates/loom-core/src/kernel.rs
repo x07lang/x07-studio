@@ -22,13 +22,15 @@ use loom_adapters::mcp::{boxed_client, McpClient};
 use loom_adapters::providers::{ProviderIntentPolishRequest, ProviderProber};
 use loom_adapters::x07_cli::{validate_xtal_verify_vars, CliAdapter, ExecutedBinding, InputSpec};
 use loom_store::FsStore;
-use loom_types::api::{AgentRunMode, ApprovalDecision, IntentInputMode};
+use loom_types::api::{AgentRunMode, ApprovalDecision, AutopilotPolicy, IntentInputMode};
 use loom_types::api::{
-    AnswerCitation, ArtifactPreviewResponse, AskAnswer, AskRequest, CassetteEntry, DocPreviewEntry,
-    DocPreviewResponse, LadderState, PatchsetPreview, PatchsetTargetPreview, ProofCitation,
-    QuorumAgent, QuorumDiff, QuorumRound, SessionTurn, StudioMemory, SyncCode, TryItInputKind,
-    TryItRequest, TryItResult, TurnQuestion, VisualResponse, WorkspacePathState,
-    WorkspaceRadarResponse,
+    AnswerCitation, ArtifactPreviewResponse, AskAnswer, AskRequest, AutopilotResponse,
+    AutopilotState, CassetteEntry, DocPreviewEntry, DocPreviewResponse, LadderState, LiveDiff,
+    PatchsetPreview, PatchsetTargetPreview, PickRealizeProposalResponse, ProofCitation,
+    QuorumAgent, QuorumDiff, QuorumRound, RealizeProposal, RealizeQuorumRound, ReleaseRequest,
+    ReleaseStatus, ReplayCapsule, ReplayExportResponse, SessionTurn, StudioMemory, SyncCode,
+    TryItInputKind, TryItRequest, TryItResult, TurnQuestion, VisualResponse, VoiceTranscript,
+    WorkspacePathState, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{
     AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
@@ -48,7 +50,7 @@ pub struct WorkspaceKernel {
     cli: CliAdapter,
     providers: ProviderProber,
     mcp_connections: HashMap<String, Box<dyn McpClient>>,
-    sync_codes: HashMap<String, (Uuid, String)>,
+    sync_codes: HashMap<String, SyncCode>,
     event_bus: Arc<SessionEventBus>,
 }
 
@@ -99,12 +101,7 @@ impl WorkspaceKernel {
             .load_sync_codes()?
             .into_iter()
             .filter(|code| !sync_code_is_expired(&code.expires_at))
-            .map(|code| {
-                (
-                    code.code.to_ascii_uppercase(),
-                    (code.session_id, code.expires_at),
-                )
-            })
+            .map(|code| (code.code.to_ascii_uppercase(), code))
             .collect();
         Ok(Self {
             root,
@@ -354,6 +351,111 @@ impl WorkspaceKernel {
         .await
     }
 
+    pub async fn release_for_rung(
+        &mut self,
+        session_id: Uuid,
+        request: ReleaseRequest,
+    ) -> anyhow::Result<ReleaseStatus> {
+        self.model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let environment = if request.environment.trim().is_empty() {
+            release_environment_for_rung(&request.rung).to_string()
+        } else {
+            request.environment.clone()
+        };
+        let mut op_ids = Vec::new();
+        let mut status = OperationStatus::Succeeded;
+        let mut message = String::new();
+        let mut deployment_id = None;
+        for binding in release_bindings_for_rung(&request.rung) {
+            let vars = release_vars(
+                self.root.as_path(),
+                &request.rung,
+                &environment,
+                deployment_id.as_deref(),
+            );
+            let snapshot = self.run_binding(session_id, binding, &vars).await?;
+            if deployment_id.is_none() {
+                deployment_id = platform_deployment_id_from_snapshot(&snapshot);
+            }
+            if let Some(op) = snapshot.op_log.last() {
+                op_ids.push(op.id);
+                message = op
+                    .notes
+                    .clone()
+                    .or_else(|| op.stdout.clone())
+                    .unwrap_or_else(|| binding.to_string());
+                if op.status == OperationStatus::Failed {
+                    status = OperationStatus::Failed;
+                    break;
+                }
+            }
+        }
+        let release_id = deployment_id
+            .unwrap_or_else(|| format!("{}-{}", request.rung, Uuid::new_v4().simple()));
+        let release_status = ReleaseStatus {
+            schema_version: "x07.studio.release_status@0.1.0".to_string(),
+            release_id: release_id.clone(),
+            rung: request.rung,
+            environment,
+            status,
+            op_ids,
+            message,
+        };
+        self.append_op(session_id, release_status_op(session_id, &release_status))?;
+        Ok(release_status)
+    }
+
+    pub fn release_status(
+        &self,
+        session_id: Uuid,
+        release_id: &str,
+    ) -> anyhow::Result<ReleaseStatus> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        session
+            .op_log
+            .iter()
+            .rev()
+            .filter(|op| op.op == "ladder.release.status")
+            .find_map(|op| {
+                op.report_json
+                    .as_ref()
+                    .and_then(|value| value.get("release_status"))
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<ReleaseStatus>(value).ok())
+                    .filter(|status| status.release_id == release_id)
+            })
+            .ok_or_else(|| anyhow!("unknown release `{release_id}`"))
+    }
+
+    pub fn export_replay_capsule(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<ReplayExportResponse> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let response = crate::replay::export_capsule(self.root.as_path(), &session)?;
+        self.append_op(session_id, replay_export_op(session_id, &response))?;
+        Ok(response)
+    }
+
+    pub fn import_replay_capsule(
+        &mut self,
+        capsule: ReplayCapsule,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let session = crate::replay::import_capsule(self.root.as_path(), &capsule)?;
+        self.model.load_session(session.clone());
+        self.store.save_session(&session)?;
+        Ok(session)
+    }
+
     pub fn ingest_incidents(&mut self, session_id: Uuid) -> anyhow::Result<Vec<OpRecord>> {
         self.model
             .get_session(session_id)
@@ -589,33 +691,63 @@ impl WorkspaceKernel {
             .collect::<String>()
             .to_ascii_uppercase();
         let expires_at = sync_expires_at();
-        self.sync_codes
-            .insert(code.clone(), (session_id, expires_at.clone()));
+        self.sync_codes.insert(
+            code.clone(),
+            SyncCode {
+                code: code.clone(),
+                expires_at: expires_at.clone(),
+                session_id,
+                state_blob: None,
+            },
+        );
         self.save_sync_codes_state()?;
         Ok(SyncCode {
             code,
             expires_at,
             session_id,
+            state_blob: None,
         })
     }
 
-    pub fn claim_sync_code(&mut self, code: &str) -> anyhow::Result<SessionSnapshot> {
+    pub fn claim_sync_code(
+        &mut self,
+        code: &str,
+    ) -> anyhow::Result<(SessionSnapshot, Option<serde_json::Value>)> {
         self.prune_expired_sync_codes()?;
         let normalized = code.trim().to_ascii_uppercase();
-        let (session_id, _) = self
+        let sync = self
             .sync_codes
             .get(&normalized)
             .ok_or_else(|| anyhow!("unknown sync code `{code}`"))?;
-        self.model
-            .get_session(*session_id)
+        let session = self
+            .model
+            .get_session(sync.session_id)
             .cloned()
-            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))
+            .ok_or_else(|| anyhow!("unknown session `{}`", sync.session_id))?;
+        Ok((session, sync.state_blob.clone()))
+    }
+
+    pub fn save_sync_state(
+        &mut self,
+        code: &str,
+        state_blob: serde_json::Value,
+    ) -> anyhow::Result<SyncCode> {
+        self.prune_expired_sync_codes()?;
+        let normalized = code.trim().to_ascii_uppercase();
+        let sync = self
+            .sync_codes
+            .get_mut(&normalized)
+            .ok_or_else(|| anyhow!("unknown sync code `{code}`"))?;
+        sync.state_blob = Some(state_blob);
+        let out = sync.clone();
+        self.save_sync_codes_state()?;
+        Ok(out)
     }
 
     fn prune_expired_sync_codes(&mut self) -> anyhow::Result<()> {
         let before = self.sync_codes.len();
         self.sync_codes
-            .retain(|_, (_, expires_at)| !sync_code_is_expired(expires_at));
+            .retain(|_, sync| !sync_code_is_expired(&sync.expires_at));
         if self.sync_codes.len() != before {
             self.save_sync_codes_state()?;
         }
@@ -626,10 +758,11 @@ impl WorkspaceKernel {
         let mut codes = self
             .sync_codes
             .iter()
-            .map(|(code, (session_id, expires_at))| SyncCode {
+            .map(|(code, sync)| SyncCode {
                 code: code.clone(),
-                expires_at: expires_at.clone(),
-                session_id: *session_id,
+                expires_at: sync.expires_at.clone(),
+                session_id: sync.session_id,
+                state_blob: sync.state_blob.clone(),
             })
             .collect::<Vec<_>>();
         codes.sort_by(|left, right| left.code.cmp(&right.code));
@@ -643,6 +776,181 @@ impl WorkspaceKernel {
     pub fn save_memory(&self, memory: &StudioMemory) -> anyhow::Result<StudioMemory> {
         self.store.save_memory(memory)?;
         Ok(memory.clone())
+    }
+
+    pub async fn run_autopilot(
+        &mut self,
+        session_id: Uuid,
+        policy: AutopilotPolicy,
+    ) -> anyhow::Result<AutopilotResponse> {
+        let mut last_decision = None;
+        for _ in 0..20 {
+            let session = self
+                .model
+                .get_session(session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+            let plan = crate::autopilot::decide_next(&session, &policy);
+            last_decision = Some(plan.decision.clone());
+            self.append_op(
+                session_id,
+                autopilot_decision_op(session_id, &plan.decision),
+            )?;
+            match plan.action {
+                crate::autopilot::AutopilotAction::AutoClarify => {
+                    let prepared = self
+                        .start_intent_clarify(session_id, "claude-code", Some(90))
+                        .await?;
+                    let run_op_id = prepared.op.id;
+                    let agent_id = prepared.handoff.agent_id.clone();
+                    if let Some(command) = prepared.command {
+                        let (tx, mut rx) = mpsc::unbounded_channel();
+                        let execution =
+                            WorkspaceKernel::execute_agent_command_streaming(command, tx);
+                        tokio::pin!(execution);
+                        loop {
+                            tokio::select! {
+                                update = rx.recv() => {
+                                    if let Some(update) = update {
+                                        self.complete_agent_run(update)?;
+                                    }
+                                }
+                                final_op = &mut execution => {
+                                    self.complete_agent_run(final_op.clone())?;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    self.ingest_clarify_questions(session_id, &agent_id, run_op_id)?;
+                }
+                crate::autopilot::AutopilotAction::AutoAnswer => {
+                    let answers = autopilot_answers(&session, &policy);
+                    if answers.is_empty() {
+                        break;
+                    }
+                    self.apply_intent_answers(session_id, &answers)?;
+                }
+                crate::autopilot::AutopilotAction::AutoApproveSpec => {
+                    self.autopilot_approve_spec(session_id)?;
+                }
+                crate::autopilot::AutopilotAction::AutoBuild => {
+                    let vars = BTreeMap::from([("allow_os_world".to_string(), "true".to_string())]);
+                    self.run_build_pipeline(session_id, &vars, policy.allow_repair_iters)
+                        .await?;
+                }
+                crate::autopilot::AutopilotAction::AutoRealize => {
+                    if policy.allow_quorum {
+                        let round = self
+                            .run_realize_quorum(
+                                session_id,
+                                &["claude-code".to_string(), "openai-codex".to_string()],
+                                Some(240),
+                            )
+                            .await?;
+                        if round.agreed && !round.proposals.is_empty() {
+                            self.pick_quorum_proposal(session_id, round, 0).await?;
+                        }
+                    } else {
+                        let prepared = self
+                            .start_intent_realize(session_id, "claude-code", Some(240))
+                            .await?;
+                        let run_op_id = prepared.op.id;
+                        if let Some(command) = prepared.command {
+                            let (tx, mut rx) = mpsc::unbounded_channel();
+                            let execution =
+                                WorkspaceKernel::execute_agent_command_streaming(command, tx);
+                            tokio::pin!(execution);
+                            loop {
+                                tokio::select! {
+                                    update = rx.recv() => {
+                                        if let Some(update) = update {
+                                            self.complete_agent_run(update)?;
+                                        }
+                                    }
+                                    final_op = &mut execution => {
+                                        self.complete_agent_run(final_op.clone())?;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        self.finalize_realize(session_id, run_op_id).await?;
+                    }
+                }
+                crate::autopilot::AutopilotAction::AutoClimb => {
+                    if let Some(target) = policy.auto_climb_to.as_deref() {
+                        self.climb_rung(session_id, target).await?;
+                        self.append_op(session_id, autopilot_ladder_op(session_id, target))?;
+                    }
+                }
+                crate::autopilot::AutopilotAction::Pause => break,
+            }
+        }
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(AutopilotResponse {
+            state: AutopilotState {
+                schema_version: "x07.studio.autopilot_state@0.1.0".to_string(),
+                session_id,
+                engaged: false,
+                policy,
+                last_decision,
+            },
+            session,
+        })
+    }
+
+    pub fn pause_autopilot(
+        &mut self,
+        session_id: Uuid,
+        policy: AutopilotPolicy,
+    ) -> anyhow::Result<AutopilotResponse> {
+        let decision = loom_types::api::AutopilotDecision {
+            at: now_string(),
+            stage: "pause".to_string(),
+            action: "user".to_string(),
+            reason: "Autopilot paused by user.".to_string(),
+        };
+        self.append_op(session_id, autopilot_decision_op(session_id, &decision))?;
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        Ok(AutopilotResponse {
+            state: AutopilotState {
+                schema_version: "x07.studio.autopilot_state@0.1.0".to_string(),
+                session_id,
+                engaged: false,
+                policy,
+                last_decision: Some(decision),
+            },
+            session,
+        })
+    }
+
+    fn autopilot_approve_spec(&mut self, session_id: Uuid) -> anyhow::Result<()> {
+        let phase = self
+            .model
+            .get_session(session_id)
+            .map(|session| session.phase.clone())
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if phase == SessionPhase::IntentReady {
+            self.dispatch_event(session_id, SessionEvent::DraftSpec)?;
+        }
+        let phase = self
+            .model
+            .get_session(session_id)
+            .map(|session| session.phase.clone())
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        if matches!(phase, SessionPhase::SpecDraft | SessionPhase::SpecReview) {
+            self.dispatch_event(session_id, SessionEvent::ApproveSpec)?;
+        }
+        Ok(())
     }
 
     pub fn save_intent_image(
@@ -925,6 +1233,16 @@ impl WorkspaceKernel {
         task_type: TaskType,
     ) -> anyhow::Result<SessionSnapshot> {
         let session_id = self.model.create_session(title, task_type);
+        if let Ok(memory) = self.store.load_memory() {
+            if let Some(session) = self.model.get_session_mut(session_id) {
+                let applied = crate::memory::apply_preferences(&memory, session);
+                if !applied.is_empty() {
+                    session
+                        .op_log
+                        .push(preferences_apply_op(session_id, &applied));
+                }
+            }
+        }
         let snapshot = self
             .model
             .get_session(session_id)
@@ -1002,7 +1320,7 @@ impl WorkspaceKernel {
         if let Some(session) = self.model.get_session_mut(session_id) {
             session.revision_notes = revision_notes.to_vec();
         }
-        let op = intent_formalize_op(session_id, &intent, input_mode, revision_notes, None);
+        let op = intent_formalize_op(session_id, &intent, input_mode, revision_notes, None, None);
         let snapshot =
             self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op.clone())))?;
         self.store.save_session(&snapshot)?;
@@ -1039,6 +1357,7 @@ impl WorkspaceKernel {
         input_mode: IntentInputMode,
         revision_notes: &[String],
         provider_profile_id: Option<&str>,
+        voice_transcript: Option<&VoiceTranscript>,
     ) -> anyhow::Result<(IntentPacket, OpRecord, SessionSnapshot)> {
         let session = self
             .model
@@ -1081,6 +1400,7 @@ impl WorkspaceKernel {
             input_mode,
             revision_notes,
             provider_report,
+            voice_transcript,
         );
         let snapshot =
             self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op.clone())))?;
@@ -2040,8 +2360,8 @@ impl WorkspaceKernel {
         // Verified turn honest: the user gets a working Try-It floor even
         // when their subscription agent failed, and no metered API call
         // is ever made.
-        let still_stub_after_agent = !crate::summarize::scan_stub_modules(self.root.as_path())
-            .is_empty();
+        let still_stub_after_agent =
+            !crate::summarize::scan_stub_modules(self.root.as_path()).is_empty();
         if still_stub_after_agent {
             if let Some(template_op) = self.try_template_synthesis(&current)? {
                 if let Some(path) = template_op
@@ -2094,6 +2414,181 @@ impl WorkspaceKernel {
             }
         }
         Ok((current, verified_ok, wrote_files))
+    }
+
+    pub async fn run_realize_quorum(
+        &mut self,
+        session_id: Uuid,
+        agent_ids: &[String],
+        timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<RealizeQuorumRound> {
+        let started_at = now_string();
+        let round_id = Uuid::new_v4().to_string();
+        let genpack = Self::resolve_genpack_context(self.genpack_context_seed(session_id)?).await;
+        let mut commands = Vec::new();
+        for agent_id in agent_ids {
+            let stage = self
+                .root
+                .join(".x07/studio/quorum")
+                .join(&round_id)
+                .join(agent_id);
+            prepare_quorum_stage(self.root.as_path(), stage.as_path())?;
+            let prepared = self.start_intent_realize_with_genpack(
+                session_id,
+                agent_id,
+                timeout_seconds,
+                genpack.as_ref(),
+            )?;
+            if let Some(mut command) = prepared.command {
+                let prompt_content = fs::read_to_string(command.prompt_path.as_std_path())
+                    .with_context(|| format!("read realize prompt at {}", command.prompt_path))?;
+                let (program, args) = crate::synthesis::build_realize_subscription_command(
+                    &command.agent.id,
+                    stage.as_path(),
+                    &prompt_content,
+                );
+                command.cwd = stage;
+                command.program = program;
+                command.args = args;
+                commands.push((agent_id.clone(), command));
+            }
+        }
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut join_set = tokio::task::JoinSet::new();
+        for (agent_id, command) in commands {
+            let updates = tx.clone();
+            join_set.spawn(async move {
+                let stage = command.cwd.clone();
+                let final_op =
+                    WorkspaceKernel::execute_agent_command_streaming(command, updates).await;
+                (agent_id, stage, final_op)
+            });
+        }
+        drop(tx);
+
+        let mut proposals = Vec::new();
+        let mut running = join_set.len();
+        let mut updates_open = true;
+        while running > 0 || updates_open {
+            tokio::select! {
+                update = rx.recv(), if updates_open => {
+                    if let Some(update) = update {
+                        self.complete_agent_run(update)?;
+                    } else {
+                        updates_open = false;
+                    }
+                }
+                joined = join_set.join_next(), if running > 0 => {
+                    running -= 1;
+                    let (agent_id, stage, final_op) = joined
+                        .ok_or_else(|| anyhow!("quorum task ended without result"))?
+                        .map_err(|error| anyhow!("quorum task join failed: {error}"))?;
+                    self.complete_agent_run(final_op.clone())?;
+                    proposals.push(realize_proposal_from_stage(&agent_id, stage.as_path(), &final_op)?);
+                }
+            }
+        }
+        proposals.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
+        let agreed = proposals.len() >= 2
+            && proposals
+                .iter()
+                .filter(|proposal| proposal.status == "ok")
+                .map(|proposal| proposal.digest.as_str())
+                .collect::<BTreeSet<_>>()
+                .len()
+                == 1;
+        let round = RealizeQuorumRound {
+            schema_version: "x07.studio.realize_quorum_round@0.1.0".to_string(),
+            session_id,
+            started_at,
+            finished_at: Some(now_string()),
+            proposals,
+            agreed,
+            judge: None,
+        };
+        self.append_op(session_id, realize_quorum_op(session_id, &round))?;
+        Ok(round)
+    }
+
+    pub async fn pick_latest_quorum_proposal(
+        &mut self,
+        session_id: Uuid,
+        proposal_index: usize,
+    ) -> anyhow::Result<PickRealizeProposalResponse> {
+        let round = self
+            .model
+            .get_session(session_id)
+            .and_then(|session| {
+                session.op_log.iter().rev().find_map(|op| {
+                    if op.op == "agent.event.quorum.realize" {
+                        op.report_json
+                            .as_ref()
+                            .and_then(|value| value.get("round"))
+                            .cloned()
+                            .and_then(|value| {
+                                serde_json::from_value::<RealizeQuorumRound>(value).ok()
+                            })
+                    } else {
+                        None
+                    }
+                })
+            })
+            .ok_or_else(|| anyhow!("session `{session_id}` has no realize quorum round"))?;
+        let session = self
+            .pick_quorum_proposal(session_id, round.clone(), proposal_index)
+            .await?;
+        Ok(PickRealizeProposalResponse { round, session })
+    }
+
+    async fn pick_quorum_proposal(
+        &mut self,
+        session_id: Uuid,
+        round: RealizeQuorumRound,
+        proposal_index: usize,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let proposal = round
+            .proposals
+            .get(proposal_index)
+            .ok_or_else(|| anyhow!("unknown quorum proposal index `{proposal_index}`"))?;
+        if proposal.status != "ok" {
+            bail!(
+                "proposal from `{}` is not applicable: {}",
+                proposal.agent_id,
+                proposal.status
+            );
+        }
+        let target = self.root.join(&proposal.path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent.as_std_path())?;
+        }
+        fs::write(
+            target.as_std_path(),
+            serde_json::to_vec_pretty(&proposal.body)?,
+        )?;
+        self.append_op(
+            session_id,
+            realize_quorum_pick_op(session_id, proposal_index, proposal),
+        )?;
+        let after_check = self
+            .run_binding(session_id, "impl.check", &BTreeMap::new())
+            .await?;
+        if last_op_failed(&after_check) {
+            return Ok(after_check);
+        }
+        let vars = BTreeMap::from([("allow_os_world".to_string(), "true".to_string())]);
+        let after_verify = self.run_binding(session_id, "xtal.verify", &vars).await?;
+        if last_op_failed(&after_verify) {
+            return Ok(after_verify);
+        }
+        let current = if let Some(summary_op) =
+            build_plain_english_summary_with_root(&after_verify, Some(self.root.as_path()))
+        {
+            self.append_op(session_id, summary_op)?
+        } else {
+            after_verify
+        };
+        Ok(current)
     }
 
     pub fn genpack_context_seed(
@@ -2418,6 +2913,9 @@ impl WorkspaceKernel {
                 chunk = chunk_rx.recv() => {
                     if let Some(chunk) = chunk {
                         let _ = updates.send(agent_streaming_op(&command, chunk.clone()));
+                        for event in agent_stream_event_ops(&command, &chunk) {
+                            let _ = updates.send(event);
+                        }
                         for event in agent_semantic_ops(&command, &chunk, &mut semantic_events) {
                             let _ = updates.send(event);
                         }
@@ -2748,6 +3246,357 @@ fn incident_detected_op(session_id: Uuid, incident: &crate::incidents::IncidentB
             "kind": incident.kind,
             "summary": incident.summary,
             "at": incident.at,
+        })),
+        report_path: None,
+    }
+}
+
+fn preferences_apply_op(session_id: Uuid, applied: &crate::memory::AppliedPreferences) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "preferences.apply".to_string(),
+        backend: "studio-memory".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "memory".to_string(),
+            "apply-preferences".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec!["~/.x07-studio/memory.jsonl".to_string()],
+        notes: Some("Applied Studio memory preferences to the new session.".to_string()),
+        stdout: Some(format!(
+            "agent={:?}, trust_profile={:?}, naming_style={:?}, verbosity={:?}",
+            applied.default_agent,
+            applied.default_trust_profile,
+            applied.naming_style,
+            applied.verbosity
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.preferences_apply@0.1.0",
+            "default_agent": applied.default_agent,
+            "default_trust_profile": applied.default_trust_profile,
+            "naming_style": applied.naming_style,
+            "verbosity": applied.verbosity,
+        })),
+        report_path: None,
+    }
+}
+
+fn autopilot_answers(
+    session: &SessionSnapshot,
+    policy: &AutopilotPolicy,
+) -> Vec<loom_types::api::IntentAnswer> {
+    session
+        .intent
+        .as_ref()
+        .into_iter()
+        .flat_map(|intent| intent.clarification_history.iter())
+        .filter(|turn| turn.answer_text.is_none())
+        .filter_map(|turn| {
+            let question = TurnQuestion {
+                id: turn.question_id.clone(),
+                text: turn.question_text.clone(),
+                witness_kind: turn.witness_kind.clone(),
+                options: turn.options.clone(),
+                answer: None,
+            };
+            if crate::autopilot::score_clarify_question(&question)
+                < policy.auto_answer_min_confidence
+            {
+                return None;
+            }
+            let text = turn
+                .options
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "Use the safest default.".to_string());
+            Some(loom_types::api::IntentAnswer {
+                question_id: turn.question_id.clone(),
+                text,
+                witness_kind: Some(turn.witness_kind.clone()),
+            })
+        })
+        .collect()
+}
+
+fn autopilot_decision_op(
+    session_id: Uuid,
+    decision: &loom_types::api::AutopilotDecision,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("autopilot.decision.{}", decision.stage),
+        backend: "studio-autopilot".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "autopilot".to_string(),
+            decision.stage.clone(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: Vec::new(),
+        notes: Some(decision.reason.clone()),
+        stdout: Some(format!("{}: {}", decision.action, decision.reason)),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.autopilot_decision@0.1.0",
+            "decision": decision,
+        })),
+        report_path: None,
+    }
+}
+
+fn autopilot_ladder_op(session_id: Uuid, rung: &str) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("autopilot.ladder.{rung}"),
+        backend: "studio-autopilot".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "autopilot".to_string(),
+            "ladder".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: Vec::new(),
+        notes: Some(format!("Autopilot climbed to `{rung}`.")),
+        stdout: Some(rung.to_string()),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.autopilot_ladder@0.1.0",
+            "rung": rung,
+        })),
+        report_path: None,
+    }
+}
+
+fn prepare_quorum_stage(root: &Utf8Path, stage: &Utf8Path) -> anyhow::Result<()> {
+    if stage.exists() {
+        fs::remove_dir_all(stage.as_std_path())?;
+    }
+    fs::create_dir_all(stage.as_std_path())?;
+    for file in ["x07.json", "x07.lock.json", "AGENT.md", "README.md"] {
+        let source = root.join(file);
+        if source.is_file() {
+            fs::copy(source.as_std_path(), stage.join(file).as_std_path())?;
+        }
+    }
+    for dir in ["spec", "src", "tests", "arch", "gen"] {
+        let source = root.join(dir);
+        if source.is_dir() {
+            copy_dir(source.as_path(), stage.join(dir).as_path())?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir(source: &Utf8Path, target: &Utf8Path) -> anyhow::Result<()> {
+    fs::create_dir_all(target.as_std_path())?;
+    for entry in fs::read_dir(source.as_std_path())? {
+        let entry = entry?;
+        let path = Utf8PathBuf::from_path_buf(entry.path())
+            .map_err(|path| anyhow!("non-utf8 path in quorum stage copy: {path:?}"))?;
+        let destination = target.join(entry.file_name().to_string_lossy().as_ref());
+        if path.is_dir() {
+            copy_dir(path.as_path(), destination.as_path())?;
+        } else if path.is_file() {
+            fs::copy(path.as_std_path(), destination.as_std_path())?;
+        }
+    }
+    Ok(())
+}
+
+fn realize_proposal_from_stage(
+    agent_id: &str,
+    stage: &Utf8Path,
+    final_op: &OpRecord,
+) -> anyhow::Result<RealizeProposal> {
+    let Some(path) = first_src_json(stage)? else {
+        return Ok(RealizeProposal {
+            schema_version: "x07.studio.realize_proposal@0.1.0".to_string(),
+            agent_id: agent_id.to_string(),
+            path: "src/".to_string(),
+            body: serde_json::Value::Null,
+            digest: String::new(),
+            stdout_excerpt: excerpt(final_op.stdout.as_deref().unwrap_or_default(), 2048),
+            stderr_excerpt: excerpt(final_op.stderr.as_deref().unwrap_or_default(), 2048),
+            status: if final_op.status == OperationStatus::Failed {
+                "spawn_fail".to_string()
+            } else {
+                "no_write".to_string()
+            },
+        });
+    };
+    let raw = fs::read(path.as_std_path())?;
+    let body = serde_json::from_slice::<serde_json::Value>(&raw)?;
+    let relative = path
+        .strip_prefix(stage)
+        .map(|path| path.to_string())
+        .unwrap_or_else(|_| path.to_string());
+    Ok(RealizeProposal {
+        schema_version: "x07.studio.realize_proposal@0.1.0".to_string(),
+        agent_id: agent_id.to_string(),
+        path: relative,
+        digest: sha256_hex(&raw),
+        body,
+        stdout_excerpt: excerpt(final_op.stdout.as_deref().unwrap_or_default(), 2048),
+        stderr_excerpt: excerpt(final_op.stderr.as_deref().unwrap_or_default(), 2048),
+        status: if final_op.status == OperationStatus::Succeeded {
+            "ok".to_string()
+        } else {
+            "spawn_fail".to_string()
+        },
+    })
+}
+
+fn first_src_json(stage: &Utf8Path) -> anyhow::Result<Option<Utf8PathBuf>> {
+    let src = stage.join("src");
+    let mut files = Vec::new();
+    collect_json_files(src.as_path(), &mut files)?;
+    files.sort();
+    Ok(files.into_iter().next())
+}
+
+fn collect_json_files(dir: &Utf8Path, out: &mut Vec<Utf8PathBuf>) -> anyhow::Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir.as_std_path())? {
+        let entry = entry?;
+        let path = Utf8PathBuf::from_path_buf(entry.path())
+            .map_err(|path| anyhow!("non-utf8 path in quorum proposal: {path:?}"))?;
+        if path.is_dir() {
+            collect_json_files(path.as_path(), out)?;
+        } else if path.is_file() && path.extension() == Some("json") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn excerpt(text: &str, max_chars: usize) -> String {
+    truncate_chars(text.trim(), max_chars)
+}
+
+fn realize_quorum_op(session_id: Uuid, round: &RealizeQuorumRound) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "agent.event.quorum.realize".to_string(),
+        backend: "studio-quorum".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "realize".to_string(),
+            "quorum".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: if round
+            .proposals
+            .iter()
+            .any(|proposal| proposal.status == "ok")
+        {
+            OperationStatus::Succeeded
+        } else {
+            OperationStatus::Failed
+        },
+        exit_code: Some(
+            if round
+                .proposals
+                .iter()
+                .any(|proposal| proposal.status == "ok")
+            {
+                0
+            } else {
+                1
+            },
+        ),
+        artifacts: round
+            .proposals
+            .iter()
+            .filter(|proposal| proposal.path.starts_with("src/"))
+            .map(|proposal| proposal.path.clone())
+            .collect(),
+        notes: Some(format!(
+            "Compared {} supervised realization proposal(s).",
+            round.proposals.len()
+        )),
+        stdout: Some(format!(
+            "agreed={}, proposals={}",
+            round.agreed,
+            round.proposals.len()
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.realize_quorum_record@0.1.0",
+            "round": round,
+        })),
+        report_path: None,
+    }
+}
+
+fn realize_quorum_pick_op(
+    session_id: Uuid,
+    proposal_index: usize,
+    proposal: &RealizeProposal,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "agent.event.quorum.pick".to_string(),
+        backend: "studio-quorum".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "realize".to_string(),
+            "pick".to_string(),
+            proposal_index.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![proposal.path.clone()],
+        notes: Some(format!(
+            "Applied realization proposal {} from {}.",
+            proposal_index, proposal.agent_id
+        )),
+        stdout: Some(proposal.digest.clone()),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.realize_quorum_pick@0.1.0",
+            "proposal_index": proposal_index,
+            "proposal": proposal,
         })),
         report_path: None,
     }
@@ -3965,6 +4814,7 @@ fn intent_formalize_op(
     input_mode: IntentInputMode,
     revision_notes: &[String],
     provider_polish: Option<serde_json::Value>,
+    voice_transcript: Option<&VoiceTranscript>,
 ) -> OpRecord {
     let now = now_string();
     let source = match input_mode {
@@ -4025,6 +4875,7 @@ fn intent_formalize_op(
             "revision_notes": revision_notes,
             "intent": intent,
             "provider_polish": provider_polish,
+            "voice_transcript": voice_transcript,
         })),
         report_path: None,
     }
@@ -4330,6 +5181,107 @@ fn prepared_directory_op(session_id: Uuid, directory: &str) -> OpRecord {
             "schema_version": "x07.studio.directory_prepare@0.1.0",
             "ok": true,
             "directory": directory,
+        })),
+        report_path: None,
+    }
+}
+
+fn release_environment_for_rung(rung: &str) -> &'static str {
+    match rung {
+        "team" => "team-staging",
+        "production" => "production",
+        _ => "shareable",
+    }
+}
+
+fn release_bindings_for_rung(rung: &str) -> &'static [&'static str] {
+    match rung {
+        "production" | "team" => &[
+            "lp.deploy.accept.local",
+            "lp.deploy.run.local.metrics",
+            "lp.deploy.status.local",
+        ],
+        _ => &["lp.deploy.accept.local", "lp.deploy.status.local"],
+    }
+}
+
+fn release_vars(
+    root: &Utf8Path,
+    rung: &str,
+    environment: &str,
+    deployment_id: Option<&str>,
+) -> BTreeMap<String, String> {
+    let mut vars = atlas_platform_delivery_vars(root, deployment_id);
+    vars.insert("rung".to_string(), rung.to_string());
+    vars.insert("environment".to_string(), environment.to_string());
+    vars
+}
+
+fn release_status_op(session_id: Uuid, status: &ReleaseStatus) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "ladder.release.status".to_string(),
+        backend: "x07lp".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "ladder".to_string(),
+            "release".to_string(),
+            status.rung.clone(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: status.status.clone(),
+        exit_code: Some(if status.status == OperationStatus::Succeeded {
+            0
+        } else {
+            1
+        }),
+        artifacts: Vec::new(),
+        notes: Some(status.message.clone()),
+        stdout: Some(status.release_id.clone()),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.release_status_record@0.1.0",
+            "release_status": status,
+        })),
+        report_path: None,
+    }
+}
+
+fn replay_export_op(session_id: Uuid, response: &ReplayExportResponse) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "replay.export".to_string(),
+        backend: "studio-replay".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "replay".to_string(),
+            "export".to_string(),
+            response.capsule_id.clone(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: OperationStatus::Succeeded,
+        exit_code: Some(0),
+        artifacts: vec![response.artifact.clone()],
+        notes: Some("Exported a deterministic Studio replay capsule.".to_string()),
+        stdout: Some(response.capsule_id.clone()),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.replay_export_record@0.1.0",
+            "capsule_id": response.capsule_id,
+            "artifact": response.artifact,
+            "signature": response.signature,
         })),
         report_path: None,
     }
@@ -5879,6 +6831,123 @@ fn agent_streaming_op(command: &AgentCommandPlan, update: CommandStreamUpdate) -
     }
 }
 
+fn agent_stream_event_ops(
+    command: &AgentCommandPlan,
+    update: &CommandStreamUpdate,
+) -> Vec<OpRecord> {
+    update
+        .stdout
+        .lines()
+        .filter_map(|line| crate::stream_events::parse_stream_line(&command.agent.id, line))
+        .map(|event| agent_stream_event_op(command, event))
+        .collect()
+}
+
+fn agent_stream_event_op(
+    command: &AgentCommandPlan,
+    event: loom_types::api::AgentStreamEvent,
+) -> OpRecord {
+    let now = now_string();
+    let kind = crate::stream_events::event_kind(&event);
+    let mut artifacts = vec![command.prompt_path.to_string()];
+    let live_diff_artifact = crate::stream_events::event_live_diff(&event).and_then(|diff| {
+        persist_live_diff(command.cwd.as_path(), command.session_id, &event, &diff).ok()
+    });
+    if let Some(path) = &live_diff_artifact {
+        artifacts.push(path.clone());
+    }
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id: command.session_id,
+        op: format!("agent.event.{}.stream_{}", command.agent.id, kind),
+        backend: "agent-stream".to_string(),
+        command: vec![
+            "observe-agent-stream".to_string(),
+            command.agent.id.clone(),
+            kind.to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: match &event {
+            loom_types::api::AgentStreamEvent::Done { exit_code, .. } if *exit_code != 0 => {
+                OperationStatus::Failed
+            }
+            _ => OperationStatus::Succeeded,
+        },
+        exit_code: match &event {
+            loom_types::api::AgentStreamEvent::Done { exit_code, .. } => Some(*exit_code),
+            _ => Some(0),
+        },
+        artifacts,
+        notes: Some(format!(
+            "Normalized {} stream event from {}.",
+            kind, command.agent.label
+        )),
+        stdout: Some(stream_event_summary(&event)),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.agent_stream_event_record@0.1.0",
+            "kind": kind,
+            "agent_id": command.agent.id,
+            "event": event,
+            "live_diff_artifact": live_diff_artifact,
+            "handoff": command.handoff,
+        })),
+        report_path: None,
+    }
+}
+
+fn stream_event_summary(event: &loom_types::api::AgentStreamEvent) -> String {
+    match event {
+        loom_types::api::AgentStreamEvent::Reasoning { text, .. } => text.clone(),
+        loom_types::api::AgentStreamEvent::ToolUse { tool, input, .. } => {
+            format!("tool use: {tool} {input}")
+        }
+        loom_types::api::AgentStreamEvent::ToolResult {
+            tool,
+            success,
+            snippet,
+            ..
+        } => format!(
+            "tool result: {tool} {}{}",
+            if *success { "ok" } else { "failed" },
+            snippet
+                .as_ref()
+                .map(|text| format!(" - {text}"))
+                .unwrap_or_default()
+        ),
+        loom_types::api::AgentStreamEvent::AgentMessage { text, .. } => text.clone(),
+        loom_types::api::AgentStreamEvent::Done { exit_code, .. } => {
+            format!("agent stream finished with exit code {exit_code}")
+        }
+    }
+}
+
+fn persist_live_diff(
+    root: &Utf8Path,
+    session_id: Uuid,
+    event: &loom_types::api::AgentStreamEvent,
+    diff: &LiveDiff,
+) -> anyhow::Result<String> {
+    let event_id = match event {
+        loom_types::api::AgentStreamEvent::Reasoning { id, .. }
+        | loom_types::api::AgentStreamEvent::ToolUse { id, .. }
+        | loom_types::api::AgentStreamEvent::ToolResult { id, .. }
+        | loom_types::api::AgentStreamEvent::AgentMessage { id, .. }
+        | loom_types::api::AgentStreamEvent::Done { id, .. } => *id,
+    };
+    let relative = format!(".x07/studio/diffs/{session_id}/{event_id}.json");
+    let path = root.join(&relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent.as_std_path())?;
+    }
+    fs::write(path.as_std_path(), serde_json::to_vec_pretty(diff)?)?;
+    Ok(relative)
+}
+
 #[derive(Debug, Default)]
 struct AgentSemanticEventState {
     seen: BTreeSet<String>,
@@ -6276,6 +7345,12 @@ fn agent_execution_op(
             stderr.push_str(&message);
         }
     }
+    let failed = execution.exit_code != Some(0) || has_write_violations;
+    let stderr_snippet = if failed && !stderr.trim().is_empty() {
+        Some(truncate_chars(stderr.trim(), 2048))
+    } else {
+        None
+    };
     OpRecord {
         schema_version: "x07.studio.op_record@0.1.0".to_string(),
         id: command.op_id,
@@ -6287,17 +7362,27 @@ fn agent_execution_op(
             .collect(),
         started_at: execution.started_at,
         finished_at: Some(execution.finished_at),
-        status: if execution.exit_code == Some(0) && !has_write_violations {
-            OperationStatus::Succeeded
-        } else {
+        status: if failed {
             OperationStatus::Failed
+        } else {
+            OperationStatus::Succeeded
         },
         exit_code: execution.exit_code,
         artifacts: vec![command.prompt_path.to_string()],
         notes: Some(if has_write_violations {
-            format!(
+            let mut note = format!(
                 "Ran {} under Studio supervision; write-root audit found unapproved writes.",
                 command.agent.label
+            );
+            if let Some(snippet) = &stderr_snippet {
+                note.push_str("\n\nstderr:\n");
+                note.push_str(snippet);
+            }
+            note
+        } else if let Some(snippet) = &stderr_snippet {
+            format!(
+                "Ran {} under Studio supervision; command failed.\n\nstderr:\n{}",
+                command.agent.label, snippet
             )
         } else {
             format!("Ran {} under Studio supervision.", command.agent.label)
@@ -6348,6 +7433,14 @@ fn agent_spawn_error_op(command: AgentCommandPlan, error: anyhow::Error) -> OpRe
         })),
         report_path: None,
     }
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut out = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        out.push_str("\n...");
+    }
+    out
 }
 
 fn op_record_from_binding(
@@ -6762,6 +7855,7 @@ mod tests {
                 IntentInputMode::Text,
                 &[],
                 Some("test-polisher"),
+                None,
             )
             .await
             .expect("formalize intent with provider");
@@ -7000,7 +8094,7 @@ mod tests {
             .claim_sync_code(&code.code)
             .expect("claim sync code");
 
-        assert_eq!(claimed.session_id, session.session_id);
+        assert_eq!(claimed.0.session_id, session.session_id);
         assert!(root.join(".x07/studio/sync_codes.json").exists());
         std::fs::remove_dir_all(root).ok();
     }

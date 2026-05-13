@@ -5,8 +5,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::artifacts::{
-    AgentHandoff, AgentProfile, IntentPacket, OpRecord, PlainEnglishSummary, ProviderProbeReport,
-    ProviderProfile, TaskType, WitnessKind,
+    AgentHandoff, AgentProfile, IntentPacket, OpRecord, OperationStatus, PlainEnglishSummary,
+    ProviderProbeReport, ProviderProfile, TaskType, WitnessKind,
 };
 use crate::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use crate::ops::SessionEvent;
@@ -135,6 +135,19 @@ pub enum SessionTurn {
         wrote_files: Vec<String>,
         op_ids: Vec<Uuid>,
     },
+    AgentStream {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        event: AgentStreamEvent,
+        op_id: Uuid,
+    },
+    QuorumRealize {
+        id: Uuid,
+        at: String,
+        round: RealizeQuorumRound,
+        op_ids: Vec<Uuid>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +192,8 @@ pub struct FormalizeIntentRequest {
     pub input_mode: IntentInputMode,
     pub revision_notes: Vec<String>,
     pub provider_profile_id: Option<String>,
+    #[serde(default)]
+    pub voice_transcript: Option<VoiceTranscript>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +278,93 @@ pub struct RealizeResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentStreamEvent {
+    Reasoning {
+        id: Uuid,
+        at: String,
+        text: String,
+    },
+    ToolUse {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        tool: String,
+        input: Value,
+    },
+    ToolResult {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        tool: String,
+        success: bool,
+        snippet: Option<String>,
+    },
+    AgentMessage {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        text: String,
+    },
+    Done {
+        id: Uuid,
+        at: String,
+        agent_id: String,
+        exit_code: i32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveDiff {
+    pub schema_version: String,
+    pub path: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub unified_diff: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealizeQuorumRound {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub proposals: Vec<RealizeProposal>,
+    pub agreed: bool,
+    pub judge: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealizeProposal {
+    pub schema_version: String,
+    pub agent_id: String,
+    pub path: String,
+    pub body: Value,
+    pub digest: String,
+    pub stdout_excerpt: String,
+    pub stderr_excerpt: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealizeQuorumRequest {
+    pub agent_ids: Vec<String>,
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PickRealizeProposalRequest {
+    pub proposal_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PickRealizeProposalResponse {
+    pub round: RealizeQuorumRound,
+    pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunBindingRequest {
     pub binding_id: String,
     pub vars: BTreeMap<String, String>,
@@ -327,6 +429,26 @@ pub struct ClimbRungRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseRequest {
+    pub schema_version: String,
+    pub rung: String,
+    pub environment: String,
+    #[serde(default)]
+    pub binding_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseStatus {
+    pub schema_version: String,
+    pub release_id: String,
+    pub rung: String,
+    pub environment: String,
+    pub status: OperationStatus,
+    pub op_ids: Vec<Uuid>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuorumRound {
     pub round: u32,
     pub agents: Vec<QuorumAgent>,
@@ -386,11 +508,13 @@ pub struct AnswerCitation {
     pub locator: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SyncCode {
     pub code: String,
     pub expires_at: String,
     pub session_id: Uuid,
+    #[serde(default)]
+    pub state_blob: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -425,6 +549,103 @@ pub struct MemoryReusableSpec {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncClaimResponse {
     pub session: SessionSnapshot,
+    #[serde(default)]
+    pub state_blob: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStateRequest {
+    pub state_blob: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncSession {
+    pub schema_version: String,
+    pub code: String,
+    pub expires_at: String,
+    pub session_id: Uuid,
+    pub state_blob: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceTranscript {
+    pub schema_version: String,
+    pub text: String,
+    pub confidence: f32,
+    pub language: String,
+    pub recorded_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutopilotState {
+    pub schema_version: String,
+    pub session_id: Uuid,
+    pub engaged: bool,
+    pub policy: AutopilotPolicy,
+    pub last_decision: Option<AutopilotDecision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutopilotPolicy {
+    pub auto_answer_min_confidence: f32,
+    pub max_clarify_rounds: u32,
+    pub auto_climb_to: Option<String>,
+    pub allow_repair_iters: u32,
+    pub allow_quorum: bool,
+}
+
+impl Default for AutopilotPolicy {
+    fn default() -> Self {
+        Self {
+            auto_answer_min_confidence: 0.7,
+            max_clarify_rounds: 3,
+            auto_climb_to: None,
+            allow_repair_iters: 3,
+            allow_quorum: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutopilotDecision {
+    pub at: String,
+    pub stage: String,
+    pub action: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AutopilotStartRequest {
+    #[serde(default)]
+    pub policy: Option<AutopilotPolicy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutopilotResponse {
+    pub state: AutopilotState,
+    pub session: SessionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayCapsule {
+    pub schema_version: String,
+    pub capsule_id: String,
+    pub session: SessionSnapshot,
+    pub manifest: Value,
+    pub signature: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayExportResponse {
+    pub capsule_id: String,
+    pub artifact: String,
+    pub signature: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayImportRequest {
+    pub capsule: ReplayCapsule,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
