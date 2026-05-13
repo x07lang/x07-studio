@@ -1365,18 +1365,21 @@ impl WorkspaceKernel {
                     false
                 }
                 crate::autopilot::AutopilotAction::AutoBuild => {
-                    let mut k = kernel.lock().await;
                     let vars = BTreeMap::from([(
                         "allow_os_world".to_string(),
                         "true".to_string(),
                     )]);
-                    k.run_build_pipeline(session_id, &vars, policy.allow_repair_iters)
-                        .await?;
+                    Self::run_build_pipeline_yielding(
+                        &kernel,
+                        session_id,
+                        &vars,
+                        policy.allow_repair_iters,
+                    )
+                    .await?;
                     false
                 }
                 crate::autopilot::AutopilotAction::AutoRealize => {
-                    let mut k = kernel.lock().await;
-                    k.run_role_pipeline(session_id, &policy).await?;
+                    Self::run_role_pipeline_yielding(&kernel, session_id, &policy).await?;
                     false
                 }
                 crate::autopilot::AutopilotAction::AutoClimb => {
@@ -2076,12 +2079,457 @@ impl WorkspaceKernel {
         vars: &BTreeMap<String, String>,
     ) -> anyhow::Result<SessionSnapshot> {
         let executed = self.cli.execute(binding_id, vars).await?;
-        let op = op_record_from_binding(session_id, binding_id, executed);
+        self.complete_run_binding(session_id, binding_id, executed)
+    }
 
+    /// Yielding variant of [`run_binding`] used by `run_autopilot_yielding`'s
+    /// AutoBuild / AutoRealize paths. The subprocess `.await` runs with no
+    /// kernel mutex held — `cli` is cloned from a brief read-lock first, the
+    /// CLI invocation does its work, then a brief write-lock dispatches the
+    /// resulting OpRecord. See F3 in `docs/STRESS_PASS_FINDINGS.md`.
+    pub async fn run_binding_yielding(
+        kernel: &Arc<tokio::sync::Mutex<Self>>,
+        session_id: Uuid,
+        binding_id: &str,
+        vars: &BTreeMap<String, String>,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let cli = {
+            let k = kernel.lock().await;
+            k.cli.clone()
+        };
+        let executed = cli.execute(binding_id, vars).await?;
+        let mut k = kernel.lock().await;
+        k.complete_run_binding(session_id, binding_id, executed)
+    }
+
+    fn complete_run_binding(
+        &mut self,
+        session_id: Uuid,
+        binding_id: &str,
+        executed: loom_adapters::x07_cli::ExecutedBinding,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let op = op_record_from_binding(session_id, binding_id, executed);
         let snapshot =
             self.dispatch_with_publish(session_id, SessionEvent::AppendOp(Box::new(op)))?;
         self.store.save_session(&snapshot)?;
         Ok(snapshot)
+    }
+
+    /// Yielding mirror of [`run_xtal_workflow_with_vars`]. Every `run_binding`
+    /// call drops the kernel mutex around the underlying `x07` CLI subprocess
+    /// so HTTP requests / SSE pumps can interleave. State writes still take
+    /// the lock for their (sub-millisecond) duration.
+    pub async fn run_xtal_workflow_with_vars_yielding(
+        kernel: &Arc<tokio::sync::Mutex<Self>>,
+        session_id: Uuid,
+        run_vars: &BTreeMap<String, String>,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let verify_vars = checked_xtal_verify_run_vars(run_vars)?;
+        let (session, root) = {
+            let k = kernel.lock().await;
+            let session = k
+                .model
+                .get_session(session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+            (session, k.root.clone())
+        };
+        if !matches!(
+            session.phase,
+            SessionPhase::SpecApproved | SessionPhase::RealizationProposed
+        ) {
+            return Err(anyhow!(
+                "session `{session_id}` must have an approved spec before running XTAL workflow"
+            ));
+        }
+        let intent = session
+            .intent
+            .as_ref()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
+        let template = workflow_template_from_intent(intent);
+        let mut vars = xtal_workflow_vars_from_intent(intent);
+        vars.extend(verify_vars);
+
+        if matches!(intent.source, IntentSource::Incident { .. }) {
+            // Incident workflow is internal; fall back to the &mut self version.
+            let mut k = kernel.lock().await;
+            return k.run_incident_improve_workflow(session_id, intent, &vars).await;
+        }
+
+        if !root.join("x07.json").exists() {
+            let snapshot = if let Some(example_path) = template.example_path() {
+                let mut k = kernel.lock().await;
+                k.seed_example_project(session_id, template, example_path)?
+            } else {
+                Self::run_binding_yielding(
+                    kernel,
+                    session_id,
+                    "project.init.xtal-pure",
+                    &BTreeMap::new(),
+                )
+                .await?
+            };
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        }
+
+        if template != WorkflowTemplate::XtalPure {
+            let mut k = kernel.lock().await;
+            return k
+                .run_seeded_template_workflow(session_id, template, &vars)
+                .await;
+        }
+
+        if should_scaffold_spec(root.as_path(), &vars) {
+            let snapshot =
+                Self::run_binding_yielding(kernel, session_id, "spec.scaffold", &vars).await?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        } else {
+            let input = vars
+                .get("input")
+                .cloned()
+                .unwrap_or_else(|| "spec/app.main.x07spec.json".to_string());
+            let mut k = kernel.lock().await;
+            k.append_op(session_id, existing_spec_op(session_id, &input))?;
+        }
+
+        for binding_id in ["spec.check", "tests.gen.write"] {
+            let snapshot =
+                Self::run_binding_yielding(kernel, session_id, binding_id, &vars).await?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        }
+
+        {
+            let mut k = kernel.lock().await;
+            let current = k
+                .model
+                .get_session(session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+            if current.phase == SessionPhase::SpecApproved {
+                k.dispatch_event(session_id, SessionEvent::ProposeRealization)?;
+            }
+        }
+
+        for binding_id in ["impl.sync.write", "impl.check"] {
+            let snapshot =
+                Self::run_binding_yielding(kernel, session_id, binding_id, &vars).await?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        }
+
+        {
+            let mut k = kernel.lock().await;
+            let current = k
+                .model
+                .get_session(session_id)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+            if current.phase == SessionPhase::RealizationProposed {
+                k.dispatch_event(session_id, SessionEvent::AcceptRealization)?;
+            }
+        }
+
+        let verified =
+            Self::run_binding_yielding(kernel, session_id, "xtal.verify", &vars).await?;
+        let event = if last_op_failed(&verified) {
+            SessionEvent::VerificationFailed
+        } else {
+            SessionEvent::VerificationPassed
+        };
+        let mut k = kernel.lock().await;
+        k.dispatch_event(session_id, event)
+    }
+
+    /// Yielding mirror of [`run_build_pipeline`]. Uses
+    /// `run_xtal_workflow_with_vars_yielding` plus per-binding yielding
+    /// repair-loop calls so concurrent HTTP requests are serviced between
+    /// every `x07` CLI invocation.
+    pub async fn run_build_pipeline_yielding(
+        kernel: &Arc<tokio::sync::Mutex<Self>>,
+        session_id: Uuid,
+        run_vars: &BTreeMap<String, String>,
+        max_repair_rounds: u32,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let max_repair_rounds = max_repair_rounds.clamp(0, 5);
+        {
+            let mut k = kernel.lock().await;
+            k.append_op(session_id, build_stage_op(session_id, "start", 0))?;
+        }
+        let mut build_vars = run_vars.clone();
+        build_vars
+            .entry("allow_os_world".to_string())
+            .or_insert_with(|| "true".to_string());
+        let snapshot =
+            Self::run_xtal_workflow_with_vars_yielding(kernel, session_id, &build_vars).await?;
+        let mut current = snapshot;
+        let mut round: u32 = 0;
+        let mut ensured_manifest = false;
+        while current.phase == SessionPhase::RepairEligible && round < max_repair_rounds {
+            round += 1;
+            {
+                let mut k = kernel.lock().await;
+                k.append_op(session_id, build_stage_op(session_id, "repair", round))?;
+            }
+            if !ensured_manifest {
+                let mut k = kernel.lock().await;
+                k.ensure_xtal_manifest_for_build(session_id)?;
+                ensured_manifest = true;
+            }
+            let mut repair_vars = build_vars.clone();
+            repair_vars.insert("repair_strategy".to_string(), "semantic_only".to_string());
+            repair_vars.insert("repair_write".to_string(), "true".to_string());
+            let after_repair =
+                Self::run_binding_yielding(kernel, session_id, "xtal.repair", &repair_vars).await?;
+            if last_op_failed(&after_repair) {
+                current = after_repair;
+                break;
+            }
+            {
+                let mut k = kernel.lock().await;
+                k.dispatch_event(session_id, SessionEvent::RepairSpecPreserving)?;
+            }
+            let after_verify =
+                Self::run_binding_yielding(kernel, session_id, "xtal.verify", &build_vars).await?;
+            let event = if last_op_failed(&after_verify) {
+                SessionEvent::VerificationFailed
+            } else {
+                SessionEvent::VerificationPassed
+            };
+            let mut k = kernel.lock().await;
+            current = k.dispatch_event(session_id, event)?;
+        }
+        let final_stage = match current.phase {
+            SessionPhase::TrustReview | SessionPhase::CertifyRunning | SessionPhase::Certified => {
+                "done"
+            }
+            _ => "needs_help",
+        };
+        {
+            let mut k = kernel.lock().await;
+            k.append_op(session_id, build_stage_op(session_id, final_stage, round))?;
+        }
+        // Auto-template-synthesis floor (matches the &mut self version).
+        if final_stage == "done" {
+            let stub_pre = {
+                let k = kernel.lock().await;
+                crate::summarize::scan_stub_modules(k.root.as_path())
+            };
+            if !stub_pre.is_empty() {
+                let template_op = {
+                    let k = kernel.lock().await;
+                    k.try_template_synthesis(&current)?
+                };
+                if let Some(op) = template_op {
+                    {
+                        let mut k = kernel.lock().await;
+                        k.append_op(session_id, op)?;
+                    }
+                    let _ = Self::run_binding_yielding(
+                        kernel,
+                        session_id,
+                        "impl.check",
+                        &BTreeMap::new(),
+                    )
+                    .await;
+                    let _ = Self::run_binding_yielding(
+                        kernel,
+                        session_id,
+                        "xtal.verify",
+                        &build_vars,
+                    )
+                    .await;
+                    let k = kernel.lock().await;
+                    current = k
+                        .model
+                        .get_session(session_id)
+                        .cloned()
+                        .unwrap_or(current);
+                }
+            }
+            // Emit the summary op (parity with the &mut self version).
+            let mut k = kernel.lock().await;
+            let summary_op = match build_plain_english_summary_with_root(
+                &current,
+                Some(k.root.as_path()),
+            ) {
+                Some(op) => op,
+                None => return Ok(current),
+            };
+            current = k.append_op(session_id, summary_op)?;
+            drop(k);
+            // Lint runs through the existing helper; lock briefly to call it.
+            let _ = {
+                let mut k = kernel.lock().await;
+                k.lint_report(session_id).await
+            };
+            if let Some(snapshot) = {
+                let k = kernel.lock().await;
+                k.model.get_session(session_id).cloned()
+            } {
+                current = snapshot;
+            }
+        }
+        Ok(current)
+    }
+
+    /// Yielding mirror of [`run_role_pipeline`]. Releases the kernel mutex
+    /// around each `x07` CLI subprocess (via `run_binding_yielding`) and
+    /// around the realize agent subprocess (via the same
+    /// `tokio::select!` lock-per-event pattern that `run_intent_clarify`
+    /// uses on the daemon side).
+    pub async fn run_role_pipeline_yielding(
+        kernel: &Arc<tokio::sync::Mutex<Self>>,
+        session_id: Uuid,
+        _policy: &AutopilotPolicy,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let (pipeline, agents, overrides, preferences) = {
+            let k = kernel.lock().await;
+            let memory = k.store.load_memory().unwrap_or_else(|_| StudioMemory {
+                preferences: Default::default(),
+                role_preferences: Some(RolePreferences::default()),
+                recent_projects: Vec::new(),
+                reusable_specs: Vec::new(),
+            });
+            let preferences = memory.role_preferences.clone();
+            let pipeline = crate::roles::default_routing(preferences.as_ref());
+            let agents = k.list_agent_profiles()?;
+            let overrides = k.load_role_overrides(session_id)?;
+            (pipeline, agents, overrides, preferences)
+        };
+        let coder_id = crate::roles::resolve_actor(
+            AgentRole::Coder,
+            &agents,
+            &overrides,
+            preferences.as_ref(),
+        )
+        .unwrap_or_else(|| "openai-codex".to_string());
+        let reviewer_id = crate::roles::select_reviewer(
+            Some(coder_id.as_str()),
+            &agents,
+            &overrides,
+            preferences.as_ref(),
+        )
+        .unwrap_or_else(|| "baseline-review".to_string());
+
+        {
+            let mut k = kernel.lock().await;
+            k.append_op(session_id, role_pipeline_op(session_id, &pipeline, "started"))?;
+            k.append_op(
+                session_id,
+                pipeline_stage_op(
+                    session_id,
+                    AgentRole::Architect,
+                    "confirm_spec",
+                    "Spec is already approved; architect lane confirmed the contract boundary.",
+                ),
+            )?;
+        }
+
+        let writer_budget = pipeline
+            .stages
+            .iter()
+            .find(|stage| stage.action == "write_impl")
+            .and_then(|stage| stage.budget.as_ref())
+            .and_then(|budget| budget.wall_clock_ms)
+            .map(|ms| (ms / 1_000).max(1));
+
+        let prepared = {
+            let mut k = kernel.lock().await;
+            k.start_intent_realize(session_id, &coder_id, writer_budget).await?
+        };
+        let run_op_id = prepared.op.id;
+        Self::execute_prepared_agent_run_yielding(kernel, prepared).await?;
+        let (mut current, ok, _) = {
+            let mut k = kernel.lock().await;
+            k.finalize_realize(session_id, run_op_id).await?
+        };
+        if !ok {
+            let mut k = kernel.lock().await;
+            k.append_op(
+                session_id,
+                pipeline_budget_or_pause_op(
+                    session_id,
+                    "impl",
+                    pipeline
+                        .stages
+                        .iter()
+                        .find(|stage| stage.action == "write_impl")
+                        .and_then(|stage| stage.budget.clone()),
+                    "Implementation did not reach verified evidence.",
+                ),
+            )?;
+            current = k.model.get_session(session_id).cloned().unwrap_or(current);
+            return Ok(current);
+        }
+
+        for round_idx in 1..=pipeline.max_review_rounds {
+            let review = crate::review::baseline_review(&current, &reviewer_id, round_idx);
+            {
+                let mut k = kernel.lock().await;
+                k.append_op(session_id, review_round_op(session_id, &review))?;
+            }
+            if review.verdict == "accept" {
+                let mut k = kernel.lock().await;
+                k.append_op(session_id, role_pipeline_op(session_id, &pipeline, "accepted"))?;
+                break;
+            }
+            if review.verdict == "block" || round_idx == pipeline.max_review_rounds {
+                let mut k = kernel.lock().await;
+                k.append_op(session_id, role_pipeline_op(session_id, &pipeline, "paused"))?;
+                break;
+            }
+            let prepared = {
+                let mut k = kernel.lock().await;
+                k.start_intent_realize(session_id, &coder_id, writer_budget).await?
+            };
+            let run_op_id = prepared.op.id;
+            Self::execute_prepared_agent_run_yielding(kernel, prepared).await?;
+            let (next, _, _) = {
+                let mut k = kernel.lock().await;
+                k.finalize_realize(session_id, run_op_id).await?
+            };
+            current = next;
+        }
+
+        let k = kernel.lock().await;
+        Ok(k.model.get_session(session_id).cloned().unwrap_or(current))
+    }
+
+    /// Yielding mirror of [`execute_prepared_agent_run`]. The agent subprocess
+    /// runs with the kernel mutex released; per-event completes acquire the
+    /// lock briefly and release.
+    async fn execute_prepared_agent_run_yielding(
+        kernel: &Arc<tokio::sync::Mutex<Self>>,
+        prepared: PreparedAgentRun,
+    ) -> anyhow::Result<()> {
+        if let Some(command) = prepared.command {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let execution = WorkspaceKernel::execute_agent_command_streaming(command, tx);
+            tokio::pin!(execution);
+            loop {
+                tokio::select! {
+                    update = rx.recv() => {
+                        if let Some(update) = update {
+                            let mut k = kernel.lock().await;
+                            k.complete_agent_run(update)?;
+                        }
+                    }
+                    final_op = &mut execution => {
+                        let mut k = kernel.lock().await;
+                        k.complete_agent_run(final_op.clone())?;
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn run_xtal_workflow(&mut self, session_id: Uuid) -> anyhow::Result<SessionSnapshot> {
