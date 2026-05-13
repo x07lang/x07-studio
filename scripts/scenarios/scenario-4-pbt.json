@@ -1,0 +1,19 @@
+{
+  "id": "scenario-4-pbt",
+  "goal": "Real x07 test --pbt finds a counterexample; user clicks 'Lock as regression'; real x07 fix --from-pbt writes a regression test.",
+  "recipe_id": "checksum-fast-smoke",
+  "intent_override": "Build a 32-bit checksum that handles zero-length input correctly. Property: checksum(empty) == 0; checksum(a+b) is deterministic.",
+  "expected_flow": [
+    "PBT panel 'Run PBT' clicked after verify",
+    "Real x07 test --pbt --json runs ~50 properties; finds 1+ counterexamples on zero-length edge case",
+    "PBT panel shows the shrunk counterexample with repro_id",
+    "Click 'Lock as regression test' -> real x07 fix --from-pbt <repro> --write",
+    "New regression test appears under tests/regress/",
+    "Re-verify includes the new regression"
+  ],
+  "success_criteria": [
+    "Real PBT counterexample reproduces in the panel (shrunk input visible)",
+    "Regression test file written under tests/regress/",
+    "Subsequent verify includes the new regression test"
+  ]
+}

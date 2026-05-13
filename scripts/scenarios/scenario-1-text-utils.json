@@ -1,0 +1,31 @@
+{
+  "id": "scenario-1-text-utils",
+  "goal": "Real-toolchain baseline: drive the canonical text-utils recipe end-to-end against real claude / codex / x07. Document every divergence from the fake walkthroughs.",
+  "recipe_id": "text-core-text-utils",
+  "expected_flow": [
+    "Recipe click creates session + fires intent.formalize",
+    "Autopilot engaged; real claude runs intent.clarify",
+    "Up to 3 questions surface; autopilot auto-answers high-confidence ones",
+    "Spec scaffold + x07 xtal verify",
+    "Scaffold detected → real codex writes impl",
+    "Re-verify passes against the new impl",
+    "Real x07 lint emits 0..N diagnostics",
+    "Reviewer pass (claude) accepts or revises",
+    "Verified turn surfaces with scaffold_only=false and real proof coverage",
+    "TrustCard shows real worlds + real % proof coverage"
+  ],
+  "success_criteria": [
+    "Verified turn carries scaffold_only=false",
+    "Trust posture proof coverage is real (not the canned 87)",
+    "Wall clock < 5 minutes",
+    "No 500s, no 404s in network log",
+    "Both claude and codex appear in transcripts as the real CLIs"
+  ],
+  "watch_for": [
+    "claude CLI rate limit -> autopilot pauses",
+    "codex CLI auth missing -> realize fails",
+    "x07 xtal verify fails on the scaffold for a reason the fake never produces",
+    "stream-json parser chokes on a real event variant",
+    "Trust posture endpoint times out because real x07 trust report is slow"
+  ]
+}

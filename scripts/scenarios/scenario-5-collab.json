@@ -1,0 +1,24 @@
+{
+  "id": "scenario-5-collab",
+  "goal": "Real Architect + Coder + Reviewer collaboration: Claude as architect drafts spec, Codex as coder implements, Claude as reviewer accepts or revises.",
+  "recipe_id": "text-core-text-utils",
+  "intent_override": "Build a normalize-and-casefold text helper that accepts UTF-8 bytes, NFC-normalizes, then casefolds. Reject non-UTF-8 with a structured error.",
+  "role_overrides": {
+    "architect": "claude-code",
+    "coder": "openai-codex",
+    "reviewer": "claude-code"
+  },
+  "expected_flow": [
+    "Intent + clarify by Architect (Claude)",
+    "Spec draft by Architect (Claude)",
+    "Impl write by Coder (Codex)",
+    "Real x07 verify",
+    "Review pass by Reviewer (Claude) reads diff + verify summary -> accept | revise",
+    "If accept -> done. If revise -> Coder takes another pass with concerns surfaced"
+  ],
+  "success_criteria": [
+    "All three real CLI invocations show in transcripts",
+    "At least one Review turn renders 'accept' (not stuck at revise)",
+    "Coder's second pass (if any) shows concerns from Reviewer in handoff prompt"
+  ]
+}

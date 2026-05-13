@@ -1,0 +1,17 @@
+{
+  "id": "scenario-2-csv-repair",
+  "goal": "Force the real repair loop: a CSV parser with an intentional constraint the first impl will trip.",
+  "recipe_id": "data-cbor-roundtrip",
+  "intent_override": "Build a CSV parser that strictly rejects malformed quotes per RFC 4180. Report line numbers for every malformed row. Empty input must produce zero rows, not an error.",
+  "expected_flow": [
+    "Real x07 xtal verify fails on the strict-quote constraint",
+    "Autopilot decides AutoBuild repair -> real x07 xtal repair proposes a patch",
+    "Patch applied -> re-verify, either passes or surfaces a second repair round",
+    "After <= 3 repair rounds, autopilot either converges or pauses with realize_stalled"
+  ],
+  "success_criteria": [
+    "Repair loop fires real x07 xtal repair (not just template synthesis)",
+    "Verify passes within <= 3 rounds OR autopilot pauses cleanly",
+    "Incident turn surfaces a real diagnostic code, not the RUNTIME_VIOLATION placeholder"
+  ]
+}
