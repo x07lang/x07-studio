@@ -389,7 +389,28 @@ Previously these landed in `target/xtal/xtal.verify.diag.json` and were ignored 
 
 Now: `trust_posture::current` reads the diag, filters for proof-support codes, and populates a new `proof_support_notes: Vec<ProofSupportNote>` field on `TrustPosture`. The TypeScript type + the SvelteKit TrustCard component were updated in lockstep. A new collapsible "Proof support" panel renders below the BUDGET/PROOFS grid with severity-colored borders (red for error, amber for warning).
 
-Test counts now: 135 loom-core tests (was 131; +4 for predicate promotion, impl mirror, and existing ingest test extended). Web: 70/70 (TrustCard new field optional + backward-compatible).
+Test counts now: 137 loom-core tests (was 131 before Tier-1.5b; +6 for predicate promotion, impl mirror, existing ingest test extended, plus the two new codec/compress predicate assertions). Web: 70/70 (TrustCard new field optional + backward-compatible).
+
+### Predicate set expansion + visual validation pass
+
+After Tier-1.5b landed, I expanded the predicate-bearing archetype set:
+- `app.codec.roundtrip_v1` — `len(__result) = len(payload)` (roundtrip = identity, semantically + matches the identity synthesis floor).
+- `app.compress.roundtrip_v1` — same shape, same justification.
+
+Sandbox-validated each predicate end-to-end with real `x07 xtal spec check --project x07.json --input <spec>`: both return `ok: true`, zero diagnostics. The archetype-table now ships 4 provable predicates (sort `length_preserved`, greeter `result_nonempty`, codec `length_preserved`, compress `length_preserved`).
+
+**Visual validation** of F4 done with real toolchain: a fresh sort autopilot session through the SvelteKit UI confirmed the TrustCard renders the new "PROOF SUPPORT 2 notes" collapsible panel with the two real x07 warnings emitted from `x07 verify --prove`:
+
+1. `WXTAL_VERIFY_PROVE_SUPPORT` — *"Proof support summary (first diagnostic per entry): entry | code | message toy.sorter.sort_u8_asc | X07V_UNSUPPORTED_HEAP_EFFECT | x07 verify does not support heap/pointer effect 'bytes.set_u8' in the certifiable pure subset"*
+2. `WXTAL_VERIFY_PROVE_UNSUPPORTED` — *"Proof attempt is unsupported for 'toy.sorter.sort_u8_asc' (world='solve-pure', policy='balanced'). See report: target/xtal/verify/prove/toy/sorter/sort_u8_asc.report.json."*
+
+Both render in the new panel with amber severity borders (warning class), each with code + target + message. Toggle interaction works (collapse/expand). Posture color stays `local_preview` green (verify passed despite the support warnings, which is correct — the warnings are informational, not blockers).
+
+**Evidence bundle:** `target/stress-pass/scenario-visual/evidence/`:
+- `full-page.png` — viewport with TrustCard + timeline.
+- `trust-card-zoom.png` — TrustCard sidebar only.
+- `trust-card-with-proof-notes.png` — full-page with proof-support panel expanded.
+- `xtal.verify.diag.json` — the source diagnostic the posture is reading from.
 
 **Tests:** loom-core grew to 125 passing (was 109 after Tier-1, 121 after Tier-2 wiring, +4 after F8/F9 fixes). New coverage:
 - `architect::tests::operation_doc_is_empty_*` (3) — checks the gate predicate.

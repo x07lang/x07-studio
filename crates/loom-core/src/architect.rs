@@ -83,13 +83,26 @@ pub fn archetype_for(module_id: &str, entry: &str) -> Option<ArchetypeSemantic> 
         ("app.codec", "roundtrip_v1") => ArchetypeSemantic {
             doc: "Encode the input payload and decode it again. The decoded bytes must equal \
                   the original input bytes. Reject malformed payloads with a structured error.",
-            ensures: &[],
+            // Roundtrip means decode(encode(x)) == x; the output bytes
+            // equal the input bytes. Length preservation falls out of
+            // that. Same predicate shape as toy.sorter, also provable
+            // against the identity synthesis floor.
+            ensures: &[SpecPredicate {
+                id: "length_preserved",
+                expr_json: r#"["=", ["bytes.len", "__result"], ["bytes.len", "payload"]]"#,
+            }],
         },
         ("app.compress", "roundtrip_v1") => ArchetypeSemantic {
             doc: "Compress the input bytes, then decompress them. The decompressed output must \
                   equal the original input exactly. The intermediate compressed bytes are not \
                   required to be shorter than the input.",
-            ensures: &[],
+            // Same justification as codec: the OPERATION returns the
+            // decompressed bytes, which equal the input bytes. The
+            // compressed intermediate is internal and not the result.
+            ensures: &[SpecPredicate {
+                id: "length_preserved",
+                expr_json: r#"["=", ["bytes.len", "__result"], ["bytes.len", "payload"]]"#,
+            }],
         },
         ("toy.sorter", "sort_u8_asc") => ArchetypeSemantic {
             doc: "Return a new byte string containing the bytes of the input in ascending \
@@ -649,6 +662,20 @@ mod tests {
         let semantic = archetype_for("app.greeter", "greet_v1").unwrap();
         assert_eq!(semantic.ensures.len(), 1);
         assert_eq!(semantic.ensures[0].id, "result_nonempty");
+    }
+
+    #[test]
+    fn codec_roundtrip_archetype_carries_length_preserved_predicate() {
+        let semantic = archetype_for("app.codec", "roundtrip_v1").unwrap();
+        assert_eq!(semantic.ensures.len(), 1);
+        assert_eq!(semantic.ensures[0].id, "length_preserved");
+    }
+
+    #[test]
+    fn compress_roundtrip_archetype_carries_length_preserved_predicate() {
+        let semantic = archetype_for("app.compress", "roundtrip_v1").unwrap();
+        assert_eq!(semantic.ensures.len(), 1);
+        assert_eq!(semantic.ensures[0].id, "length_preserved");
     }
 
     #[test]
