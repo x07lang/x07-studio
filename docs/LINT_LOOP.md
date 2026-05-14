@@ -6,7 +6,7 @@ lint state.
 ## Flow
 
 1. Build/verify completes.
-2. The kernel runs `x07 lint --project x07.json --json --report-out <file> --quiet-json`.
+2. The kernel runs `x07 lint --input <file.x07.json> --json --report-out <file> --quiet-json` for workspace source/spec inputs.
 3. Diagnostics are projected into `x07.studio.lint_report@0.1.0`.
 4. The timeline shows a compact Lint turn with severity counts and diagnostic
    IDs.

@@ -196,29 +196,9 @@ impl CommandRunner {
                 cwd.to_owned(),
                 started_at.clone(),
                 updates,
+                timeout_seconds.map(|seconds| Duration::from_secs(seconds.max(1))),
             );
-            return if let Some(seconds) = timeout_seconds {
-                match tokio::time::timeout(Duration::from_secs(seconds.max(1)), wait).await {
-                    Ok(result) => result,
-                    Err(_) => {
-                        let stderr = format!("command timed out after {} seconds", seconds.max(1));
-                        Ok(CommandExecution {
-                            program: program.to_string(),
-                            args: args.to_vec(),
-                            cwd: cwd.to_owned(),
-                            started_at,
-                            finished_at: now_string(),
-                            exit_code: None,
-                            stdout_json: None,
-                            stderr_json: parse_json(&stderr),
-                            stdout: String::new(),
-                            stderr,
-                        })
-                    }
-                }
-            } else {
-                wait.await
-            };
+            return wait.await;
         }
 
         let output = if let Some(seconds) = timeout_seconds {
@@ -283,6 +263,7 @@ async fn wait_with_streaming_output(
     cwd: Utf8PathBuf,
     started_at: String,
     updates: mpsc::UnboundedSender<CommandStreamUpdate>,
+    timeout: Option<Duration>,
 ) -> anyhow::Result<CommandExecution> {
     let stdout = child.stdout.take().context("missing child stdout")?;
     let stderr = child.stderr.take().context("missing child stderr")?;
@@ -293,6 +274,15 @@ async fn wait_with_streaming_output(
 
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
+    let timeout_fut = async {
+        if let Some(timeout) = timeout {
+            tokio::time::sleep(timeout).await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    tokio::pin!(timeout_fut);
+    let mut timed_out = false;
     let status = loop {
         tokio::select! {
             chunk = chunk_rx.recv() => {
@@ -316,13 +306,24 @@ async fn wait_with_streaming_output(
                 }
             }
             status = child.wait() => {
-                break status.with_context(|| format!("failed to wait for `{program}`"))?;
+                break Some(status.with_context(|| format!("failed to wait for `{program}`"))?);
+            }
+            _ = &mut timeout_fut => {
+                timed_out = true;
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                break None;
             }
         }
     };
 
-    let _ = stdout_task.await;
-    let _ = stderr_task.await;
+    if timed_out {
+        stdout_task.abort();
+        stderr_task.abort();
+    } else {
+        let _ = stdout_task.await;
+        let _ = stderr_task.await;
+    }
     while let Ok(chunk) = chunk_rx.try_recv() {
         match chunk {
             StreamChunk::Stdout(bytes) => stdout.extend(bytes),
@@ -330,7 +331,14 @@ async fn wait_with_streaming_output(
         }
     }
     let stdout = String::from_utf8_lossy(&stdout).to_string();
-    let stderr = String::from_utf8_lossy(&stderr).to_string();
+    let mut stderr = String::from_utf8_lossy(&stderr).to_string();
+    if timed_out {
+        if !stderr.trim().is_empty() {
+            stderr.push('\n');
+        }
+        let seconds = timeout.map(|duration| duration.as_secs()).unwrap_or(0);
+        stderr.push_str(&format!("command timed out after {seconds} seconds"));
+    }
 
     Ok(CommandExecution {
         program,
@@ -338,7 +346,7 @@ async fn wait_with_streaming_output(
         cwd,
         started_at,
         finished_at: now_string(),
-        exit_code: status.code(),
+        exit_code: status.and_then(|status| status.code()),
         stdout_json: parse_json(&stdout),
         stderr_json: parse_json(&stderr),
         stdout,
@@ -437,5 +445,38 @@ mod tests {
         assert_eq!(execution.exit_code, Some(0));
         assert_eq!(execution.stdout, "firstsecond");
         assert!(updates.iter().any(|update| update.stdout.contains("first")));
+    }
+
+    #[tokio::test]
+    async fn runner_times_out_streaming_command_with_partial_output() {
+        let cwd = camino::Utf8PathBuf::from_path_buf(std::env::temp_dir()).expect("utf8 temp");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let execution = CommandRunner
+            .run_with_timeout_streaming(
+                cwd.as_path(),
+                "/bin/sh",
+                &[
+                    "-c".to_string(),
+                    "printf ready; sleep 5; printf never".to_string(),
+                ],
+                &BTreeMap::new(),
+                Some(1),
+                tx,
+            )
+            .await
+            .expect("run streaming command");
+
+        let mut saw_ready = false;
+        while let Ok(update) = rx.try_recv() {
+            saw_ready |= update.stdout.contains("ready");
+        }
+
+        assert_eq!(execution.exit_code, None);
+        assert!(execution.stdout.contains("ready"));
+        assert!(!execution.stdout.contains("never"));
+        assert!(execution
+            .stderr
+            .contains("command timed out after 1 seconds"));
+        assert!(saw_ready);
     }
 }

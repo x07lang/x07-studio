@@ -152,7 +152,7 @@ fn step_id_for_op(op: &str) -> Option<&'static str> {
         || op == "synthesis.template"
     {
         Some("impl")
-    } else if op == "review.round" {
+    } else if op == "review.round" || op.starts_with("agent.review.") {
         Some("review")
     } else if op.starts_with("xtal.verify") {
         Some("verify")
@@ -191,7 +191,7 @@ fn status_for_op(op: &OpRecord) -> StepStatus {
 }
 
 fn actor_for_op(op: &OpRecord, fallback: AgentRole) -> AgentRole {
-    if op.op == "review.round" {
+    if op.op == "review.round" || op.op.starts_with("agent.review.") {
         AgentRole::Reviewer
     } else if op.op.starts_with("agent.realize.") || op.op == "pipeline.budget_exhausted" {
         AgentRole::Coder

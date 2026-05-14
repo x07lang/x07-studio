@@ -21,6 +21,7 @@ intent -> spec -> realization -> verify -> repair -> trust/certify -> ingest -> 
 - **Process Lane + role collaboration** over the same session op log: canonical x07 steps, live actor attribution, current/next forecast, per-step evidence drilldown, Architect/Coder/Reviewer routing, role overrides, self-review fallback, step budgets, and manual Second opinion quorum.
 - **Canonical x07 agent loop surfaces** for `AGENT.md`, `x07 lint`/`x07 fix`, `x07 doctor`, `x07 pkg lock --check`, migration checks, `x07 test --pbt`, `x07 arch check`, `x07 pkg provides`, and the ten official agent-gate recipes.
 - **Genpack-aware agent handoffs** that embed local x07 service archetype schema and grammar for service-shaped intents before Codex or Claude drafts artifacts.
+- **Pre-production stress coverage** for the real toolchain scenarios: CSV repair pause, run-os/os-time trust widening, PBT counterexample regression capture, and Architect/Coder/Reviewer role-pipeline review acceptance. See `docs/PRODUCTION_READINESS.md` and `docs/STRESS_PASS_FINDINGS.md`.
 - **Real MCP transport** for both:
   - HTTP JSON-RPC over `/mcp` with `initialize`, `notifications/initialized`, session headers, and `tools/list` / `tools/call`
   - stdio MCP with newline-delimited JSON-RPC

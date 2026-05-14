@@ -619,12 +619,15 @@ fn push_followup(target: &mut Vec<String>, value: String) {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use camino::Utf8PathBuf;
     use uuid::Uuid;
 
     use loom_types::artifacts::{IntentPacket, TaskType};
     use loom_types::session::{SessionPhase, SessionSnapshot};
 
-    use super::{derive_followups, plain_english_summary_from_session};
+    use super::{derive_followups, plain_english_summary_from_session, scan_stub_modules};
 
     #[test]
     fn summary_uses_kind_aware_placeholder_when_no_examples() {
@@ -669,6 +672,38 @@ mod tests {
             summary.run_invocation.as_deref(),
             Some("printf \"%s\" \"<your input here>\" | x07 run --project x07.json --profile sandbox --stdin")
         );
+    }
+
+    #[test]
+    fn scan_stub_modules_flags_bytes_empty_body() {
+        let root = std::env::temp_dir().join(format!("x07-studio-summary-{}", Uuid::new_v4()));
+        let src = root.join("src/app");
+        fs::create_dir_all(&src).expect("create temp src");
+        fs::write(
+            src.join("text.x07.json"),
+            r#"{
+  "schema_version": "x07.x07ast@0.8.0",
+  "kind": "module",
+  "module_id": "app.text",
+  "decls": [
+    {"kind": "export", "names": ["app.text.normalize_v1"]},
+    {
+      "kind": "defn",
+      "name": "app.text.normalize_v1",
+      "params": [{"name": "payload", "ty": "bytes"}],
+      "result": "bytes",
+      "body": ["bytes.empty"]
+    }
+  ]
+}"#,
+        )
+        .expect("write x07 ast");
+        let root = Utf8PathBuf::from_path_buf(root).expect("utf8 temp path");
+
+        let stubs = scan_stub_modules(&root);
+
+        assert_eq!(stubs, vec!["src/app/text.x07.json".to_string()]);
+        let _ = fs::remove_dir_all(root.as_std_path());
     }
 
     #[test]

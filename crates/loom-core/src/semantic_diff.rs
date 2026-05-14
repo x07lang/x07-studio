@@ -149,6 +149,16 @@ fn from_raw(raw: Value) -> DiffSurface {
     if text.contains("os-fs") || text.contains("filesystem") {
         worlds.push("os-fs".to_string());
     }
+    if text.contains("run-os-sandboxed") {
+        worlds.push("run-os-sandboxed".to_string());
+    } else if text.contains("run-os")
+        || text.contains("std.os.time")
+        || text.contains("os-time")
+        || text.contains("wall-clock")
+        || text.contains("wall clock")
+    {
+        worlds.push("run-os".to_string());
+    }
     if worlds.is_empty() {
         worlds.push("solve-pure".to_string());
     }
@@ -161,6 +171,13 @@ fn from_raw(raw: Value) -> DiffSurface {
     }
     if text.contains("os-fs") || text.contains("filesystem") {
         capabilities.push("os-fs".to_string());
+    }
+    if text.contains("std.os.time")
+        || text.contains("os-time")
+        || text.contains("wall-clock")
+        || text.contains("wall clock")
+    {
+        capabilities.push("os-time".to_string());
     }
     capabilities.sort();
     capabilities.dedup();
@@ -326,6 +343,55 @@ mod tests {
 
         assert_eq!(diff.trust_delta_color, "red");
         assert!(diff.headline.contains("os-net"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn semantic_diff_flags_os_time_widening() {
+        let root = camino::Utf8PathBuf::from_path_buf(std::env::temp_dir())
+            .expect("utf8")
+            .join(format!("x07-studio-semantic-diff-{}", Uuid::new_v4()));
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "timer", root.to_string(), TaskType::NewBehavior);
+        let from = Uuid::new_v4();
+        let to = Uuid::new_v4();
+        session.op_log.push(op(
+            session_id,
+            from,
+            serde_json::json!({"worlds":["solve-pure"]}),
+        ));
+        session.op_log.push(op(
+            session_id,
+            to,
+            serde_json::json!({
+                "world": "run-os",
+                "source": "imports std.os.time for wall-clock reads"
+            }),
+        ));
+
+        let diff = between(
+            root.as_path(),
+            &session,
+            SemanticDiffRequest {
+                schema_version: "x07.studio.semantic_diff_request@0.1.0".to_string(),
+                from: DiffRef::OpId { op_id: from },
+                to: DiffRef::OpId { op_id: to },
+                mode: "project".to_string(),
+            },
+        );
+
+        assert_eq!(diff.trust_delta_color, "amber");
+        assert!(diff.headline.contains("run-os"));
+        assert!(diff.headline.contains("os-time"));
+        assert!(diff
+            .world_changes
+            .iter()
+            .any(|item| item.contains("run-os")));
+        assert!(diff
+            .capability_changes
+            .iter()
+            .any(|item| item.contains("os-time")));
         std::fs::remove_dir_all(root).ok();
     }
 

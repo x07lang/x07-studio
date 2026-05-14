@@ -510,7 +510,8 @@ impl WorkspaceKernel {
         self.model
             .get_session(session_id)
             .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
-        let (report, executed) = crate::lint::run(session_id, &self.cli).await?;
+        let (report, executed) =
+            crate::lint::run(self.root.as_path(), session_id, &self.cli).await?;
         let mut op = op_record_from_binding(session_id, "lint.report", executed);
         op.report_json = Some(serde_json::json!({ "lint_report": report.clone() }));
         self.append_op(session_id, op)?;
@@ -1264,7 +1265,41 @@ impl WorkspaceKernel {
             return Ok(current);
         }
 
+        let review_budget = pipeline
+            .stages
+            .iter()
+            .find(|stage| stage.action == "review_impl")
+            .and_then(|stage| stage.budget.as_ref())
+            .and_then(|budget| budget.wall_clock_ms)
+            .map(|ms| (ms / 1_000).max(1));
+
         for round_idx in 1..=pipeline.max_review_rounds {
+            match self
+                .start_intent_review(session_id, &reviewer_id, round_idx, review_budget)
+                .await
+            {
+                Ok(prepared) => {
+                    let _ = self.execute_prepared_agent_run(prepared).await;
+                    current = self
+                        .model
+                        .get_session(session_id)
+                        .cloned()
+                        .unwrap_or(current);
+                }
+                Err(error) => {
+                    self.append_op(
+                        session_id,
+                        pipeline_stage_op(
+                            session_id,
+                            AgentRole::Reviewer,
+                            "review_impl",
+                            &format!(
+                                "Reviewer agent could not be prepared: {error}; falling back to baseline review."
+                            ),
+                        ),
+                    )?;
+                }
+            }
             let review = crate::review::baseline_review(&current, &reviewer_id, round_idx);
             self.append_op(session_id, review_round_op(session_id, &review))?;
             if review.verdict == "accept" {
@@ -2199,6 +2234,14 @@ impl WorkspaceKernel {
                 .await;
         }
 
+        {
+            let mut k = kernel.lock().await;
+            let snapshot = k.sync_project_manifest_for_intent(session_id)?;
+            if last_op_failed(&snapshot) {
+                return Ok(snapshot);
+            }
+        }
+
         if should_scaffold_spec(root.as_path(), &vars) {
             let snapshot =
                 Self::run_binding_yielding(kernel, session_id, "spec.scaffold", &vars).await?;
@@ -2341,41 +2384,48 @@ impl WorkspaceKernel {
             k.append_op(session_id, build_stage_op(session_id, final_stage, round))?;
         }
         // Auto-template-synthesis floor (matches the &mut self version).
+        let role_pipeline_requested = current.op_log.iter().any(|op| op.op == "role.overrides");
         if final_stage == "done" {
-            let stub_pre = {
-                let k = kernel.lock().await;
-                crate::summarize::scan_stub_modules(k.root.as_path())
-            };
-            if !stub_pre.is_empty() {
-                let template_op = {
+            if !role_pipeline_requested {
+                let stub_pre = {
                     let k = kernel.lock().await;
-                    k.try_template_synthesis(&current)?
+                    crate::summarize::scan_stub_modules(k.root.as_path())
                 };
-                if let Some(op) = template_op {
-                    {
-                        let mut k = kernel.lock().await;
-                        k.append_op(session_id, op)?;
+                if !stub_pre.is_empty() {
+                    let template_op = {
+                        let k = kernel.lock().await;
+                        k.try_template_synthesis(&current)?
+                    };
+                    if let Some(op) = template_op {
+                        {
+                            let mut k = kernel.lock().await;
+                            k.append_op(session_id, op)?;
+                        }
+                        // Tier-1.5b: now that a real impl is on disk,
+                        // promote the archetype's `ensures` predicates into
+                        // the spec so the downstream verify proves against
+                        // them. spec.format runs inside the helper.
+                        {
+                            let mut k = kernel.lock().await;
+                            let _ = k.architect_promote_predicates_after_impl(session_id).await;
+                        }
+                        let _ = Self::run_binding_yielding(
+                            kernel,
+                            session_id,
+                            "impl.check",
+                            &BTreeMap::new(),
+                        )
+                        .await;
+                        let _ = Self::run_binding_yielding(
+                            kernel,
+                            session_id,
+                            "xtal.verify",
+                            &build_vars,
+                        )
+                        .await;
+                        let k = kernel.lock().await;
+                        current = k.model.get_session(session_id).cloned().unwrap_or(current);
                     }
-                    // Tier-1.5b: now that a real impl is on disk,
-                    // promote the archetype's `ensures` predicates into
-                    // the spec so the downstream verify proves against
-                    // them. spec.format runs inside the helper.
-                    {
-                        let mut k = kernel.lock().await;
-                        let _ = k.architect_promote_predicates_after_impl(session_id).await;
-                    }
-                    let _ = Self::run_binding_yielding(
-                        kernel,
-                        session_id,
-                        "impl.check",
-                        &BTreeMap::new(),
-                    )
-                    .await;
-                    let _ =
-                        Self::run_binding_yielding(kernel, session_id, "xtal.verify", &build_vars)
-                            .await;
-                    let k = kernel.lock().await;
-                    current = k.model.get_session(session_id).cloned().unwrap_or(current);
                 }
             }
             // Emit the summary op (parity with the &mut self version).
@@ -2609,7 +2659,45 @@ impl WorkspaceKernel {
             return Ok(current);
         }
 
+        let review_budget = pipeline
+            .stages
+            .iter()
+            .find(|stage| stage.action == "review_impl")
+            .and_then(|stage| stage.budget.as_ref())
+            .and_then(|budget| budget.wall_clock_ms)
+            .map(|ms| (ms / 1_000).max(1));
+
         for round_idx in 1..=pipeline.max_review_rounds {
+            let prepared = {
+                let mut k = kernel.lock().await;
+                k.start_intent_review(session_id, &reviewer_id, round_idx, review_budget)
+                    .await
+            };
+            match prepared {
+                Ok(prepared) => {
+                    let _ = Self::execute_prepared_agent_run_yielding(kernel, prepared).await;
+                    if let Some(snapshot) = {
+                        let k = kernel.lock().await;
+                        k.model.get_session(session_id).cloned()
+                    } {
+                        current = snapshot;
+                    }
+                }
+                Err(error) => {
+                    let mut k = kernel.lock().await;
+                    k.append_op(
+                        session_id,
+                        pipeline_stage_op(
+                            session_id,
+                            AgentRole::Reviewer,
+                            "review_impl",
+                            &format!(
+                                "Reviewer agent could not be prepared: {error}; falling back to baseline review."
+                            ),
+                        ),
+                    )?;
+                }
+            }
             let review = crate::review::baseline_review(&current, &reviewer_id, round_idx);
             {
                 let mut k = kernel.lock().await;
@@ -2751,42 +2839,45 @@ impl WorkspaceKernel {
             _ => "needs_help",
         };
         self.append_op(session_id, build_stage_op(session_id, final_stage, round))?;
+        let role_pipeline_requested = current.op_log.iter().any(|op| op.op == "role.overrides");
         if final_stage == "done" {
-            // SUBSCRIPTION-FRIENDLY AUTO-REALIZE
-            // ----------------------------------
-            // The XTAL chain reaches "verified" against a stub body. If
-            // the deterministic template synthesizer recognizes the
-            // target kind (sort/greet/calc/parse/validate/crawler/...) we
-            // fill in a working implementation right here, then re-run
-            // verify. This happens *without* spawning any subscription
-            // CLI or HTTP API — it's a free local floor that makes
-            // Try-It produce a real output for the common kinds. When no
-            // template matches, the scaffolded summary stays put and
-            // surfaces the realize CTA so the user can opt into a
-            // subscription-backed Claude Code / Codex run.
-            let stub_paths_pre = crate::summarize::scan_stub_modules(self.root.as_path());
-            if !stub_paths_pre.is_empty() {
-                if let Some(template_op) = self.try_template_synthesis(&current)? {
-                    self.append_op(session_id, template_op)?;
-                    let _ = self
-                        .architect_promote_predicates_after_impl(session_id)
-                        .await;
-                    // Re-verify against the synthesized impl. We're still
-                    // in TrustReview from the build path, so the reducer
-                    // rejects another VerificationPassed event — that's
-                    // fine: we just want the fresh xtal.verify report on
-                    // disk so the next summary scan reflects reality.
-                    let after_check = self
-                        .run_binding(session_id, "impl.check", &BTreeMap::new())
-                        .await;
-                    if let Ok(snapshot) = after_check {
-                        current = snapshot;
-                        if !last_op_failed(&current) {
-                            if let Ok(snapshot) = self
-                                .run_binding(session_id, "xtal.verify", &build_vars)
-                                .await
-                            {
-                                current = snapshot;
+            if !role_pipeline_requested {
+                // SUBSCRIPTION-FRIENDLY AUTO-REALIZE
+                // ----------------------------------
+                // The XTAL chain reaches "verified" against a stub body. If
+                // the deterministic template synthesizer recognizes the
+                // target kind (sort/greet/calc/parse/validate/crawler/...) we
+                // fill in a working implementation right here, then re-run
+                // verify. This happens *without* spawning any subscription
+                // CLI or HTTP API — it's a free local floor that makes
+                // Try-It produce a real output for the common kinds. When no
+                // template matches, the scaffolded summary stays put and
+                // surfaces the realize CTA so the user can opt into a
+                // subscription-backed Claude Code / Codex run.
+                let stub_paths_pre = crate::summarize::scan_stub_modules(self.root.as_path());
+                if !stub_paths_pre.is_empty() {
+                    if let Some(template_op) = self.try_template_synthesis(&current)? {
+                        self.append_op(session_id, template_op)?;
+                        let _ = self
+                            .architect_promote_predicates_after_impl(session_id)
+                            .await;
+                        // Re-verify against the synthesized impl. We're still
+                        // in TrustReview from the build path, so the reducer
+                        // rejects another VerificationPassed event — that's
+                        // fine: we just want the fresh xtal.verify report on
+                        // disk so the next summary scan reflects reality.
+                        let after_check = self
+                            .run_binding(session_id, "impl.check", &BTreeMap::new())
+                            .await;
+                        if let Ok(snapshot) = after_check {
+                            current = snapshot;
+                            if !last_op_failed(&current) {
+                                if let Ok(snapshot) = self
+                                    .run_binding(session_id, "xtal.verify", &build_vars)
+                                    .await
+                                {
+                                    current = snapshot;
+                                }
                             }
                         }
                     }
@@ -2858,6 +2949,11 @@ impl WorkspaceKernel {
             return self
                 .run_seeded_template_workflow(session_id, template, &vars)
                 .await;
+        }
+
+        let snapshot = self.sync_project_manifest_for_intent(session_id)?;
+        if last_op_failed(&snapshot) {
+            return Ok(snapshot);
         }
 
         if should_scaffold_spec(self.root.as_path(), &vars) {
@@ -3062,6 +3158,7 @@ impl WorkspaceKernel {
         let Some(synth) = crate::synthesis::synthesize_from_template(intent) else {
             return Ok(None);
         };
+        let mut artifacts = materialize_template_dependencies(self.root.as_path(), &synth)?;
         let abs = self.root.join(&synth.relative_path);
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent.as_std_path()).with_context(|| {
@@ -3074,6 +3171,7 @@ impl WorkspaceKernel {
         let bytes = serde_json::to_vec_pretty(&synth.body).context("serialize template body")?;
         std::fs::write(abs.as_std_path(), bytes)
             .with_context(|| format!("write template impl to {abs}"))?;
+        artifacts.push(synth.relative_path.clone());
         let now = now_string();
         let op = OpRecord {
             schema_version: "x07.studio.op_record@0.1.0".to_string(),
@@ -3091,7 +3189,7 @@ impl WorkspaceKernel {
             finished_at: Some(now),
             status: OperationStatus::Succeeded,
             exit_code: Some(0),
-            artifacts: vec![synth.relative_path.clone()],
+            artifacts,
             notes: Some(format!(
                 "Wrote a template implementation for `{}` so Try-It has a working floor. \
                  The user can ask Claude Code / Codex to refine it further.",
@@ -3110,6 +3208,13 @@ impl WorkspaceKernel {
                 "module_id": synth.module_id,
                 "entry": synth.entry_name,
                 "wrote_path": synth.relative_path,
+                "dependencies": synth.dependencies.iter().map(|dep| {
+                    serde_json::json!({
+                        "name": dep.name,
+                        "version": dep.version,
+                        "path": dep.relative_path,
+                    })
+                }).collect::<Vec<_>>(),
             })),
             report_path: None,
         };
@@ -3144,6 +3249,95 @@ impl WorkspaceKernel {
             }
         };
         self.append_op(session_id, op)
+    }
+
+    fn sync_project_manifest_for_intent(
+        &mut self,
+        session_id: Uuid,
+    ) -> anyhow::Result<SessionSnapshot> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        let intent = session
+            .intent
+            .as_ref()
+            .ok_or_else(|| anyhow!("session `{session_id}` has no approved intent packet"))?;
+        let Some(target) = intent.targets.first() else {
+            return Ok(session);
+        };
+        let Some(entry) = target.entry.as_deref() else {
+            return Ok(session);
+        };
+        let path = self.root.join("x07.json");
+        if !path.exists() {
+            return Ok(session);
+        }
+
+        let raw = match std::fs::read_to_string(path.as_std_path()) {
+            Ok(text) => text,
+            Err(error) => {
+                return self.append_op(
+                    session_id,
+                    project_manifest_sync_op(
+                        session_id,
+                        &[],
+                        Some(anyhow!("read x07.json for manifest sync: {error}")),
+                    ),
+                );
+            }
+        };
+        let mut value: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(value) => value,
+            Err(error) => {
+                return self.append_op(
+                    session_id,
+                    project_manifest_sync_op(
+                        session_id,
+                        &[],
+                        Some(anyhow!("parse x07.json for manifest sync: {error}")),
+                    ),
+                );
+            }
+        };
+        let Some(object) = value.as_object_mut() else {
+            return self.append_op(
+                session_id,
+                project_manifest_sync_op(
+                    session_id,
+                    &[],
+                    Some(anyhow!("x07.json must be a JSON object")),
+                ),
+            );
+        };
+
+        let mut changes = Vec::new();
+        let operation = format!("{}.{}", target.module_id, entry);
+        set_manifest_string(object, "operational_entry_symbol", &operation, &mut changes);
+        if intent_requires_os_time(intent) {
+            set_manifest_string(object, "world", "run-os", &mut changes);
+        }
+        if changes.is_empty() {
+            return Ok(session);
+        }
+        let mut serialized =
+            serde_json::to_string_pretty(&value).context("serialize synced x07.json")?;
+        serialized.push('\n');
+        if let Err(error) = std::fs::write(path.as_std_path(), serialized) {
+            return self.append_op(
+                session_id,
+                project_manifest_sync_op(
+                    session_id,
+                    &changes,
+                    Some(anyhow!("write synced x07.json: {error}")),
+                ),
+            );
+        }
+        self.append_op(
+            session_id,
+            project_manifest_sync_op(session_id, &changes, None),
+        )
     }
 
     /// Run the architect's deterministic enrichment over a freshly scaffolded
@@ -3812,6 +4006,89 @@ impl WorkspaceKernel {
             args,
             timeout_seconds: timeout_seconds.unwrap_or(60).clamp(20, 240),
             op_kind: "architect_enrich".to_string(),
+        };
+        let snapshot = self.append_op(session_id, op.clone())?;
+        Ok(PreparedAgentRun {
+            handoff,
+            op,
+            session: snapshot,
+            command: Some(command),
+            clarify_round: None,
+        })
+    }
+
+    /// Prepares a supervised reviewer run. The reviewer reads the approved
+    /// intent, implementation summary, and verify evidence, emits a review
+    /// event on stdout, and exits without writing files. Studio still records
+    /// the deterministic `review.round` verdict after the run so acceptance
+    /// stays tied to machine evidence.
+    pub async fn start_intent_review(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        round: u32,
+        timeout_seconds: Option<u64>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let seed = self.genpack_context_seed(session_id)?;
+        let genpack = Self::resolve_genpack_context(seed).await;
+        self.start_intent_review_with_genpack(
+            session_id,
+            agent_id,
+            round,
+            timeout_seconds,
+            genpack.as_ref(),
+        )
+    }
+
+    pub fn start_intent_review_with_genpack(
+        &mut self,
+        session_id: Uuid,
+        agent_id: &str,
+        round: u32,
+        timeout_seconds: Option<u64>,
+        genpack: Option<&GenpackHandoffContext>,
+    ) -> anyhow::Result<PreparedAgentRun> {
+        let session = self
+            .model
+            .get_session(session_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown session `{session_id}`"))?;
+        session.intent.as_ref().ok_or_else(|| {
+            anyhow!("session `{session_id}` must have an approved intent before review")
+        })?;
+        let agent = self
+            .list_agent_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == agent_id)
+            .ok_or_else(|| anyhow!("unknown agent profile `{agent_id}`"))?;
+        ensure_agent_enabled(&agent, "running a review round")?;
+        ensure_agent_command_available(&agent)?;
+        let handoff = agent_review_handoff_from_session(&session, &agent, round, genpack);
+        let prompt_path = self
+            .store
+            .save_agent_handoff_with_suffix(&handoff, "review")?;
+        let op = agent_review_running_op(session_id, &agent, &handoff, &prompt_path, round);
+        let mut review_agent = agent.clone();
+        review_agent.allowed_verbs = vec!["review.round".to_string()];
+        review_agent.write_roots = Vec::new();
+        let prompt_content = std::fs::read_to_string(prompt_path.as_std_path())
+            .with_context(|| format!("read review prompt at {prompt_path}"))?;
+        let (program, args) = crate::synthesis::build_realize_subscription_command(
+            &agent.id,
+            self.root.as_path(),
+            &prompt_content,
+        );
+        let command = AgentCommandPlan {
+            session_id,
+            op_id: op.id,
+            agent: review_agent,
+            handoff: handoff.clone(),
+            prompt_path: prompt_path.clone(),
+            cwd: self.root.clone(),
+            program,
+            args,
+            timeout_seconds: timeout_seconds.unwrap_or(30).clamp(10, 180),
+            op_kind: "review".to_string(),
         };
         let snapshot = self.append_op(session_id, op.clone())?;
         Ok(PreparedAgentRun {
@@ -5394,6 +5671,144 @@ fn copy_dir(source: &Utf8Path, target: &Utf8Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn materialize_template_dependencies(
+    root: &Utf8Path,
+    synth: &crate::synthesis::TemplateSynthesis,
+) -> anyhow::Result<Vec<String>> {
+    let mut artifacts = Vec::new();
+    for dependency in &synth.dependencies {
+        merge_template_dependency_into_project(root, dependency)?;
+        merge_template_dependency_into_lockfile(root, dependency)?;
+        let target = root.join(&dependency.relative_path);
+        if !target.exists() {
+            let source = find_template_dependency_source(root, dependency).ok_or_else(|| {
+                anyhow!(
+                    "template dependency `{}` {} was not found near {}",
+                    dependency.name,
+                    dependency.version,
+                    root
+                )
+            })?;
+            copy_dir(source.as_path(), target.as_path()).with_context(|| {
+                format!(
+                    "copy template dependency `{}` from {} to {}",
+                    dependency.name, source, target
+                )
+            })?;
+        }
+        artifacts.push("x07.json".to_string());
+        artifacts.push("x07.lock.json".to_string());
+        artifacts.push(dependency.relative_path.clone());
+    }
+    artifacts.sort();
+    artifacts.dedup();
+    Ok(artifacts)
+}
+
+fn merge_template_dependency_into_project(
+    root: &Utf8Path,
+    dependency: &crate::synthesis::TemplateDependency,
+) -> anyhow::Result<()> {
+    let path = root.join("x07.json");
+    let raw = fs::read_to_string(path.as_std_path())
+        .with_context(|| format!("read project manifest at {path}"))?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&raw).with_context(|| format!("parse project manifest at {path}"))?;
+    upsert_dependency_value(&mut value, &dependency.project_entry)
+        .with_context(|| format!("update project dependency `{}`", dependency.name))?;
+    write_json_pretty(path.as_path(), &value)
+}
+
+fn merge_template_dependency_into_lockfile(
+    root: &Utf8Path,
+    dependency: &crate::synthesis::TemplateDependency,
+) -> anyhow::Result<()> {
+    let path = root.join("x07.lock.json");
+    let mut value = if path.exists() {
+        let raw = fs::read_to_string(path.as_std_path())
+            .with_context(|| format!("read lockfile at {path}"))?;
+        serde_json::from_str(&raw).with_context(|| format!("parse lockfile at {path}"))?
+    } else {
+        serde_json::json!({
+            "schema_version": "x07.lock@0.4.0",
+            "toolchain": {
+                "x07_version": "0.2.10",
+                "x07c_version": "0.2.10",
+                "lang_id": "x07-core@0.2.0",
+                "compat": "0.5"
+            },
+            "registry": {
+                "index_url": "sparse+https://registry.x07.io/index/"
+            },
+            "dependencies": []
+        })
+    };
+    upsert_dependency_value(&mut value, &dependency.lock_entry)
+        .with_context(|| format!("update lock dependency `{}`", dependency.name))?;
+    write_json_pretty(path.as_path(), &value)
+}
+
+fn upsert_dependency_value(
+    manifest: &mut serde_json::Value,
+    dependency: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let name = dependency
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow!("dependency entry missing name"))?;
+    let object = manifest
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("manifest must be a JSON object"))?;
+    let dependencies = object
+        .entry("dependencies".to_string())
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| anyhow!("manifest dependencies must be an array"))?;
+    if let Some(existing) = dependencies.iter_mut().find(|item| {
+        item.get("name")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|candidate| candidate == name)
+    }) {
+        *existing = dependency.clone();
+    } else {
+        dependencies.push(dependency.clone());
+    }
+    Ok(())
+}
+
+fn write_json_pretty(path: &Utf8Path, value: &serde_json::Value) -> anyhow::Result<()> {
+    let mut serialized =
+        serde_json::to_string_pretty(value).with_context(|| format!("serialize {path}"))?;
+    serialized.push('\n');
+    fs::write(path.as_std_path(), serialized).with_context(|| format!("write {path}"))
+}
+
+fn find_template_dependency_source(
+    root: &Utf8Path,
+    dependency: &crate::synthesis::TemplateDependency,
+) -> Option<Utf8PathBuf> {
+    for ancestor in root.ancestors().take(12) {
+        let candidates = [
+            ancestor.join(&dependency.source_hint),
+            ancestor.join(format!("x07/{}", dependency.source_hint)),
+            ancestor.join(format!(
+                "docs/examples/agent-gate/text-unicode/normalize-casefold/{}",
+                dependency.relative_path
+            )),
+            ancestor.join(format!(
+                "x07/docs/examples/agent-gate/text-unicode/normalize-casefold/{}",
+                dependency.relative_path
+            )),
+        ];
+        for candidate in candidates {
+            if candidate.join("x07-package.json").is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 fn realize_proposal_from_stage(
     agent_id: &str,
     stage: &Utf8Path,
@@ -6205,6 +6620,13 @@ fn intent_packet_from_raw(
     let is_parser = has_any(&["parser", "parse json", "tokenize", "lex "]);
     let is_validator = has_any(&["validator", "validate ", "schema check"]);
     let is_cli_tool = has_any(&["cli tool", "command line tool", "command-line tool"]);
+    let is_timer = has_any(&[
+        "timer",
+        "wall-clock",
+        "wall clock",
+        "elapsed time",
+        "clock time",
+    ]);
     let is_text_normalize = has_any(&[
         "normalize",
         "casefold",
@@ -6268,6 +6690,8 @@ fn intent_packet_from_raw(
         ("app.parser".to_string(), "parse_v1".to_string())
     } else if is_validator {
         ("app.validator".to_string(), "validate_v1".to_string())
+    } else if is_timer {
+        ("app.timer".to_string(), "elapsed_v1".to_string())
     } else if is_text_normalize {
         ("app.text".to_string(), "normalize_v1".to_string())
     } else if is_checksum {
@@ -6320,6 +6744,11 @@ fn intent_packet_from_raw(
             "RR fixtures, sandbox policy, and OS/network/db capability widening require explicit review."
                 .to_string(),
         );
+    } else if is_timer {
+        policy_implications.push(
+            "Wall-clock time requires an explicit run-os trust transition and review before sharing."
+                .to_string(),
+        );
     } else if is_state_machine {
         policy_implications.push(
             "Generated outputs, arch contracts, and budget profiles require drift evidence before certify."
@@ -6335,6 +6764,12 @@ fn intent_packet_from_raw(
     if input_mode == IntentInputMode::Spec {
         constraints
             .push("Treat the provided spec as already-authored behavioral intent.".to_string());
+    }
+    if is_timer {
+        constraints.push(
+            "Read elapsed time from reviewed OS time capability, not caller-supplied timestamps."
+                .to_string(),
+        );
     }
     constraints.extend(
         revision_notes
@@ -6740,6 +7175,11 @@ fn write_build_xtal_manifest(path: &Utf8Path, intent: &IntentPacket) -> anyhow::
     let entry = target
         .and_then(|item| item.entry.as_deref())
         .unwrap_or("run_v1");
+    let world = if intent_requires_os_time(intent) {
+        "run-os"
+    } else {
+        "solve-pure"
+    };
     let manifest = serde_json::json!({
         "schema_version": "x07.xtal.manifest@0.1.0",
         "xtal_version": "1.0",
@@ -6750,9 +7190,9 @@ fn write_build_xtal_manifest(path: &Utf8Path, intent: &IntentPacket) -> anyhow::
             "kind": "defn",
         }],
         "profiles": {
-            "dev_world": "solve-pure",
-            "ci_world": "solve-pure",
-            "prod_world": "solve-pure",
+            "dev_world": world,
+            "ci_world": world,
+            "prod_world": world,
         },
         "trust": {
             "review_gates": ["build_repair"],
@@ -6767,6 +7207,93 @@ fn write_build_xtal_manifest(path: &Utf8Path, intent: &IntentPacket) -> anyhow::
     });
     fs::write(path, serde_json::to_vec_pretty(&manifest)?)?;
     Ok(())
+}
+
+fn intent_requires_os_time(intent: &IntentPacket) -> bool {
+    let target_uses_timer = intent.targets.iter().any(|target| {
+        target.module_id == "app.timer" || target.entry.as_deref() == Some("elapsed_v1")
+    });
+    let text_mentions_wall_clock = intent.witnesses.iter().any(|witness| {
+        let lowered = witness.text.to_ascii_lowercase();
+        lowered.contains("wall-clock")
+            || lowered.contains("wall clock")
+            || lowered.contains("os time")
+            || lowered.contains("operating system clock")
+    });
+    target_uses_timer || text_mentions_wall_clock
+}
+
+fn set_manifest_string(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: &str,
+    changes: &mut Vec<String>,
+) {
+    if object.get(key).and_then(serde_json::Value::as_str) == Some(value) {
+        return;
+    }
+    object.insert(
+        key.to_string(),
+        serde_json::Value::String(value.to_string()),
+    );
+    changes.push(format!("{key}={value}"));
+}
+
+fn project_manifest_sync_op(
+    session_id: Uuid,
+    changes: &[String],
+    error: Option<anyhow::Error>,
+) -> OpRecord {
+    let now = now_string();
+    let failed = error.is_some();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: "project.manifest.sync".to_string(),
+        backend: "studio".to_string(),
+        command: vec![
+            "studio".to_string(),
+            "project".to_string(),
+            "manifest".to_string(),
+            "sync".to_string(),
+            "x07.json".to_string(),
+        ],
+        started_at: now.clone(),
+        finished_at: Some(now),
+        status: if failed {
+            OperationStatus::Failed
+        } else {
+            OperationStatus::Succeeded
+        },
+        exit_code: Some(if failed { 1 } else { 0 }),
+        artifacts: if failed {
+            Vec::new()
+        } else {
+            vec!["x07.json".to_string()]
+        },
+        notes: Some(if failed {
+            "Failed to sync x07.json with the approved Studio intent.".to_string()
+        } else {
+            "Synced x07.json with the approved Studio intent.".to_string()
+        }),
+        stdout: if failed {
+            None
+        } else {
+            Some(format!("Updated x07.json: {}", changes.join(", ")))
+        },
+        stderr: error.as_ref().map(ToString::to_string),
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "schema_version": "x07.studio.project_manifest_sync@0.1.0",
+            "ok": !failed,
+            "path": "x07.json",
+            "changes": changes,
+            "error": error.as_ref().map(ToString::to_string),
+        })),
+        report_path: None,
+    }
 }
 
 fn xtal_manifest_ensure_op(
@@ -8073,7 +8600,7 @@ fn architect_enrich_op(session_id: Uuid, report: &crate::architect::EnrichmentRe
         (None, true) => "archetype table".to_string(),
         (None, false) => "studio-architect".to_string(),
     };
-    let note = if report.doc_added {
+    let note = if fields_added > 0 {
         format!(
             "Architect ({source}) enriched `{archetype_label}` spec ({fields_added} field{plural}).",
             plural = if fields_added == 1 { "" } else { "s" },
@@ -8087,7 +8614,7 @@ fn architect_enrich_op(session_id: Uuid, report: &crate::architect::EnrichmentRe
     } else {
         format!("Architect: archetype `{archetype_label}` already enriched; no changes written.")
     };
-    let artifacts = if report.doc_added {
+    let artifacts = if fields_added > 0 {
         vec![report.spec_path.clone()]
     } else {
         Vec::new()
@@ -8472,6 +8999,47 @@ fn agent_architect_enrich_handoff_from_session(
     }
 }
 
+fn agent_review_handoff_from_session(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    round: u32,
+    genpack: Option<&GenpackHandoffContext>,
+) -> AgentHandoff {
+    let mut review_agent = agent.clone();
+    review_agent.allowed_verbs = vec!["review.round".to_string()];
+    review_agent.write_roots = Vec::new();
+    let prompt_path = format!(
+        ".x07/studio/handoffs/{}-{}-review-{round}.md",
+        session.session_id, agent.id
+    );
+    let command = std::iter::once(agent.command.clone())
+        .chain(agent.args.clone())
+        .chain(std::iter::once(prompt_path.clone()))
+        .collect::<Vec<_>>();
+    let artifacts = vec![
+        prompt_path.clone(),
+        format!(".x07/studio/sessions/{}.json", session.session_id),
+        "target/xtal/verify/summary.json".to_string(),
+        "target/xtal/xtal.verify.diag.json".to_string(),
+    ];
+    let prompt = render_agent_review_prompt(session, &review_agent, &command, round, genpack);
+    AgentHandoff {
+        schema_version: "x07.studio.agent_handoff@0.1.0".to_string(),
+        session_id: session.session_id,
+        agent_id: agent.id.clone(),
+        agent_label: agent.label.clone(),
+        command,
+        prompt_path,
+        prompt,
+        allowed_verbs: review_agent.allowed_verbs.clone(),
+        mcp_tools: review_agent.mcp_tools.clone(),
+        write_roots: review_agent.write_roots.clone(),
+        approval_required: false,
+        artifacts,
+        created_at: now_string(),
+    }
+}
+
 fn agent_realize_handoff_from_session(
     session: &SessionSnapshot,
     agent: &AgentProfile,
@@ -8514,6 +9082,118 @@ fn agent_realize_handoff_from_session(
         artifacts,
         created_at: now_string(),
     }
+}
+
+fn render_agent_review_prompt(
+    session: &SessionSnapshot,
+    agent: &AgentProfile,
+    command: &[String],
+    round: u32,
+    genpack: Option<&GenpackHandoffContext>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("# x07 Studio — Review Implementation\n\n");
+    out.push_str(&format!("- Agent: {} (`{}`)\n", agent.label, agent.id));
+    out.push_str(&format!(
+        "- Session: {} (`{}`)\n",
+        session.title, session.session_id
+    ));
+    out.push_str(&format!("- Workspace: `{}`\n", session.root));
+    out.push_str(&format!("- Round: {round}\n"));
+    out.push_str(&format!("- Command: `{}`\n", command.join(" ")));
+    out.push_str(
+        "\nYou are running a read-only reviewer pass. Read the approved intent, \
+the latest implementation summary, and the latest x07 verify evidence. Decide \
+whether the implementation should be accepted, revised, or blocked. Do not edit \
+files.\n\n",
+    );
+    out.push_str("## Output Protocol\n\n");
+    out.push_str("Emit exactly one JSON line on stdout, then exit:\n\n");
+    out.push_str("```json\n");
+    out.push_str(
+        r#"{"schema_version":"x07.studio.agent_event@0.1.0","kind":"review","verdict":"accept","summary":"Verified implementation matches the approved intent.","concerns":[]}"#,
+    );
+    out.push_str("\n```\n\n");
+    out.push_str(
+        "Rules:\n\
+- `verdict` must be `accept`, `revise`, or `block`.\n\
+- Use `revise` for implementation/spec drift, scaffold-only code, missing tests, \
+or unclear behaviour that the coder can repair.\n\
+- Use `block` only for failed verify, unsafe trust widening, or a required human \
+decision.\n\
+- Keep `concerns` as short strings grounded in files or operation evidence.\n\
+- Do not write files or run repair commands; this is review only.\n",
+    );
+    if let Some(intent) = &session.intent {
+        out.push_str("\n## Approved Intent\n\n");
+        for target in &intent.targets {
+            out.push_str(&format!(
+                "- Target: `{}` / `{}`\n",
+                target.module_id,
+                target.entry.as_deref().unwrap_or("run_v1")
+            ));
+        }
+        match &intent.source {
+            IntentSource::Text { raw } | IntentSource::Spec { raw } => {
+                out.push_str(&format!("\nUser input:\n\n```\n{raw}\n```\n"));
+            }
+            IntentSource::Voice { transcript } => {
+                out.push_str(&format!("\nVoice transcript:\n\n```\n{transcript}\n```\n"));
+            }
+            IntentSource::Incident { path } => {
+                out.push_str(&format!("\nIncident path: `{path}`\n"));
+            }
+            IntentSource::Sketch { path } => {
+                out.push_str(&format!("\nSketch artifact: `{path}`\n"));
+            }
+            IntentSource::Image { path, mime } => {
+                out.push_str(&format!("\nImage artifact: `{path}` (`{mime}`)\n"));
+            }
+        }
+    }
+    if let Some(summary) = session
+        .op_log
+        .iter()
+        .rev()
+        .find(|op| op.op == "summary.plain_english")
+        .and_then(|op| op.report_json.as_ref())
+    {
+        out.push_str("\n## Latest Implementation Summary\n\n```json\n");
+        out.push_str(
+            &serde_json::to_string_pretty(summary).unwrap_or_else(|_| summary.to_string()),
+        );
+        out.push_str("\n```\n");
+    }
+    if let Some(verify) = session
+        .op_log
+        .iter()
+        .rev()
+        .find(|op| op.op.starts_with("xtal.verify"))
+    {
+        out.push_str("\n## Latest Verify Operation\n\n");
+        out.push_str(&format!("- Status: `{:?}`\n", verify.status));
+        if let Some(path) = &verify.report_path {
+            out.push_str(&format!("- Report: `{path}`\n"));
+        }
+        if !verify.artifacts.is_empty() {
+            out.push_str("- Artifacts:\n");
+            for artifact in &verify.artifacts {
+                out.push_str(&format!("  - `{artifact}`\n"));
+            }
+        }
+        if let Some(stderr) = &verify.stderr {
+            let trimmed = stderr.trim();
+            if !trimmed.is_empty() {
+                out.push_str("\nStderr excerpt:\n\n```text\n");
+                out.push_str(&truncate_chars(trimmed, 1200));
+                out.push_str("\n```\n");
+            }
+        }
+    }
+    if let Some(genpack) = genpack {
+        render_genpack_section(&mut out, genpack);
+    }
+    out
 }
 
 fn render_agent_realize_prompt(
@@ -9222,6 +9902,47 @@ fn agent_architect_enrich_running_op(
     }
 }
 
+fn agent_review_running_op(
+    session_id: Uuid,
+    agent: &AgentProfile,
+    handoff: &AgentHandoff,
+    prompt_path: &Utf8Path,
+    round: u32,
+) -> OpRecord {
+    let now = now_string();
+    OpRecord {
+        schema_version: "x07.studio.op_record@0.1.0".to_string(),
+        id: Uuid::new_v4(),
+        session_id,
+        op: format!("agent.review.{}", agent.id),
+        backend: "agent-supervisor".to_string(),
+        command: handoff.command.clone(),
+        started_at: now,
+        finished_at: None,
+        status: OperationStatus::Running,
+        exit_code: None,
+        artifacts: vec![prompt_path.to_string()],
+        notes: Some(format!(
+            "{} is reviewing the verified implementation (round {round}).",
+            agent.label
+        )),
+        stdout: Some(format!(
+            "Supervised review started.\nCommand: {}\nPrompt: {}\n",
+            handoff.command.join(" "),
+            handoff.prompt_path
+        )),
+        stderr: None,
+        stdout_json: None,
+        stderr_json: None,
+        report_json: Some(serde_json::json!({
+            "mode": "review",
+            "round": round,
+            "handoff": handoff,
+        })),
+        report_path: None,
+    }
+}
+
 fn agent_realize_running_op(
     session_id: Uuid,
     agent: &AgentProfile,
@@ -9663,6 +10384,7 @@ fn build_agent_semantic_event_from_value(value: &serde_json::Value) -> Option<Ag
             | "approval"
             | "clarify_question"
             | "clarify_done"
+            | "review"
             | "spec_enrichment"
     ) {
         return None;
@@ -10187,10 +10909,11 @@ mod tests {
     use super::{
         agent_clarify_handoff_from_session, agent_handoff_from_session, architect_stage_note,
         atlas_platform_delivery_vars, checked_xtal_verify_run_vars, copy_example_tree,
-        entry_from_spec_operation, intent_packet_from_raw, platform_deployment_id_from_report,
-        render_agent_realize_prompt, sha256_hex, should_scaffold_spec, snapshot_agent_workspace,
-        workflow_template_from_intent, xtal_workflow_vars_from_intent, GenpackHandoffContext,
-        WorkflowTemplate, WorkspaceKernel,
+        entry_from_spec_operation, intent_packet_from_raw, materialize_template_dependencies,
+        platform_deployment_id_from_report, render_agent_realize_prompt,
+        render_agent_review_prompt, sha256_hex, should_scaffold_spec, snapshot_agent_workspace,
+        workflow_template_from_intent, write_build_xtal_manifest, xtal_workflow_vars_from_intent,
+        GenpackHandoffContext, WorkflowTemplate, WorkspaceKernel,
     };
 
     #[test]
@@ -10250,6 +10973,40 @@ mod tests {
         assert!(prompt.contains("text-only response, diagnostics-only response, or no-op run"));
         assert!(prompt.contains("x07 xtal impl check --project x07.json"));
         assert!(prompt.contains("src/app/calculator.x07.json"));
+    }
+
+    #[test]
+    fn review_prompt_is_read_only_and_requests_verdict_event() {
+        let mut session =
+            SessionSnapshot::new(Uuid::nil(), "review", "/workspace", TaskType::NewBehavior);
+        session.intent = Some(IntentPacket::demo(session.session_id, "/workspace"));
+        let agent = AgentProfile {
+            schema_version: "x07.studio.agent_profile@0.1.0".to_string(),
+            id: "claude-code".to_string(),
+            label: "Claude Code".to_string(),
+            command: "claude".to_string(),
+            args: Vec::new(),
+            allowed_verbs: vec!["review.round".to_string()],
+            mcp_tools: Vec::new(),
+            write_roots: Vec::new(),
+            approval_required: false,
+            status: AgentStatus::Available,
+            default_role: AgentRole::Reviewer,
+            eligible_roles: vec![AgentRole::Reviewer],
+            notes: "test reviewer".to_string(),
+        };
+        let prompt = render_agent_review_prompt(
+            &session,
+            &agent,
+            &["claude".to_string(), "prompt.md".to_string()],
+            1,
+            None,
+        );
+
+        assert!(prompt.contains("read-only reviewer pass"));
+        assert!(prompt.contains("\"kind\":\"review\""));
+        assert!(prompt.contains("`accept`, `revise`, or `block`"));
+        assert!(prompt.contains("Do not edit"));
     }
 
     #[test]
@@ -11298,6 +12055,110 @@ mod tests {
             );
             assert_eq!(intent.targets[0].entry.as_deref(), Some("normalize_v1"));
         }
+    }
+
+    #[test]
+    fn formalize_intent_recognizes_timer_intents() {
+        let root = temp_root();
+        let session = SessionSnapshot::new(
+            Uuid::nil(),
+            "timer",
+            root.to_string(),
+            TaskType::NewBehavior,
+        );
+
+        let intent = intent_packet_from_raw(
+            &session,
+            "Build a timer that measures and reports elapsed wall-clock time between two events.",
+            IntentInputMode::Text,
+            &[],
+        );
+
+        assert_eq!(intent.targets[0].module_id, "app.timer");
+        assert_eq!(intent.targets[0].entry.as_deref(), Some("elapsed_v1"));
+        assert!(intent
+            .policy_implications
+            .iter()
+            .any(|item| item.contains("run-os")));
+        assert!(intent
+            .constraints
+            .iter()
+            .any(|item| item.contains("OS time capability")));
+    }
+
+    #[test]
+    fn build_xtal_manifest_uses_run_os_for_timer_intent() {
+        let root = temp_root();
+        let session = SessionSnapshot::new(
+            Uuid::nil(),
+            "timer",
+            root.to_string(),
+            TaskType::NewBehavior,
+        );
+        let intent = intent_packet_from_raw(
+            &session,
+            "Build a timer that reports elapsed wall-clock time.",
+            IntentInputMode::Text,
+            &[],
+        );
+        let manifest_path = root.join("arch/xtal/xtal.json");
+
+        write_build_xtal_manifest(manifest_path.as_path(), &intent).expect("write manifest");
+
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).expect("manifest"))
+                .expect("parse manifest");
+        assert_eq!(
+            manifest["entrypoints"][0]["name"].as_str(),
+            Some("app.timer.elapsed_v1")
+        );
+        assert_eq!(manifest["profiles"]["dev_world"].as_str(), Some("run-os"));
+        assert_eq!(manifest["profiles"]["ci_world"].as_str(), Some("run-os"));
+        assert_eq!(manifest["profiles"]["prod_world"].as_str(), Some("run-os"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn sync_project_manifest_updates_entry_and_run_os_world() {
+        let root = temp_root();
+        let mut kernel = WorkspaceKernel::open(root.clone()).expect("open kernel");
+        let session = kernel
+            .create_session("timer", TaskType::NewBehavior)
+            .expect("create session");
+        kernel
+            .formalize_intent(
+                session.session_id,
+                "Build a timer that reports elapsed wall-clock time.",
+                IntentInputMode::Text,
+                &[],
+            )
+            .expect("formalize intent");
+        std::fs::write(
+            root.join("x07.json"),
+            r#"{"world":"solve-pure","operational_entry_symbol":"toy.sorter.sort_u8_asc"}"#,
+        )
+        .expect("write x07");
+
+        let snapshot = kernel
+            .sync_project_manifest_for_intent(session.session_id)
+            .expect("sync manifest");
+
+        let project: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("x07.json")).expect("x07"))
+                .expect("parse x07");
+        assert_eq!(project["world"].as_str(), Some("run-os"));
+        assert_eq!(
+            project["operational_entry_symbol"].as_str(),
+            Some("app.timer.elapsed_v1")
+        );
+        let op = snapshot
+            .op_log
+            .iter()
+            .rev()
+            .find(|op| op.op == "project.manifest.sync")
+            .expect("sync op");
+        assert_eq!(op.status, OperationStatus::Succeeded);
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -12454,6 +13315,92 @@ mod tests {
             Some("target/xtal/cert/bundle.json")
         );
         assert_eq!(radar.incident_count, 2);
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn template_dependency_materialization_merges_project_lock_and_package() {
+        let root = temp_root();
+        std::fs::create_dir_all(root.join("packages/ext/x07-ext-unicode-rs/0.1.5/modules"))
+            .expect("create package source");
+        std::fs::write(
+            root.join("packages/ext/x07-ext-unicode-rs/0.1.5/x07-package.json"),
+            "{}\n",
+        )
+        .expect("write package manifest");
+        std::fs::write(
+            root.join("packages/ext/x07-ext-unicode-rs/0.1.5/modules/ext.unicode.x07.json"),
+            "{}\n",
+        )
+        .expect("write package module");
+        std::fs::write(
+            root.join("x07.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": "x07.project@0.5.0",
+                "compat": "0.5",
+                "world": "solve-pure",
+                "entry": "src/main.x07.json",
+                "module_roots": ["src", "gen"],
+                "dependencies": [],
+                "lockfile": "x07.lock.json"
+            }))
+            .expect("project json"),
+        )
+        .expect("write x07.json");
+        std::fs::write(
+            root.join("x07.lock.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": "x07.lock@0.4.0",
+                "toolchain": {
+                    "x07_version": "0.2.10",
+                    "x07c_version": "0.2.10",
+                    "lang_id": "x07-core@0.2.0",
+                    "compat": "0.5"
+                },
+                "registry": {
+                    "index_url": "sparse+https://registry.x07.io/index/"
+                },
+                "dependencies": []
+            }))
+            .expect("lock json"),
+        )
+        .expect("write lockfile");
+        let session = SessionSnapshot::new(
+            Uuid::nil(),
+            "normalize",
+            root.as_str(),
+            TaskType::NewBehavior,
+        );
+        let intent = intent_packet_from_raw(
+            &session,
+            "Build a normalize-and-casefold UTF-8 helper.",
+            IntentInputMode::Text,
+            &[],
+        );
+        let synth = crate::synthesis::synthesize_from_template(&intent).expect("text template");
+
+        let artifacts =
+            materialize_template_dependencies(root.as_path(), &synth).expect("materialize deps");
+
+        assert!(artifacts.contains(&"x07.json".to_string()));
+        assert!(artifacts.contains(&"x07.lock.json".to_string()));
+        assert!(root
+            .join(".x07/deps/ext-unicode-rs/0.1.5/x07-package.json")
+            .is_file());
+        let project: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("x07.json")).unwrap()).unwrap();
+        assert_eq!(
+            project["dependencies"][0]["name"].as_str(),
+            Some("ext-unicode-rs")
+        );
+        let lock: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join("x07.lock.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            lock["dependencies"][0]["modules_sha256"]["ext.unicode"].as_str(),
+            Some("df35037b24fff1346db444d0281f002cc49f992799647d89d1ca80516714bbdb")
+        );
 
         std::fs::remove_dir_all(root).ok();
     }

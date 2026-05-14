@@ -126,11 +126,12 @@ pub fn synthesize_from_template(intent: &IntentPacket) -> Option<TemplateSynthes
     let entry_name = target.entry.as_deref().unwrap_or("run_v1");
     let full_name = format!("{module_id}.{entry_name}");
     let body = template_body_for(module_id, entry_name)?;
+    let imports = template_imports_for(module_id);
     let module = json!({
         "schema_version": "x07.x07ast@0.8.0",
         "kind": "module",
         "module_id": module_id,
-        "imports": [],
+        "imports": imports,
         "decls": [
             { "kind": "export", "names": [full_name] },
             {
@@ -147,6 +148,7 @@ pub fn synthesize_from_template(intent: &IntentPacket) -> Option<TemplateSynthes
         entry_name: entry_name.to_string(),
         relative_path: format!("src/{}.x07.json", module_id.replace('.', "/")),
         body: module,
+        dependencies: template_dependencies_for(module_id),
     })
 }
 
@@ -156,6 +158,69 @@ pub struct TemplateSynthesis {
     pub entry_name: String,
     pub relative_path: String,
     pub body: Value,
+    pub dependencies: Vec<TemplateDependency>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateDependency {
+    pub name: String,
+    pub version: String,
+    pub relative_path: String,
+    pub source_hint: String,
+    pub project_entry: Value,
+    pub lock_entry: Value,
+}
+
+fn template_imports_for(module_id: &str) -> Vec<&'static str> {
+    let lowered = module_id.to_ascii_lowercase();
+    if lowered.contains("text") {
+        vec![
+            "ext.unicode",
+            "ext.unicode.casefold",
+            "ext.unicode.normalize",
+        ]
+    } else if lowered.contains("timer") {
+        vec!["std.os.time"]
+    } else {
+        Vec::new()
+    }
+}
+
+fn template_dependencies_for(module_id: &str) -> Vec<TemplateDependency> {
+    let lowered = module_id.to_ascii_lowercase();
+    if lowered.contains("text") {
+        return vec![ext_unicode_dependency()];
+    }
+    Vec::new()
+}
+
+fn ext_unicode_dependency() -> TemplateDependency {
+    TemplateDependency {
+        name: "ext-unicode-rs".to_string(),
+        version: "0.1.5".to_string(),
+        relative_path: ".x07/deps/ext-unicode-rs/0.1.5".to_string(),
+        source_hint: "packages/ext/x07-ext-unicode-rs/0.1.5".to_string(),
+        project_entry: json!({
+            "name": "ext-unicode-rs",
+            "version": "0.1.5",
+            "path": ".x07/deps/ext-unicode-rs/0.1.5"
+        }),
+        lock_entry: json!({
+            "name": "ext-unicode-rs",
+            "version": "0.1.5",
+            "path": ".x07/deps/ext-unicode-rs/0.1.5",
+            "package_manifest_sha256": "8e316f53852c55576d9f65333538b1d90a1b5da380e9812ee97f046943c88779",
+            "module_root": "modules",
+            "modules_sha256": {
+                "ext.unicode": "df35037b24fff1346db444d0281f002cc49f992799647d89d1ca80516714bbdb",
+                "ext.unicode.casefold": "2a2be7ca592acef482c3e0015ad9748cd98b9a831bebce0791d11488a70d38c4",
+                "ext.unicode.normalize": "4f86ecc58f838788004617c9978476a1821cb780ed8e640f965d1aa44b826fc5",
+                "ext.unicode.segment": "341c8ace2b44f8fca0c5339bdbc8d102a6d06d36ef4a6a705601539a9fbf03c4",
+                "ext.unicode.tests": "1d5209fc2aab58dca59930459fd054d8065eb7a7dd9e042c179149ba7252064f"
+            },
+            "yanked": false
+        }),
+    }
 }
 
 fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
@@ -204,21 +269,12 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
         return Some(json!([
             "begin",
             ["let", "n", ["bytes.len", "payload"]],
-            ["if", ["=", "n", 0], ["return", ["bytes.empty"]], 0],
-            ["let", "out", ["bytes.lit", "Hello, "]],
+            ["if", ["=", "n", 0], ["return", ["bytes.alloc", 0]], 0],
             [
-                "for",
-                "i",
-                0,
-                "n",
-                [
-                    "set",
-                    "out",
-                    ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]
-                ]
-            ],
-            ["set", "out", ["bytes.push_u8", "out", 33]],
-            "out"
+                "bytes.concat",
+                ["bytes.concat", ["bytes.lit", "Hello, "], "payload"],
+                ["bytes.lit", "!"]
+            ]
         ]));
     }
     if lowered.contains("calc") {
@@ -229,7 +285,7 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
             "begin",
             ["let", "n", ["bytes.len", "payload"]],
             ["let", "limit", ["if", [">", "n", 16], 16, "n"]],
-            ["let", "out", ["bytes.empty"]],
+            ["let", "out", ["bytes.alloc", "limit"]],
             [
                 "for",
                 "i",
@@ -238,7 +294,7 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
                 [
                     "set",
                     "out",
-                    ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]
+                    ["bytes.set_u8", "out", "i", ["bytes.get_u8", "payload", "i"]]
                 ]
             ],
             "out"
@@ -250,7 +306,7 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
         return Some(json!([
             "begin",
             ["let", "n", ["bytes.len", "payload"]],
-            ["let", "out", ["bytes.empty"]],
+            ["let", "out", ["bytes.alloc", "n"]],
             [
                 "for",
                 "i",
@@ -259,7 +315,7 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
                 [
                     "set",
                     "out",
-                    ["bytes.push_u8", "out", ["bytes.get_u8", "payload", "i"]]
+                    ["bytes.set_u8", "out", "i", ["bytes.get_u8", "payload", "i"]]
                 ]
             ],
             "out"
@@ -271,13 +327,100 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
         return Some(json!([
             "begin",
             ["let", "n", ["bytes.len", "payload"]],
-            ["let", "out", ["bytes.empty"]],
+            ["let", "out", ["bytes.alloc", 1]],
             [
                 "set",
                 "out",
-                ["bytes.push_u8", "out", ["if", [">", "n", 0], 1, 0]]
+                ["bytes.set_u8", "out", 0, ["if", [">", "n", 0], 1, 0]]
             ],
             "out"
+        ]));
+    }
+    if lowered.contains("timer") {
+        // OS-time floor: make the world/capability transition concrete.
+        // Detailed timer state machines stay with the reviewer-approved
+        // implementation, but this calls the real OS time adapter.
+        return Some(json!([
+            "begin",
+            ["let", "start_ms", ["std.os.time.now_unix_ms"]],
+            ["let", "stop_ms", ["std.os.time.now_unix_ms"]],
+            ["let", "elapsed_ms", ["-", "stop_ms", "start_ms"]],
+            ["let", "elapsed_s", ["/", "elapsed_ms", 1000]],
+            [
+                "let",
+                "bounded_s",
+                [
+                    "if",
+                    ["<", "elapsed_s", 0],
+                    0,
+                    ["if", [">", "elapsed_s", 255], 255, "elapsed_s"]
+                ]
+            ],
+            ["let", "out", ["bytes.alloc", 1]],
+            ["set", "out", ["bytes.set_u8", "out", 0, "bounded_s"]],
+            "out"
+        ]));
+    }
+    if lowered.contains("text") {
+        // The packaged Unicode floor rejects invalid UTF-8, applies the
+        // deterministic NFKC-basic normalizer available in ext-unicode-rs,
+        // and then casefolds. Exact NFC support needs a wider package.
+        return Some(json!([
+            "begin",
+            [
+                "let",
+                "normalized_doc",
+                [
+                    "ext.unicode.normalize.nfkc_basic_v1",
+                    ["bytes.view", "payload"]
+                ]
+            ],
+            [
+                "if",
+                [
+                    "!=",
+                    [
+                        "ext.unicode.unicode_is_err",
+                        ["bytes.view", "normalized_doc"]
+                    ],
+                    0
+                ],
+                ["return", ["bytes.lit", "ERR_UTF8"]],
+                0
+            ],
+            [
+                "let",
+                "normalized",
+                [
+                    "ext.unicode.unicode_get_bytes",
+                    ["bytes.view", "normalized_doc"]
+                ]
+            ],
+            [
+                "let",
+                "casefolded_doc",
+                [
+                    "ext.unicode.casefold.casefold_basic_v1",
+                    ["bytes.view", "normalized"]
+                ]
+            ],
+            [
+                "if",
+                [
+                    "!=",
+                    [
+                        "ext.unicode.unicode_is_err",
+                        ["bytes.view", "casefolded_doc"]
+                    ],
+                    0
+                ],
+                ["return", ["bytes.lit", "ERR_UTF8"]],
+                0
+            ],
+            [
+                "ext.unicode.unicode_get_bytes",
+                ["bytes.view", "casefolded_doc"]
+            ]
         ]));
     }
     if lowered.contains("crawl") {
@@ -288,7 +431,7 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
             [
                 "if",
                 ["=", ["bytes.len", "payload"], 0],
-                ["return", ["bytes.empty"]],
+                ["return", ["bytes.alloc", 0]],
                 0
             ],
             ["view.to_bytes", ["bytes.view", "payload"]]
@@ -300,8 +443,12 @@ fn template_body_for(module_id: &str, _entry_name: &str) -> Option<Value> {
         return Some(json!([
             "begin",
             ["let", "n", ["bytes.len", "payload"]],
-            ["let", "out", ["bytes.empty"]],
-            ["set", "out", ["bytes.push_u8", "out", "n"]],
+            ["let", "out", ["bytes.alloc", 1]],
+            [
+                "set",
+                "out",
+                ["bytes.set_u8", "out", 0, ["if", [">", "n", 255], 255, "n"]]
+            ],
             "out"
         ]));
     }
@@ -417,7 +564,7 @@ mod tests {
         let synth = synthesize_from_template(&packet).expect("template");
         let body = synth.body["decls"][1]["body"].clone();
         let serialized = serde_json::to_string(&body).expect("serialize");
-        assert!(serialized.contains("bytes.push_u8"));
+        assert!(serialized.contains("bytes.set_u8"));
         assert!(serialized.contains("bytes.get_u8"));
     }
 
@@ -427,7 +574,7 @@ mod tests {
         let synth = synthesize_from_template(&packet).expect("template");
         let body = synth.body["decls"][1]["body"].clone();
         let serialized = serde_json::to_string(&body).expect("serialize");
-        assert!(serialized.contains("bytes.push_u8"));
+        assert!(serialized.contains("bytes.set_u8"));
         assert!(serialized.contains("\"n\",0"));
     }
 
@@ -439,6 +586,38 @@ mod tests {
         let serialized = serde_json::to_string(&body).expect("serialize");
         assert!(serialized.contains("\"limit\""));
         assert!(serialized.contains(",16"));
+    }
+
+    #[test]
+    fn template_synthesis_emits_timer_floor_with_os_time_import() {
+        let packet = intent("app.timer", "elapsed_v1");
+        let synth = synthesize_from_template(&packet).expect("template");
+        assert_eq!(synth.body["imports"], serde_json::json!(["std.os.time"]));
+        let body = synth.body["decls"][1]["body"].clone();
+        let serialized = serde_json::to_string(&body).expect("serialize");
+        assert!(serialized.contains("std.os.time.now_unix_ms"));
+    }
+
+    #[test]
+    fn template_synthesis_emits_text_unicode_floor_with_dependency() {
+        let packet = intent("app.text", "normalize_v1");
+        let synth = synthesize_from_template(&packet).expect("template");
+        assert_eq!(
+            synth.body["imports"],
+            serde_json::json!([
+                "ext.unicode",
+                "ext.unicode.casefold",
+                "ext.unicode.normalize"
+            ])
+        );
+        assert_eq!(synth.dependencies.len(), 1);
+        assert_eq!(synth.dependencies[0].name, "ext-unicode-rs");
+        let body = synth.body["decls"][1]["body"].clone();
+        let serialized = serde_json::to_string(&body).expect("serialize");
+        assert!(serialized.contains("ext.unicode.normalize.nfkc_basic_v1"));
+        assert!(serialized.contains("ext.unicode.casefold.casefold_basic_v1"));
+        assert!(serialized.contains("ERR_UTF8"));
+        assert!(serialized.len() > 200);
     }
 
     #[test]

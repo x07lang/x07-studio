@@ -5,13 +5,13 @@
   "expected_flow": [
     "Agent imports std.os.time during impl",
     "Real x07 xtal verify --allow-os-world runs",
-    "Trust posture captures worlds=['solve-pure', 'os-time']",
+    "Trust posture captures solve-pure baseline plus run-os world and os-time capability",
     "Posture color flips green -> amber",
     "Shareable rung loses solve-world default; needs trusted_program_sandboxed_* profile",
     "Compare lens (semantic diff) headline mentions world widen"
   ],
   "success_criteria": [
-    "TrustCard shows os-time chip and amber border color",
+    "TrustCard shows run-os world chip, os-time capability chip, and amber border color",
     "Semantic diff headline references world widen",
     "Climb to Shareable fails until trust profile is added"
   ]

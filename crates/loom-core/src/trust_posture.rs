@@ -138,6 +138,14 @@ fn worlds(trust_report: &Value, x07_json: &Value) -> Vec<String> {
             worlds.push(world);
         }
     }
+    if let Some(world) = x07_json.get("world").and_then(Value::as_str) {
+        if world != "solve-pure" && !worlds.iter().any(|item| item == "solve-pure") {
+            worlds.push("solve-pure".to_string());
+        }
+        if !worlds.iter().any(|item| item == world) {
+            worlds.push(world.to_string());
+        }
+    }
     if worlds.is_empty() {
         if let Some(profile) = first_string_for_keys(x07_json, &["default_profile", "profile"]) {
             if profile.contains("os") {
@@ -166,6 +174,13 @@ fn capabilities(
             push_capabilities(&mut caps, &profile_json, profile);
         }
     }
+    if source_contains(root, "std.os.time") {
+        caps.push(Capability {
+            id: "os-time".to_string(),
+            source: "source import".to_string(),
+            justification: "source imports std.os.time for wall-clock reads".to_string(),
+        });
+    }
     for world in worlds {
         if world.contains("os-net") || world.contains("network") {
             caps.push(Capability {
@@ -190,6 +205,39 @@ fn capabilities(
     caps.sort_by(|a, b| a.id.cmp(&b.id).then(a.source.cmp(&b.source)));
     caps.dedup_by(|a, b| a.id == b.id && a.source == b.source);
     caps
+}
+
+fn source_contains(root: &Utf8Path, needle: &str) -> bool {
+    let mut stack = vec![root.join("src").as_std_path().to_path_buf()];
+    let mut files_read = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                stack.push(entry.path());
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            files_read += 1;
+            if files_read > 512 {
+                return false;
+            }
+            if std::fs::read_to_string(entry.path())
+                .map(|text| text.contains(needle))
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn push_capabilities(out: &mut Vec<Capability>, value: &Value, source: &str) {
@@ -424,6 +472,32 @@ mod tests {
         assert!(posture.worlds.contains(&"solve-pure".to_string()));
         assert!(posture.proof_coverage.proved_pct >= 50.0);
         assert_eq!(posture.posture_color, "green");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn posture_surfaces_run_os_world_and_os_time_import() {
+        let root = temp_root();
+        std::fs::create_dir_all(root.join("src/app")).expect("mkdir src");
+        std::fs::write(root.join("x07.json"), r#"{"world":"run-os"}"#).expect("x07");
+        std::fs::write(
+            root.join("src/app/timer.x07.json"),
+            r#"{"imports":["std.os.time"]}"#,
+        )
+        .expect("timer source");
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "timer", root.to_string(), TaskType::NewBehavior);
+        session
+            .op_log
+            .push(op(session_id, "xtal.verify", OperationStatus::Succeeded));
+
+        let posture = current(root.as_path(), &session);
+
+        assert!(posture.worlds.contains(&"solve-pure".to_string()));
+        assert!(posture.worlds.contains(&"run-os".to_string()));
+        assert!(posture.capabilities.iter().any(|cap| cap.id == "os-time"));
+        assert_eq!(posture.posture_color, "amber");
         std::fs::remove_dir_all(root).ok();
     }
 

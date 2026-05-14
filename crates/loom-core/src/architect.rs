@@ -41,9 +41,6 @@ pub struct SpecPredicate {
 ///
 /// `doc` lands directly in the spec's `operations[].doc` field.
 /// `ensures` lands in `operations[].ensures` as `{id, expr}` objects.
-/// Future extensions can add `requires`, `ensures_props`, etc.; each new
-/// field must round-trip cleanly through `x07 xtal spec check` before
-/// we ship it (Tier-1.5 contract).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchetypeSemantic {
     pub doc: &'static str,
@@ -73,9 +70,9 @@ pub fn archetype_for(module_id: &str, entry: &str) -> Option<ArchetypeSemantic> 
             ensures: &[],
         },
         ("app.checksum", "digest_v1") => ArchetypeSemantic {
-            doc: "Compute a deterministic fixed-size digest over the input bytes. The same \
-                  input must always produce the same digest. Different inputs should produce \
-                  different digests with high probability.",
+            doc: "Compute a deterministic 32-bit CRC32-style digest over the input bytes. Return \
+                  exactly four bytes in little-endian order. Empty input returns the all-zero \
+                  digest, and equal inputs always return equal digests.",
             ensures: &[],
         },
         ("app.codec", "roundtrip_v1") => ArchetypeSemantic {
@@ -145,6 +142,12 @@ pub fn archetype_for(module_id: &str, entry: &str) -> Option<ArchetypeSemantic> 
                 id: "status_byte",
                 expr_json: r#"["=", ["bytes.len", "__result"], 1]"#,
             }],
+        },
+        ("app.timer", "elapsed_v1") => ArchetypeSemantic {
+            doc: "Measure elapsed wall-clock time using the reviewed OS time capability. \
+                  Capture an OS clock reading at the start and stop moments, report whole \
+                  elapsed seconds as bytes, and reject negative intervals as explicit errors.",
+            ensures: &[],
         },
         ("app.cli", "run_v1") => ArchetypeSemantic {
             doc: "Interpret the input payload as a command request and return the command's \
@@ -622,6 +625,7 @@ mod tests {
             ("app.calculator", "compute_v1"),
             ("app.parser", "parse_v1"),
             ("app.validator", "validate_v1"),
+            ("app.timer", "elapsed_v1"),
             ("app.cli", "run_v1"),
             ("app.service", "handle_v1"),
         ];
@@ -704,6 +708,13 @@ mod tests {
         let semantic = archetype_for("app.calculator", "compute_v1").unwrap();
         assert_eq!(semantic.ensures.len(), 1);
         assert_eq!(semantic.ensures[0].id, "result_bounded");
+    }
+
+    #[test]
+    fn timer_archetype_carries_os_time_doc_without_predicate() {
+        let semantic = archetype_for("app.timer", "elapsed_v1").unwrap();
+        assert!(semantic.doc.contains("OS time"));
+        assert!(semantic.ensures.is_empty());
     }
 
     #[test]

@@ -661,7 +661,10 @@ success, emits `build.stage.done` followed by a deterministic
 `summary.plain_english` OpRecord whose `report_json` carries
 `x07.studio.plain_english_summary@0.1.0`
 (`headline`, `behavior_promises`, `boundaries`, `evidence`,
-`run_invocation`, `followups`).
+`run_invocation`, `followups`). When per-session role overrides are present,
+the build still emits the summary/lint evidence but skips local template
+synthesis so autopilot can see `scaffold_only: true` and enter the supervised
+role pipeline.
 
 ## Timeline and Cycle 2 Operations
 
@@ -924,7 +927,10 @@ Call tool request:
 - `POST /v1/sessions/{session_id}/realize/pick` applies the chosen quorum
   proposal, then reruns `impl.check` and `xtal.verify`.
 - `POST /v1/sessions/{session_id}/autopilot/start` runs the bounded autopilot
-  loop with an optional policy.
+  loop with an optional policy. If verified evidence is still scaffold-only,
+  autopilot enters the role pipeline. The configured reviewer CLI runs in
+  read-only mode before Studio records `review.round`; deterministic baseline
+  review is a fallback when no reviewer agent is available.
 - `POST /v1/sessions/{session_id}/autopilot/pause` records a pause decision.
 - `GET /v1/sessions/{session_id}/diffs/live` streams normalized `LiveDiff`
   frames extracted from streamed Edit / Write tool-use events.

@@ -14,7 +14,7 @@ Severity legend:
 | F1 | **FIXED** | HealthRow MIGRATE label reads "schema → 0.5" when `from_schema` is null | 1 |
 | F2 | **FIXED** | TrustCard pending stays "pending" for >1 min on a fresh real workspace | 1 |
 | F3 | **FIXED** | Daemon HTTP server returns "Empty reply" after autopilot kicks off real claude/codex (resolved by yielding-autopilot refactor; lock released around AutoClarify subprocess select-loop) | 1 |
-| F4 | FIX | Real `x07 verify` produces proof-support warnings the UI doesn't surface clearly | 1 |
+| F4 | **FIXED** | Real `x07 verify` proof-support warnings surface in TrustCard proof-support notes | 1 |
 | F5 | **DOCUMENTED** | Real x07 picks discovery path from a sibling debug build, not `~/.x07/bin/` | infra |
 | F6 | **FIXED** | Intent heuristic doesn't recognize text-normalization / casefold / unicode prompts; falls through to generic `app.main.run_v1` with no semantic guidance, leaving the role-pipeline reviewer in a stall loop | 5 |
 | F7 | **FIXED** | Architect role emits a dummy "spec confirmed" log without enriching the scaffolded spec; coder gets empty `requires/ensures/doc` and produces identity passthrough (deterministic floor — `doc` enrichment from archetype semantics) | 5 |
@@ -23,8 +23,12 @@ Severity legend:
 | F10 | **FIXED** | `architect_enrich_after_scaffold` was only wired into the fresh-scaffold branch; the xtal-pure template auto-installs `spec/toy.sorter.x07spec.json` so the else branch was taken and no enrichment ran | tier1.5 |
 | F11 | **FIXED** | `architect_enrich_after_scaffold` wrote `serde_json::to_string_pretty`, which fails x07's `WXTAL_SPEC_NONCANONICAL_JSON` gate; downstream `xtal.verify` rejected the spec | tier1.5 |
 | F12 | **FIXED** | Build-pipeline scaffolds the impl as `["bytes.empty"]`; any non-trivial `ensures` predicate produced a counterexample. Tier-1.5b lands: predicates promote **after** `try_template_synthesis` / coder writes a real impl, mirrored into both spec and impl files | tier1.5b |
-| F4  | **FIXED** | Real `x07 verify` proof-support warnings (`WXTAL_VERIFY_PROVE_*`, `X07V_*`, `EXTAL_VERIFY_PROVE_*`) now surface in `TrustPosture.proof_support_notes`; TrustCard renders them in a collapsible "Proof support" panel with severity-colored borders | tier1.5b |
 | F13 | **FIXED** | Scenario 2 CSV repair now exercises real repair: seeded CSV examples make `xtal.verify` fail, `xtal.repair` runs, and autopilot pauses cleanly at `realize_stalled` | 2 |
+| F14 | **FIXED** | Scenario 3 trust widening now records real `run-os` world, `os-time` capability, amber posture, and ladder solve-default loss | 3 |
+| F15 | **FIXED** | Scenario 4 PBT now runs a target manifest, captures a counterexample, and locks it as a deterministic regression | 4 |
+| F16 | **FIXED** | Role-overridden builds now still emit summary/lint evidence so autopilot can enter the role pipeline on scaffold-only output | 5 |
+| F17 | **FIXED** | Text normalize/casefold targets get a dependency-backed Unicode implementation floor with `ext-unicode-rs@0.1.5` | 5 |
+| F18 | **FIXED** | Streaming agent timeouts kill child processes, preserve partial output, and continue to bounded fallback | 5 |
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 
@@ -450,7 +454,7 @@ Both render in the new panel with amber severity borders (warning class), each w
 
 **Root cause:** `app.parser.parse_v1` remains doc-only in the archetype table. The deterministic parser synthesis floor writes a length-prefixed echo implementation, and the post-implementation predicate promotion path has no parser predicate to promote. With no formal contract for malformed quote rejection, `xtal.verify` has nothing strict to fail against, so the repair loop never becomes eligible.
 
-**Fix direction:** Complete the C2 parser predicate expansion, or add a scenario-specific pre-seeded failing contract/workspace setup. The fix must make a real `xtal.verify` failure reachable before claiming scenario 2 coverage. Do not mark A5 complete from the current bundle.
+**Original fix direction:** Complete the C2 parser predicate expansion, or add a scenario-specific pre-seeded failing contract/workspace setup. The shipped fix below uses the scenario-specific fixture route and makes a real `xtal.verify` failure reachable.
 
 **Status:** **FIXED** on 2026-05-13.
 
@@ -471,9 +475,126 @@ This accepts scenario 2 as the intended repair-loop coverage: the strict CSV fix
 
 ---
 
+## F14 — scenario 3 os-time trust widening stayed solve-pure
+
+**Severity:** FIX — blocks public-beta A5 completion.
+
+**Observed:** The os-time scenario originally generated a solve-pure starter and stale scenario text expected a synthetic `os-time` world. That did not exercise the real trust widening path.
+
+**Root cause:** Timer intents were not routed to a timer archetype with an OS-time import, and trust posture/ladder logic needed to model real x07 OS execution as `run-os` plus an `os-time` capability rather than a fake world label.
+
+**Status:** **FIXED** on 2026-05-13.
+
+Fixes:
+- Timer intents route to `app.timer.elapsed_v1`.
+- The timer template imports the OS-time capability and runs through the real `run-os` world.
+- Trust posture records worlds `["run-os", "solve-pure"]`, capability `os-time`, amber posture, and world/capability widening deltas.
+- Ladder local-preview gate loses `solve-world default` when the implementation widens to `run-os`.
+- Scenario docs now assert `run-os` world + `os-time` capability, not a synthetic `os-time` world.
+
+Evidence:
+- Bundle: `target/stress-pass-s3-accepted/scenario-3-os-time/`
+- Session: `fbd8fac3-f35b-42f7-a3a7-9daec3b9581e`
+- Snapshot: `op_count: 29`, `turn_count: 10`, `posture_color: "amber"`.
+- Posture: worlds `["run-os", "solve-pure"]`, capability `os-time`, proof support `100%`, proved `87%`.
+- Ladder: local preview missing `solve-world default`.
+
+---
+
+## F15 — scenario 4 PBT path used starter manifests and lost repros
+
+**Severity:** FIX — blocks public-beta A5 completion.
+
+**Observed:** The PBT scenario initially ran starter/generated manifests that did not represent the checksum property under test. Early PBT failures also failed to preserve a stable repro path, so the regression endpoint could not reliably lock the counterexample.
+
+**Root cause:** Studio had a PBT button but no scenario-specific manifest generation for the active target, and the regression endpoint did not pass the new `x07 fix --from-pbt` arguments needed to copy the repro and update the regression manifest.
+
+**Status:** **FIXED** on 2026-05-13.
+
+Fixes:
+- `pbt.run` writes and runs a real `tests/regress/tests.json` manifest for the Studio target.
+- Counterexamples include stable repro IDs and `.x07/cache/pbt/repros/...json` paths.
+- `pbt.regression_from` calls `x07 fix --from-pbt <repro> --write --tests-manifest tests/regress/tests.json --out-dir repro/pbt`.
+- The locked regression writes `tests/regress/repro/pbt/cca888f40c3ca.x07.json` and `cca888f40c3ca.repro.json`.
+
+Evidence:
+- Bundle: `target/stress-pass-s4-accepted/scenario-4-pbt/`
+- Session: `4639a1b6-6e61-4345-8fe4-9ed398d40651`
+- Counterexample: `studio-pbt-app.checksum-digest_v1-prop_digest_v1_shape`, empty `payload`, failure code `1099`.
+- Regression endpoint: `pbt.regression_from` succeeded and appended the locked repro to `tests/regress/tests.json`.
+
+---
+
+## F16 — role-overrides skipped summary evidence and prevented Scenario 5 realize
+
+**Severity:** FIX — blocks public-beta A5 completion.
+
+**Observed:** In a fresh Scenario 5 run with Architect/Coder/Reviewer overrides, the build reached `trust_review` with `src/app/text.x07.json` still equal to the `bytes.empty` stub. Autopilot then stopped at `complete` instead of entering the role pipeline.
+
+**Root cause:** Build auto-template synthesis was correctly skipped when role overrides existed, but the same branch also contained `summary.plain_english` and lint emission. Without a latest summary carrying `scaffold_only: true`, `autopilot::decide_next` had no signal to run `AutoRealize`.
+
+**Status:** **FIXED** on 2026-05-13.
+
+Fix:
+- Build still skips local template synthesis when role overrides are present.
+- Build now always emits summary/lint evidence on success, so role-overridden sessions surface `scaffold_only: true` and autopilot enters `role.pipeline.started`.
+- Regression coverage: `scan_stub_modules_flags_bytes_empty_body` confirms `["bytes.empty"]` bodies are classified as stubs.
+
+Evidence:
+- Fresh bundle: `target/stress-pass-s5-summary-fix/scenario-5-collab/`
+- Session: `6333cea2-b8ab-40da-8835-6ebb67ddd8e4`
+- First verified turn: `summary.plain_english` with `scaffold_only: true`.
+- Next autopilot decision: `realize`, followed by `role.pipeline.started`.
+
+---
+
+## F17 — Scenario 5 needed a real Unicode implementation floor
+
+**Severity:** FIX — blocks public-beta A5 completion.
+
+**Observed:** The normalize-and-casefold prompt previously stalled at identity or empty-byte implementations. The spec docs described Unicode behavior, but neither the build nor the fallback had a dependency-backed implementation to replace the scaffold.
+
+**Root cause:** Text targets had no template dependency materialization path. Studio could synthesize local x07AST bodies, but could not add `ext-unicode-rs` to `x07.json`, `x07.lock.json`, and `.x07/deps/` as one atomic implementation step.
+
+**Status:** **FIXED** on 2026-05-13.
+
+Fix:
+- Template synthesis can now carry dependencies and materialize them into the workspace.
+- Text targets import `ext.unicode`, `ext.unicode.normalize`, and `ext.unicode.casefold`.
+- The implementation uses `ext.unicode.normalize.nfkc_basic_v1`, checks `unicode_is_err`, returns `ERR_UTF8` on invalid input, then casefolds with `casefold_basic_v1`.
+- Direct validation passes: `x07 xtal impl check --project x07.json` and `x07 xtal verify --project x07.json`.
+
+Important limitation: the released `ext-unicode-rs@0.1.5` package exposes an NFKC-basic normalization floor, not exact NFC. The Scenario 5 evidence should be read as a real Unicode normalize/casefold floor, not a full Unicode NFC conformance claim.
+
+Evidence:
+- Workspace: `target/stress-pass-s5-summary-fix/scenario-5-collab/workspace`
+- Dependency: `ext-unicode-rs@0.1.5` copied to `.x07/deps/ext-unicode-rs/0.1.5`.
+- Impl digest after fallback: `src/app/text.x07.json`, sha256 `38dc250874ca21ced8e6334cb4bbf724ef46e84d18c85fcf6d646439af31153f`.
+
+---
+
+## F18 — streaming agent timeout needed bounded cleanup and preserved output
+
+**Severity:** FIX — prevents stuck role-pipeline subprocesses.
+
+**Observed:** Scenario 5's real Codex invocation can exceed the 60s coder budget while streaming JSON output. The pipeline must preserve partial output, close the subprocess, and continue to the deterministic fallback instead of leaving a zombie process or losing evidence.
+
+**Root cause:** The streaming command runner did not carry timeout handling through the read-loop in a way that explicitly killed the child, aborted reader tasks, and retained partial stdout/stderr.
+
+**Status:** **FIXED** on 2026-05-13.
+
+Fix:
+- `run_with_timeout_streaming` now passes the timeout into `wait_with_streaming_output`.
+- On timeout, the runner calls `start_kill()`, waits for child exit, aborts reader tasks, keeps partial stdout/stderr, and appends `command timed out after N seconds`.
+- Regression coverage: `runner_times_out_streaming_command_with_partial_output`.
+
+Scenario 5 accepted with this bounded behavior: real Codex was invoked and timed out, deterministic template fallback produced the implementation, real x07 verify passed, and real Claude reviewer emitted `verdict: "accept"`.
+
+---
+
 ## What scenario 5 also confirmed (positive findings)
 
 - **HTTP stays fully responsive under real subprocess load.** 18 probes during a 3-minute autopilot run all returned HTTP 200 in <2ms. F3 fix holds across multiple realize iterations, multiple reviewer rounds, multiple codex spawns.
 - **Real x07 0.2.10 toolchain integration works end-to-end.** AGENT.md is a real 30-line operating guide. `x07.json`, `x07.lock.json`, `x07-toolchain.toml` all populated correctly. Spec files (`toy.sorter`, `app.main`) materialize with proper JSON schema. Tests report + xtal verify diag both write `ok:true`.
-- **Role pipeline genuinely invokes two agents.** Op log shows 6× `agent.realize.openai-codex` (codex doing the implementation) interleaved with `review.round` records that name `claude-code` as the reviewer. The Architect+Coder+Reviewer pipeline is live.
-- **The autopilot's stall guard fires correctly.** After enough realize attempts produce scaffold-only summaries, autopilot moves on. The fix from `1ae54f8` continues to hold.
+- **Role pipeline genuinely invokes the configured agents.** The accepted bundle shows real `agent.clarify.claude-code`, real `agent.realize.openai-codex`, real `agent.review.claude-code`, observed `agent.event.claude-code.review`, and `review.round` with verdict `accept`.
+- **The autopilot's scaffold gate fires correctly.** A role-overridden build emits `summary.plain_english` with `scaffold_only: true`; autopilot enters realize, then records a final verified summary with `scaffold_only: false`.

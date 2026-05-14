@@ -4,6 +4,10 @@ use loom_types::artifacts::{OperationStatus, PlainEnglishSummary};
 use loom_types::session::SessionSnapshot;
 
 pub fn baseline_review(session: &SessionSnapshot, reviewer_id: &str, round: u32) -> ReviewRound {
+    if let Some(review) = agent_review_round(session, reviewer_id, round) {
+        return review;
+    }
+
     let mut concerns = Vec::new();
 
     if !session
@@ -62,6 +66,47 @@ pub fn baseline_review(session: &SessionSnapshot, reviewer_id: &str, round: u32)
         concerns,
         created_at: now_string(),
     }
+}
+
+fn agent_review_round(
+    session: &SessionSnapshot,
+    reviewer_id: &str,
+    round: u32,
+) -> Option<ReviewRound> {
+    let event = session
+        .op_log
+        .iter()
+        .rev()
+        .find(|op| op.op == format!("agent.event.{reviewer_id}.review"))?;
+    let structured = event
+        .report_json
+        .as_ref()?
+        .get("structured")
+        .or(event.report_json.as_ref())?;
+    if structured.get("kind").and_then(|value| value.as_str()) != Some("review") {
+        return None;
+    }
+    let verdict = structured.get("verdict").and_then(|value| value.as_str())?;
+    if !matches!(verdict, "accept" | "revise" | "block") {
+        return None;
+    }
+    let concerns = structured
+        .get("concerns")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+        .map(|message| concern("agent_review", message))
+        .collect();
+    Some(ReviewRound {
+        schema_version: "x07.studio.review_round@0.1.0".to_string(),
+        session_id: session.session_id,
+        round,
+        reviewer: reviewer_id.to_string(),
+        verdict: verdict.to_string(),
+        concerns,
+        created_at: now_string(),
+    })
 }
 
 fn latest_verify_status(session: &SessionSnapshot) -> Option<OperationStatus> {
@@ -123,6 +168,43 @@ mod tests {
             report_json: None,
             report_path: None,
         }
+    }
+
+    #[test]
+    fn structured_agent_review_verdict_wins_over_baseline() {
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "demo", "/workspace", TaskType::NewBehavior);
+        session.op_log.push(op(
+            session_id,
+            "tests.gen.write",
+            OperationStatus::Succeeded,
+        ));
+        session
+            .op_log
+            .push(op(session_id, "xtal.verify", OperationStatus::Succeeded));
+        let mut review = op(
+            session_id,
+            "agent.event.claude-code.review",
+            OperationStatus::Succeeded,
+        );
+        review.report_json = Some(serde_json::json!({
+            "schema_version": "x07.studio.agent_semantic_event@0.1.0",
+            "kind": "review",
+            "structured": {
+                "schema_version": "x07.studio.agent_event@0.1.0",
+                "kind": "review",
+                "verdict": "revise",
+                "summary": "Needs edge-case coverage.",
+                "concerns": ["missing invalid UTF-8 fixture"]
+            }
+        }));
+        session.op_log.push(review);
+
+        let round = baseline_review(&session, "claude-code", 1);
+
+        assert_eq!(round.verdict, "revise");
+        assert_eq!(round.concerns[0].message, "missing invalid UTF-8 fixture");
     }
 
     #[test]

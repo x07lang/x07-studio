@@ -26,6 +26,11 @@ pub fn ladder_state(root: &Utf8Path, session: &SessionSnapshot) -> LadderState {
             } else if spec.id == "local_preview" && !verified(session) {
                 missing.push("xtal.verify succeeded".to_string());
             }
+            if spec.id == "local_preview" && project_declares_solve_default(root) {
+                evidence.push("solve-world default".to_string());
+            } else if spec.id == "local_preview" {
+                missing.push("solve-world default".to_string());
+            }
             LadderRung {
                 id: spec.id.to_string(),
                 label: spec.label.to_string(),
@@ -134,8 +139,10 @@ fn rung_gates(
         let verify_missing = missing
             .iter()
             .any(|item| item.contains("xtal.verify") && gate.id.contains("verify"));
+        let solve_default_missing = missing.iter().any(|item| item == "solve-world default");
         gate.currently_satisfied = !verify_missing
             && match gate.id.as_str() {
+                "solve-default" => !solve_default_missing,
                 "sandbox-profile" | "verified-core" | "certified-capsule" => !profile_missing,
                 "arch-check" => session_op_succeeded(session, "arch.check"),
                 "lockfile" => root.join("x07.lock.json").is_file(),
@@ -238,6 +245,21 @@ fn session_op_succeeded(session: &SessionSnapshot, op_name: &str) -> bool {
         .any(|op| op.op == op_name && op.status == OperationStatus::Succeeded)
 }
 
+fn project_declares_solve_default(root: &Utf8Path) -> bool {
+    let path = root.join("x07.json");
+    let Ok(raw) = std::fs::read_to_string(path.as_std_path()) else {
+        return true;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    value
+        .get("world")
+        .and_then(serde_json::Value::as_str)
+        .map(|world| world == "solve-pure")
+        .unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
@@ -283,6 +305,59 @@ mod tests {
 
         assert_eq!(state.current_rung, "local_preview");
         assert!(state.rungs[0].satisfied);
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn local_preview_solve_default_gate_rejects_run_os_world() {
+        let root = camino::Utf8PathBuf::from_path_buf(std::env::temp_dir())
+            .expect("utf8 temp")
+            .join(format!("x07-studio-ladder-os-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("target/xtal/verify")).expect("mkdir");
+        std::fs::write(root.join("x07.json"), r#"{"world":"run-os"}"#).expect("x07");
+        std::fs::write(root.join("target/xtal/verify/summary.json"), "{}").expect("verify");
+        let session_id = Uuid::new_v4();
+        let mut session =
+            SessionSnapshot::new(session_id, "timer", root.to_string(), TaskType::NewBehavior);
+        session.op_log.push(OpRecord {
+            schema_version: "x07.studio.op_record@0.1.0".to_string(),
+            id: Uuid::new_v4(),
+            session_id,
+            op: "xtal.verify".to_string(),
+            backend: "test".to_string(),
+            command: Vec::new(),
+            started_at: "1".to_string(),
+            finished_at: Some("1".to_string()),
+            status: OperationStatus::Succeeded,
+            exit_code: Some(0),
+            artifacts: vec!["target/xtal/verify/summary.json".to_string()],
+            notes: None,
+            stdout: None,
+            stderr: None,
+            stdout_json: None,
+            stderr_json: None,
+            report_json: None,
+            report_path: None,
+        });
+
+        let state = ladder_state(root.as_path(), &session);
+
+        let local = state
+            .rungs
+            .iter()
+            .find(|rung| rung.id == "local_preview")
+            .expect("local preview rung");
+        assert!(!local.satisfied);
+        assert!(local
+            .missing
+            .iter()
+            .any(|item| item == "solve-world default"));
+        let solve_gate = local
+            .gates
+            .iter()
+            .find(|gate| gate.id == "solve-default")
+            .expect("solve-default gate");
+        assert!(!solve_gate.currently_satisfied);
         std::fs::remove_dir_all(root).ok();
     }
 

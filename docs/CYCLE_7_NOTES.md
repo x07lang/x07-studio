@@ -8,9 +8,9 @@ The real-toolchain stress pass started here. Per-phase status as of 2026-05-13:
 | 7A — harness | done | `scripts/stress_pass.py` (record-only, not orchestrator) |
 | 7B — scenario 1 (text-utils baseline) | done — F3 fixed, scenario 1 baseline captured | Real toolchain delivered real artifacts on disk; daemon remains responsive during subprocess load after commits `1ae54f8` and `2344fde` |
 | 7C — scenario 2 (CSV repair) | done — repair loop exercised, clean pause | Seeded CSV example fixture makes real `xtal.verify` fail; real `xtal.repair` runs and autopilot pauses at `realize_stalled` |
-| 7D — scenario 3 (os-time widen) | deferred | Pending scenarios-2-5 sweep |
-| 7E — scenario 4 (PBT regression) | deferred | Pending scenarios-2-5 sweep |
-| 7F — scenario 5 (Architect+Coder) | deferred | Pending scenarios-2-5 sweep |
+| 7D — scenario 3 (os-time widen) | done | Real toolchain captured `run-os` + `os-time` trust widening, amber posture, proof-support warnings, and local-preview gate loss |
+| 7E — scenario 4 (PBT regression) | done | Real PBT manifest runs, captures a failing counterexample, and converts it into a deterministic regression via `x07 fix --from-pbt` |
+| 7F — scenario 5 (Architect+Coder) | done | Real Claude clarify, real Codex invocation, deterministic Unicode template fallback after bounded Codex timeout, and real Claude review accept |
 | 7G — findings | done | `docs/STRESS_PASS_FINDINGS.md` |
 | 7H — production-readiness | done | `docs/PRODUCTION_READINESS.md` |
 
@@ -34,6 +34,6 @@ This was good enough for internal alpha before the fix. It is not an expected pa
 
 ## Suggested next steps
 
-1. **Run scenarios 3-5** in sequence against the real toolchain and update findings.
-2. Run `python3 scripts/cross_browser_smoke.py` and record the browser support matrix.
-3. Run `python3 scripts/stability_soak.py` for the 30-minute public-beta soak and record `metrics.csv`/`summary.json`.
+1. Pick the public-beta dogfood cohort and rollout window.
+2. Start the GA-only work: longitudinal usage data, real signed certify, cross-platform confirmation, accessibility audit, performance budgets, and observability.
+3. Decide whether sanitized stress-pass summary artifacts should be committed or kept as local `target/` evidence only.

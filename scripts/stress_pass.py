@@ -117,7 +117,7 @@ def collect_env() -> dict[str, Any]:
 
 
 def init_bundle(scenario_id: str, bundle_root: Path) -> Path:
-    bundle = bundle_root / scenario_id
+    bundle = (bundle_root / scenario_id).resolve()
     (bundle / "transcripts").mkdir(parents=True, exist_ok=True)
     (bundle / "screenshots").mkdir(parents=True, exist_ok=True)
 

@@ -124,7 +124,7 @@ than the static binding catalog:
 - `x07 pkg lock --project x07.json --check`
 - `x07 migrate --check/--write --to 0.5`
 - `x07 project migrate --check/--write --project x07.json`
-- `x07 lint --project x07.json`
+- `x07 lint --input <file.x07.json>`
 - `x07 fix --diagnostic <id>` or `x07 fix --input <file> --write`
 - `x07 test --pbt`
 - `x07 fix --from-pbt <repro.json> --write`
