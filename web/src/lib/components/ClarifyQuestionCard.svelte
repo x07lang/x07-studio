@@ -57,13 +57,14 @@
 		</p>
 	{:else}
 		{#if turn.options.length}
-			<ul class="options" role="listbox" aria-label="Suggested answers">
+			<ul class="options" aria-label="Suggested answers">
 				{#each turn.options as option}
 					<li>
 						<button
 							type="button"
 							class="option {value === option ? 'selected' : ''}"
 							on:click={() => chooseOption(option)}
+							aria-pressed={value === option}
 							{disabled}
 							data-testid="clarify-option"
 						>

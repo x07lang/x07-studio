@@ -93,6 +93,12 @@ jobs:
         working-directory: web
         run: npm run e2e:connected
 
+      - name: Performance budget
+        run: python3 scripts/perf_budget.py
+
+      - name: Accessibility audit
+        run: python3 scripts/a11y_audit.py
+
       - name: Component bootstrap doctor
         run: python3 scripts/bootstrap_components.py --json --allow-missing
 

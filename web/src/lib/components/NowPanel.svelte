@@ -66,6 +66,8 @@
 		visualEmit: { kind: VisualKind; graph: unknown };
 		pkgSearch: string;
 		roleOverrides: RoleOverrides;
+		proofReport: string;
+		reproveTrust: void;
 	}>();
 
 	function componentAvailable(id: string) {
@@ -99,7 +101,12 @@
 </script>
 
 <aside class="now-panel" data-testid="now-panel">
-	<TrustCard posture={trustPosture} isComputing={trustComputing} />
+	<TrustCard
+		posture={trustPosture}
+		isComputing={trustComputing}
+		on:report={(event) => dispatch('proofReport', event.detail)}
+		on:reprove={() => dispatch('reproveTrust')}
+	/>
 
 	<DrawerRail items={drawerItems}>
 		<section slot="now" class="now-card status-card">

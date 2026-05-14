@@ -378,10 +378,36 @@ fn proof_support_notes_from_diag(root: &Utf8Path) -> Vec<ProofSupportNote> {
             code: code.to_string(),
             target,
             severity,
+            report_path: report_path_from_diag_entry(entry, &message),
             message,
         });
     }
     notes
+}
+
+fn report_path_from_diag_entry(entry: &Value, message: &str) -> Option<String> {
+    entry
+        .get("report_path")
+        .or_else(|| entry.get("report"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| report_path_from_message(message))
+}
+
+fn report_path_from_message(message: &str) -> Option<String> {
+    let marker = "report:";
+    let start = message.find(marker)? + marker.len();
+    let rest = message[start..].trim_start();
+    let path = rest
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|ch| matches!(ch, '"' | '\'' | ',' | ';' | ')'));
+    if path.is_empty() {
+        None
+    } else {
+        Some(path.to_string())
+    }
 }
 
 fn read_json(path: &Utf8Path) -> Option<Value> {
@@ -498,6 +524,36 @@ mod tests {
         assert!(posture.worlds.contains(&"run-os".to_string()));
         assert!(posture.capabilities.iter().any(|cap| cap.id == "os-time"));
         assert_eq!(posture.posture_color, "amber");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn proof_support_notes_extract_report_path() {
+        let root = temp_root();
+        std::fs::create_dir_all(root.join("target/xtal")).expect("mkdir xtal");
+        std::fs::write(
+            root.join("target/xtal/xtal.verify.diag.json"),
+            r#"{
+              "diagnostics": [{
+                "code": "WXTAL_VERIFY_PROVE_UNSUPPORTED",
+                "severity": "warning",
+                "target": "app.sort.sort_v1",
+                "message": "unsupported effect; report: target/xtal/verify/prove/app.sort.report.json"
+              }]
+            }"#,
+        )
+        .expect("diag");
+        let session_id = Uuid::new_v4();
+        let session =
+            SessionSnapshot::new(session_id, "demo", root.to_string(), TaskType::NewBehavior);
+
+        let posture = current(root.as_path(), &session);
+
+        assert_eq!(posture.proof_support_notes.len(), 1);
+        assert_eq!(
+            posture.proof_support_notes[0].report_path.as_deref(),
+            Some("target/xtal/verify/prove/app.sort.report.json")
+        );
         std::fs::remove_dir_all(root).ok();
     }
 

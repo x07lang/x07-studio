@@ -65,6 +65,7 @@ import {
 	type RolePreferences,
 	type SemanticDiff,
 	type SemanticDiffRequest,
+	type SessionSummary,
 	type SessionSnapshot,
 	type SessionStreamEvent,
 	type SessionTurn,
@@ -73,6 +74,8 @@ import {
 	type SyncClaimResponse,
 	type SyncCode,
 	type TaskType,
+	type TelemetryErrorReport,
+	type TelemetryWriteResponse,
 	type TrustPosture,
 	type TryItRequest,
 	type TryItResult,
@@ -84,6 +87,7 @@ import {
 	type VerifyRunOptions,
 	type WorkspaceRadarResponse
 } from './studio';
+import { reportFetchFailure } from './errorReporter';
 
 type BindingRunOptions =
 	| Partial<VerifyRunOptions>
@@ -140,6 +144,36 @@ export class StudioApi {
 			});
 		}
 		return { needs_migration: false, from_schema: 'x07.project@0.5.0', to_schema: target, project_schema_legacy: false };
+	}
+
+	async submitSessionSummary(summary: SessionSummary): Promise<TelemetryWriteResponse> {
+		if (this.demoMode) {
+			return {
+				schema_version: 'x07.studio.telemetry_write@0.1.0',
+				accepted: summary.consent,
+				path: null,
+				retained: summary.consent ? 1 : 0
+			};
+		}
+		return await request<TelemetryWriteResponse>('/v1/telemetry/session-summary', {
+			method: 'POST',
+			body: JSON.stringify(summary)
+		});
+	}
+
+	async submitTelemetryError(report: TelemetryErrorReport): Promise<TelemetryWriteResponse> {
+		if (this.demoMode) {
+			return {
+				schema_version: 'x07.studio.telemetry_write@0.1.0',
+				accepted: report.consent,
+				path: null,
+				retained: report.consent ? 1 : 0
+			};
+		}
+		return await request<TelemetryWriteResponse>('/v1/telemetry/error', {
+			method: 'POST',
+			body: JSON.stringify(report)
+		});
 	}
 
 	/**
@@ -1033,7 +1067,12 @@ export class StudioApi {
 			proof_summary: { demo: true },
 			trust_report: { demo: true },
 			html_summary_path: 'target/xtal/cert/summary.html',
-			signature: 'demo-signature'
+			signature: 'demo-signature',
+			certificate_path: 'target/cert/certificate.json',
+			signer_key_fingerprint: 'demo-fingerprint',
+			sigchain_attestation: { demo: true },
+			revocation_pointer: 'local:none',
+			locally_verified: true
 		};
 	}
 
@@ -2239,7 +2278,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 		}
 	});
 	if (!response.ok) {
-		throw new HttpRequestError(response.status, await response.text());
+		const message = await response.text();
+		void reportFetchFailure(path, response.status, message);
+		throw new HttpRequestError(response.status, message);
 	}
 	return response.json() as Promise<T>;
 }

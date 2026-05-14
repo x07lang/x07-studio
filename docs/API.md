@@ -7,6 +7,7 @@ Base path: `/v1`
 - `GET /health`
 - `GET /health/snapshot`
 - `POST /health/migrate`
+- `GET /metrics`
 
 Response:
 
@@ -23,6 +24,19 @@ Response:
 `x07.studio.health_snapshot@0.1.0`. `POST /health/migrate` accepts
 `{"target":"0.5"}` and creates a `.x07/studio/migrate-backup-*` copy before
 write-mode migrations.
+
+`GET /metrics` returns Prometheus text for active sessions, SSE subscribers,
+opt-in session-summary count, and opt-in browser-error ring size.
+
+## Telemetry
+
+- `POST /telemetry/session-summary`
+- `POST /telemetry/error`
+
+Both endpoints are local-only and opt-in. Payloads with `consent: false` return
+`accepted: false` and do not write to disk. Accepted session summaries append to
+`.loom/session-summary.jsonl`; accepted browser errors are retained in the
+100-entry `.loom/error-ring.jsonl` ring.
 
 ## Pointing Vite at a non-default daemon
 
@@ -731,8 +745,11 @@ Cycle 4 trust and review endpoints:
   entries under `.x07_rr`.
 - `GET /v1/sessions/{session_id}/certificate` returns
   `x07.studio.certificate_summary@0.1.0` from certificate, verify, and trust
-  artifacts. `POST /certificate/refresh` runs `xtal.certify` best-effort before
-  returning the same summary shape.
+artifacts. `POST /certificate/refresh` runs `xtal.certify` best-effort before
+returning the same summary shape. The summary includes the certificate path,
+signature, signer key fingerprint, optional sigchain attestation, revocation
+pointer, and local signature-verification flag when the x07 certificate bundle
+contains those fields.
 
 Intent quorum request:
 

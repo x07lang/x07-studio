@@ -627,8 +627,9 @@ fn resolve_program(key: ProgramKey, root: &Utf8Path) -> String {
         ProgramKey::X07Wasm => {
             env::var("X07_STUDIO_X07_WASM_EXE").unwrap_or_else(|_| "x07-wasm".to_string())
         }
-        ProgramKey::X07lp => env::var("X07_STUDIO_X07LP_EXE")
+        ProgramKey::X07lp => env::var("X07LP_BINARY")
             .ok()
+            .or_else(|| env::var("X07_STUDIO_X07LP_EXE").ok())
             .or_else(|| find_nearby_x07lp_driver(root))
             .unwrap_or_else(|| "x07lp".to_string()),
     }

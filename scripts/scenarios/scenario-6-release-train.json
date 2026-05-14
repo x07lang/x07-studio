@@ -1,0 +1,21 @@
+{
+  "id": "scenario-6-release-train",
+  "goal": "Real x07lp release train: plan a release, require operator approval, accept local deployment, run it, query it, and confirm status.",
+  "recipe_id": "atlas-app",
+  "intent_override": "Use docs/examples/wasm_showcases/x07_atlas to build the x07 Atlas release train with app pack verification, provenance, deploy planning, x07lp local accept/run/query/status, and SLO evidence.",
+  "expected_flow": [
+    "Intent formalized as release-shaped Atlas app",
+    "x07-wasm app build, pack, verify, provenance attest, and provenance verify run",
+    "x07-wasm deploy plan materializes a local deploy plan",
+    "Operator approves local platform delivery widening",
+    "x07lp deploy accept records deployment id",
+    "x07lp deploy run starts the local deployment",
+    "x07lp deploy query and status return real local platform state"
+  ],
+  "success_criteria": [
+    "All x07lp operations use the resolved x07lp binary or x07-platform driver, not a fake harness",
+    "ReleaseStatus renders succeeded with deployment id and op ids",
+    "Shipping Ladder local platform row shows x07lp evidence",
+    "Evidence bundle includes deploy plan, x07lp stdout/stderr, and session-final.json"
+  ]
+}

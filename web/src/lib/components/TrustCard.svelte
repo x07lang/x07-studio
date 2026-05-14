@@ -1,10 +1,13 @@
 <script lang="ts">
-	import type { TrustPosture } from '$lib/studio';
+	import { createEventDispatcher } from 'svelte';
+	import type { ProofSupportNote, TrustPosture } from '$lib/studio';
 	import { colorMorph } from '$lib/motion';
 	import PostureChip from './PostureChip.svelte';
 
 	export let posture: TrustPosture | null = null;
 	export let isComputing = false;
+
+	const dispatch = createEventDispatcher<{ report: string; reprove: void }>();
 
 	$: headline = posture
 		? `${posture.worlds.join(', ')} · ${posture.capabilities.length} OS read${posture.capabilities.length === 1 ? '' : 's'} · ${Math.round(posture.proof_coverage.proved_pct)}% proof coverage`
@@ -15,6 +18,20 @@
 	$: proverFraction = posture && posture.budgets.prover_seconds_cap
 		? Math.min(1, posture.budgets.prover_seconds_used / posture.budgets.prover_seconds_cap)
 		: 0;
+	$: proofGroups = groupProofNotes(posture?.proof_support_notes ?? []);
+
+	function groupProofNotes(notes: ProofSupportNote[]) {
+		const grouped = new Map<string, ProofSupportNote[]>();
+		for (const note of notes) {
+			const key = note.target || 'unscoped';
+			grouped.set(key, [...(grouped.get(key) ?? []), note]);
+		}
+		return [...grouped.entries()].map(([target, items]) => ({
+			target,
+			notes: items,
+			collapsed: items.length >= 3
+		}));
+	}
 </script>
 
 <section class="trust-card {posture?.posture_color ?? 'amber'}" class:computing={!posture && isComputing} data-testid="trust-card" use:colorMorph>
@@ -67,14 +84,39 @@
 					<span class="proof-notes-count">{(posture.proof_support_notes ?? []).length} note{(posture.proof_support_notes ?? []).length === 1 ? '' : 's'}</span>
 				</summary>
 				<ul>
-					{#each posture.proof_support_notes ?? [] as note}
-						<li class="proof-note severity-{note.severity || 'warning'}">
-							<code class="proof-note-code">{note.code}</code>
-							{#if note.target}<span class="proof-note-target">{note.target}</span>{/if}
-							<span class="proof-note-message">{note.message}</span>
-						</li>
+					{#each proofGroups as group}
+						{#if group.collapsed}
+							<li class="proof-note-group">
+								<details>
+									<summary>{group.notes.length} notes for {group.target}</summary>
+									<ul>
+										{#each group.notes as note}
+											<li class="proof-note severity-{note.severity || 'warning'}">
+												<code class="proof-note-code">{note.code}</code>
+												<span class="proof-note-message">{note.message}</span>
+												{#if note.report_path}
+													<button type="button" class="proof-report-link" on:click={() => dispatch('report', note.report_path ?? '')}>Open report</button>
+												{/if}
+											</li>
+										{/each}
+									</ul>
+								</details>
+							</li>
+						{:else}
+							{#each group.notes as note}
+								<li class="proof-note severity-{note.severity || 'warning'}">
+									<code class="proof-note-code">{note.code}</code>
+									{#if note.target}<span class="proof-note-target">{note.target}</span>{/if}
+									<span class="proof-note-message">{note.message}</span>
+									{#if note.report_path}
+										<button type="button" class="proof-report-link" on:click={() => dispatch('report', note.report_path ?? '')}>Open report</button>
+									{/if}
+								</li>
+							{/each}
+						{/if}
 					{/each}
 				</ul>
+				<button type="button" class="proof-reprove" on:click={() => dispatch('reprove')}>Re-prove patient</button>
 			</details>
 		{/if}
 	{:else}
@@ -261,6 +303,15 @@
 		display: grid;
 		gap: 6px;
 	}
+	.proof-note-group {
+		display: grid;
+		gap: 6px;
+	}
+	.proof-note-group summary {
+		padding: 6px 0;
+		color: var(--text);
+		font-size: 12px;
+	}
 	.proof-note {
 		display: grid;
 		gap: 2px;
@@ -288,6 +339,19 @@
 	}
 	.proof-note-message {
 		color: var(--text);
+	}
+	.proof-report-link,
+	.proof-reprove {
+		justify-self: start;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: rgba(255, 255, 255, 0.04);
+		color: var(--cyan, var(--text));
+		padding: 5px 8px;
+		font-size: 12px;
+	}
+	.proof-reprove {
+		margin: 0 12px 12px;
 	}
 
 	@keyframes trust-pulse {

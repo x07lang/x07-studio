@@ -26,6 +26,67 @@ pub struct HealthResponse {
     pub active_sessions: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    #[serde(default = "default_session_summary_schema_version")]
+    pub schema_version: String,
+    pub session_id: Uuid,
+    #[serde(default)]
+    pub consent: bool,
+    pub archetype: String,
+    pub time_to_verified_ms: Option<u64>,
+    #[serde(default)]
+    pub repair_rounds: u32,
+    #[serde(default)]
+    pub agent_minutes: f32,
+    pub success: bool,
+    #[serde(default)]
+    pub friction_notes: Vec<String>,
+    #[serde(default)]
+    pub submitted_at: Option<String>,
+}
+
+fn default_session_summary_schema_version() -> String {
+    "x07.studio.session_summary@0.1.0".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryErrorReport {
+    #[serde(default = "default_telemetry_error_schema_version")]
+    pub schema_version: String,
+    #[serde(default)]
+    pub consent: bool,
+    #[serde(default)]
+    pub session_id: Option<Uuid>,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub severity: String,
+    pub message: String,
+    #[serde(default)]
+    pub stack: Option<String>,
+    #[serde(default)]
+    pub route: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    #[serde(default)]
+    pub context: Option<Value>,
+    #[serde(default)]
+    pub occurred_at: Option<String>,
+}
+
+fn default_telemetry_error_schema_version() -> String {
+    "x07.studio.telemetry_error@0.1.0".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryWriteResponse {
+    pub schema_version: String,
+    pub accepted: bool,
+    pub path: Option<String>,
+    pub retained: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StudioDefaults {
     pub daemon_addr: String,
@@ -664,6 +725,10 @@ pub struct ProofSupportNote {
     pub severity: String,
     /// Plain-English explanation pulled directly from the diag.
     pub message: String,
+    /// Verify report path extracted from the diagnostic when x07 includes
+    /// a `report: <path>` hint.
+    #[serde(default)]
+    pub report_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -944,6 +1009,16 @@ pub struct CertificateSummary {
     pub trust_report: Value,
     pub html_summary_path: String,
     pub signature: String,
+    #[serde(default)]
+    pub certificate_path: Option<String>,
+    #[serde(default)]
+    pub signer_key_fingerprint: Option<String>,
+    #[serde(default)]
+    pub sigchain_attestation: Option<Value>,
+    #[serde(default)]
+    pub revocation_pointer: Option<String>,
+    #[serde(default)]
+    pub locally_verified: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

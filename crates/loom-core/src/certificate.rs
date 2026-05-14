@@ -34,7 +34,43 @@ pub fn summary(root: &Utf8Path, session: &SessionSnapshot) -> CertificateSummary
             .unwrap_or_else(|| "target/xtal/cert/summary.html".to_string()),
         signature: string_field(&certificate, &["signature", "ed25519"])
             .unwrap_or_else(|| "unsigned-local-preview".to_string()),
+        certificate_path: existing_certificate_path(root),
+        signer_key_fingerprint: string_field(
+            &certificate,
+            &[
+                "signer_key_fingerprint",
+                "signer_fingerprint",
+                "key_fingerprint",
+                "public_key_fingerprint",
+            ],
+        ),
+        sigchain_attestation: find_key(&certificate, &["sigchain_attestation", "attestation"])
+            .cloned(),
+        revocation_pointer: string_field(
+            &certificate,
+            &["revocation_pointer", "revocation", "revocation_url"],
+        ),
+        locally_verified: bool_field(
+            &certificate,
+            &["locally_verified", "verified", "signature_verified"],
+        )
+        .unwrap_or_else(|| {
+            string_field(&certificate, &["signature", "ed25519"])
+                .map(|signature| !signature.trim().is_empty())
+                .unwrap_or(false)
+        }),
     }
+}
+
+fn existing_certificate_path(root: &Utf8Path) -> Option<String> {
+    [
+        "target/cert/certificate.json",
+        "target/xtal/cert/bundle.json",
+        "target/xtal/cert/certificate.json",
+    ]
+    .into_iter()
+    .find(|path| root.join(path).exists())
+    .map(str::to_string)
 }
 
 fn existing_html_summary(root: &Utf8Path) -> Option<String> {
@@ -86,6 +122,10 @@ fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
         .map(str::to_string)
 }
 
+fn bool_field(value: &Value, keys: &[&str]) -> Option<bool> {
+    find_key(value, keys).and_then(Value::as_bool)
+}
+
 fn find_key<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
     match value {
         Value::Object(map) => {
@@ -116,7 +156,7 @@ mod tests {
         std::fs::create_dir_all(root.join("target/cert")).expect("mkdir");
         std::fs::write(
             root.join("target/cert/certificate.json"),
-            r#"{"profile":"verified_core_pure_v1","operational_entry":"sort","signature":"abc"}"#,
+            r#"{"profile":"verified_core_pure_v1","operational_entry":"sort","signature":"abc","signer_key_fingerprint":"fp1","revocation_pointer":"local:none","sigchain_attestation":{"kind":"local"},"locally_verified":true}"#,
         )
         .expect("cert");
         let session_id = Uuid::new_v4();
@@ -128,6 +168,20 @@ mod tests {
         assert_eq!(cert.profile, "verified_core_pure_v1");
         assert_eq!(cert.operational_entry, "sort");
         assert_eq!(cert.signature, "abc");
+        assert_eq!(
+            cert.certificate_path.as_deref(),
+            Some("target/cert/certificate.json")
+        );
+        assert_eq!(cert.signer_key_fingerprint.as_deref(), Some("fp1"));
+        assert_eq!(cert.revocation_pointer.as_deref(), Some("local:none"));
+        assert!(cert.locally_verified);
+        assert_eq!(
+            cert.sigchain_attestation
+                .as_ref()
+                .and_then(|value| value.get("kind"))
+                .and_then(|value| value.as_str()),
+            Some("local")
+        );
         std::fs::remove_dir_all(root).ok();
     }
 

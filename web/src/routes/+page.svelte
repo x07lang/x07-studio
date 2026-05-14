@@ -5,6 +5,7 @@
 	import type {
 		AgentContract,
 		AgentProfile,
+		ArtifactPreviewResponse,
 		AskAnswer,
 		ArchCheckReport,
 		AutopilotState,
@@ -25,6 +26,7 @@
 		ReplayExportResponse,
 		RoleOverrides,
 		SemanticDiff,
+		SessionSummary,
 		SessionSnapshot,
 		SessionStreamEvent,
 		SessionTurn,
@@ -53,6 +55,7 @@
 	import CertificateView from '$lib/components/CertificateView.svelte';
 	import Welcome from '$lib/components/Welcome.svelte';
 	import HealthRow from '$lib/components/HealthRow.svelte';
+	import SessionSummaryCard from '$lib/components/SessionSummaryCard.svelte';
 	import AgentContractEditor from '$lib/components/AgentContractEditor.svelte';
 	import LintReportDrawer from '$lib/components/LintReport.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -91,6 +94,7 @@
 	let replayExport: ReplayExportResponse | null = null;
 	let trustPosture: TrustPosture | null = null;
 	let proofEvidence: ProofEvidence | null = null;
+	let artifactPreview: ArtifactPreviewResponse | null = null;
 	let quickfix: QuickfixRecord | null = null;
 	let lintReport: LintReport | null = null;
 	let lintOpen = false;
@@ -114,6 +118,7 @@
 	let unsubscribe: (() => void) | null = null;
 	let optimisticTurns: OptimisticTurn[] = [];
 	let recipeStartInFlight: string | null = null;
+	let sessionSummaryStatus = '';
 
 	onMount(() => {
 		void (async () => {
@@ -471,6 +476,25 @@
 		proofEvidence = await api.proofEvidence(selected, behaviorId);
 	}
 
+	async function openArtifactReport(path: string) {
+		if (!selected) return;
+		artifactPreview = await api.previewArtifact(selected, path);
+	}
+
+	async function reprovePatient() {
+		if (!selected) return;
+		busy = true;
+		status = 'Re-proving with patient policy';
+		try {
+			selected = await api.runXtalWorkflow(selected, { proofPolicy: 'patient' });
+			replaceSelected(selected);
+			trustPosture = await api.trustPosture(selected).catch(() => trustPosture);
+			status = 'Patient proof pass finished';
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function compareTurn(turnId: string) {
 		if (!selected) return;
 		semanticDiff = await api.semanticDiff(selected, {
@@ -673,6 +697,11 @@
 			status = `${saved.label} is now ${saved.default_role}`;
 		}
 	}
+
+	async function submitSessionSummary(summary: SessionSummary) {
+		const response = await api.submitSessionSummary(summary);
+		sessionSummaryStatus = response.accepted ? `Saved locally (${response.retained})` : 'Not saved';
+	}
 </script>
 
 <svelte:head>
@@ -801,6 +830,14 @@
 				on:exportReplay={exportReplay}
 				on:visualParse={(event) => visualParse(event.detail)}
 				on:visualEmit={(event) => visualEmit(event.detail)}
+				on:proofReport={(event) => openArtifactReport(event.detail)}
+				on:reproveTrust={reprovePatient}
+			/>
+			<SessionSummaryCard
+				session={selected}
+				{busy}
+				status={sessionSummaryStatus}
+				on:submit={(event) => submitSessionSummary(event.detail)}
 			/>
 		</div>
 	</div>
@@ -836,6 +873,19 @@
 		</div>
 	{/if}
 	<ProofExplorer evidence={proofEvidence} open={Boolean(proofEvidence)} on:close={() => (proofEvidence = null)} />
+	{#if artifactPreview}
+		<div class="modal-sheet">
+			<header>
+				<h2>{artifactPreview.artifact}</h2>
+				<button type="button" class="command-button" on:click={() => (artifactPreview = null)}>Close</button>
+			</header>
+			{#if artifactPreview.media_kind === 'json'}
+				<pre>{JSON.stringify(artifactPreview.json, null, 2)}</pre>
+			{:else}
+				<pre>{artifactPreview.text ?? ''}</pre>
+			{/if}
+		</div>
+	{/if}
 	<CompareLens diff={semanticDiff} open={compareOpen}>
 		<button slot="actions" type="button" class="command-button" on:click={() => (compareOpen = false)}>Close</button>
 	</CompareLens>

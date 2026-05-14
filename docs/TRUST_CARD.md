@@ -16,6 +16,11 @@ The card shows:
 - declared capabilities such as `os-net`, `os-fs`, and `os-time`
 - local and prover budgets
 - support/proof coverage and open assumptions
+- proof-support diagnostics grouped by target when several warnings share the
+  same operation
+- report links parsed from `report: <path>` diagnostic hints
+- a patient re-prove action that reruns the XTAL workflow with
+  `proof_policy=patient`
 - posture color: green for pure/proved, amber for wider but bounded, red for
   risky network or proof coverage drops
 

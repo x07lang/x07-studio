@@ -8,7 +8,7 @@ Last updated 2026-05-13 after the pre-production readiness pass.
 |---|---|---|
 | Internal alpha (Studio dogfooded by x07 team) | **YES** | Canonical loop works against real x07 toolchain on disk. F3 fixed at both autopilot and per-substep level (commits `1ae54f8`, `2344fde`). HTTP stays responsive (8/8 probes <2ms) while real claude/codex/x07 are running. |
 | Public beta (invite-only external users) | **YES** | F1/F2/F3/F4/F5/F13-F18 are closed or documented. Scenarios 2-5 now have real-toolchain evidence, cross-browser connected smoke passes in Chromium, Firefox, and WebKit, and the 30-minute single-session stability soak passes. |
-| Production / general availability | **NO** | Public-beta gates are closed, but GA-only gates remain: real longitudinal usage, real signed certify, cross-platform, accessibility, performance, observability, and user-facing docs. |
+| Production / general availability | **NO** | Public-beta gates are closed and the a11y/perf/observability mechanisms now pass locally, but GA still needs real longitudinal usage, signed certify evidence, x07lp scenario 6 evidence, and WSL operator confirmation. |
 
 ## What's verified against real toolchain
 
@@ -60,15 +60,24 @@ A 30-minute single-session autopilot soak passed on 2026-05-13:
 The daemon now exports `active_sessions` and `subscriber_count` on `/v1/health` and `/v1/health/snapshot`; the soak writes `metrics.csv` and `summary.json` under `target/stress-pass/stability-soak/`. No op-log truncation strategy is needed at the current baseline because the 30-minute max op-log size stayed below 10k.
 
 ### Before production / general availability
-- [ ] All public-beta items above.
-- [ ] At least 100 real user-driven sessions across ≥3 project archetypes (sort, parser, service) without F3-class freezes.
-- [ ] Real `x07lp` integration (currently faked).
+- [x] All public-beta items above.
+- [ ] At least 100 real user-driven sessions across ≥3 project archetypes (sort, parser, service) without F3-class freezes. Opt-in collection is implemented via `/v1/telemetry/session-summary`, the session summary card, and `docs/TELEMETRY.md`; real beta submissions are still pending.
+- [ ] Real `x07lp` integration scenario 6 evidence bundle. The command bindings and component discovery are real, but `scripts/scenarios/scenario-6-release-train.json` has not been captured yet.
 - [ ] Real `x07 trust certify` produces a real signed certificate; certificate viewer renders the real artifact.
-- [ ] Cross-platform: Linux + Windows-via-WSL confirmation.
-- [ ] Accessibility audit: baseline focus/reduced-motion/ARIA pass documented in `docs/ACCESSIBILITY.md`; axe-core serious/critical audit still pending.
-- [ ] Performance: every Process Lane step under 500ms client-render; daemon p95 ≤ 200ms even under autopilot load.
+- [ ] Cross-platform: Linux + Windows-via-WSL confirmation. CI covers Ubuntu/macOS/Windows packaging and `scripts/test_linux.sh` plus `scripts/test_wsl.md` now define the operator path; WSL manual evidence is still pending.
+- [x] Accessibility audit: `python3 scripts/a11y_audit.py` passes with 0 serious/critical axe violations on landing and verified-session views. See `docs/ACCESSIBILITY.md`.
+- [x] Performance: `python3 scripts/perf_budget.py` passes; latest local budget report measured landing TTI 896ms, Process Lane render p95 0.10ms, daemon health p95 2ms.
 - [x] Documentation: user guide, agent guide, troubleshooting runbook, and docs index.
-- [ ] Observability: per-session structured logs, error reporting opt-in, basic SLO dashboard.
+- [x] Observability: `/v1/metrics`, opt-in browser error ring, local session-summary retention, and `python3 scripts/slo_dashboard.py` are documented in `docs/OBSERVABILITY.md`.
+
+## GA evidence added in the latest pass
+
+- Opt-in session summaries: `POST /v1/telemetry/session-summary` writes `.loom/session-summary.jsonl`.
+- Opt-in browser errors: `POST /v1/telemetry/error` retains the latest 100 entries in `.loom/error-ring.jsonl`.
+- Local metrics: `GET /v1/metrics` emits active sessions, SSE subscribers, summary count, and error-ring count.
+- Accessibility report: `target/a11y/manual-a11y-report.json` passed with 0 serious/critical violations.
+- Performance report: `target/perf/manual-budget-report.json` passed the GA budgets.
+- Operator dashboard: `python3 scripts/slo_dashboard.py --root <workspace> --addr http://127.0.0.1:7719`.
 
 ## Open questions for Bodik
 

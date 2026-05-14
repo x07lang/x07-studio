@@ -5,6 +5,7 @@
 - `USER_GUIDE.md` - install, first session, Simple vs Details, rung meanings, verify failures.
 - `TROUBLESHOOTING.md` - known issues, logs, daemon reset, frozen-session decision tree.
 - `ACCESSIBILITY.md` - keyboard map, reduced-motion behavior, current accessibility baseline.
+- `TELEMETRY.md` - opt-in session summaries, local retention, and sanitization.
 
 ## Agent Operator
 
@@ -20,6 +21,8 @@
 - `STREAM_EVENTS.md` - SSE event model.
 - `PROCESS_LANE.md` - process-lane projection.
 - `PRODUCTION_READINESS.md` - beta and GA gate checklist.
+- `PERFORMANCE.md` - browser and daemon budget gate.
+- `OBSERVABILITY.md` - logs, local metrics, error ring, and SLO dashboard.
 - `SECURITY_REVIEW.md` - latest security pass.
 - `STRESS_PASS_FINDINGS.md` - F1+ finding log.
 

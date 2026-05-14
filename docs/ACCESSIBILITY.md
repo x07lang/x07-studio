@@ -10,6 +10,9 @@ Last updated 2026-05-13 for the pre-production readiness pass.
 - Global `:focus-visible` styling gives keyboard users a visible 2px focus ring.
 - Motion helpers no-op when `prefers-reduced-motion: reduce` is active.
 - The TrustCard proof-support panel uses native `<details>/<summary>`.
+- Clarification suggestions use native list semantics with real buttons and
+  `aria-pressed` state for the selected option.
+- The connected axe audit covers the landing view and a verified-session view.
 
 ## Keyboard map
 
@@ -22,11 +25,22 @@ Last updated 2026-05-13 for the pre-production readiness pass.
 
 ## Known limitations
 
-- A full axe-core serious/critical audit is still pending because `@axe-core/playwright` is not currently part of the web dependency set.
 - Web Speech is browser-dependent and unavailable in some headless WebKit/Safari contexts; the text composer remains the accessible fallback.
 - The visual canvas editor has keyboard-accessible form fields for labels and emit/parse controls, but graph edge manipulation is still pointer-oriented.
 
 ## Verification
+
+Automated audit:
+
+```bash
+python3 scripts/a11y_audit.py
+```
+
+Latest local result on 2026-05-13:
+
+- Report: `target/a11y/manual-a11y-report.json`
+- Landing serious/critical violations: 0
+- Verified-session serious/critical violations: 0
 
 Manual keyboard-only validation should cover:
 

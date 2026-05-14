@@ -29,6 +29,27 @@ Severity legend:
 | F16 | **FIXED** | Role-overridden builds now still emit summary/lint evidence so autopilot can enter the role pipeline on scaffold-only output | 5 |
 | F17 | **FIXED** | Text normalize/casefold targets get a dependency-backed Unicode implementation floor with `ext-unicode-rs@0.1.5` | 5 |
 | F18 | **FIXED** | Streaming agent timeouts kill child processes, preserve partial output, and continue to bounded fallback | 5 |
+| F19 | **PENDING EVIDENCE** | Scenario 6 release-train config exists for real x07lp plan/accept/run/query/status, but no real evidence bundle has been captured yet | 6 |
+
+## F19 — Scenario 6 x07lp release train needs real evidence
+
+**Severity:** NOTE.
+
+**Observed:** GA requires real x07lp platform evidence, not just connected-E2E
+fake tool output. The Studio binding catalog and command renderer already expose
+the x07lp local deployment lane, but the stress-pass scenario set stopped at
+scenario 5.
+
+**Action:** Added `scripts/scenarios/scenario-6-release-train.json` as the
+operator scenario for x07-wasm pack/provenance/deploy planning followed by
+`x07lp` local accept/run/query/status.
+
+**Status:** **PENDING EVIDENCE.** Run the scenario against a workspace with a
+real `x07lp` or `x07-platform/scripts/x07lp-driver` and capture
+`target/stress-pass/scenario-6-release-train/` before marking the x07lp GA gate
+complete.
+
+---
 
 ## F1 — MIGRATE pill reads "schema → 0.5" when nothing exists yet
 

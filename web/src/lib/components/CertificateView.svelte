@@ -30,11 +30,26 @@
 			<dl>
 				<dt>Issued</dt><dd>{certificate.issued_at}</dd>
 				<dt>Signature</dt><dd><code>{certificate.signature}</code></dd>
+				<dt>Verified</dt><dd>{certificate.locally_verified ? 'yes' : 'not confirmed'}</dd>
+				{#if certificate.signer_key_fingerprint}
+					<dt>Signer</dt><dd><code>{certificate.signer_key_fingerprint}</code></dd>
+				{/if}
+				{#if certificate.revocation_pointer}
+					<dt>Revocation</dt><dd><code>{certificate.revocation_pointer}</code></dd>
+				{/if}
+				{#if certificate.certificate_path}
+					<dt>Certificate</dt><dd><code>{certificate.certificate_path}</code></dd>
+				{/if}
 				<dt>HTML</dt><dd><code>{certificate.html_summary_path}</code></dd>
 			</dl>
 		{:else if tab === 'Proof'}
 			<pre>{JSON.stringify(certificate.proof_summary, null, 2)}</pre>
 		{:else}
+			{#if certificate.sigchain_attestation}
+				<h3>Sigchain</h3>
+				<pre>{JSON.stringify(certificate.sigchain_attestation, null, 2)}</pre>
+			{/if}
+			<h3>Trust report</h3>
 			<pre>{JSON.stringify(certificate.trust_report, null, 2)}</pre>
 		{/if}
 	</section>

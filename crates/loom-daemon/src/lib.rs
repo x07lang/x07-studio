@@ -1,8 +1,11 @@
 use std::env;
 use std::ffi::OsString;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::Path as StdPath;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -41,9 +44,10 @@ use loom_types::api::{
     RolePreferences, RunBindingRequest, RunBuildRequest, RunXtalWorkflowRequest,
     RuntimeComponentState, RuntimeComponentStatus, SaveAgentContractRequest,
     SaveAgentProfileRequest, SaveProviderProfileRequest, SemanticDiff, SemanticDiffRequest,
-    SessionTurn, StepEvidence, StudioDefaults, StudioMemory, SyncClaimResponse, SyncCode,
-    SyncStateRequest, TrustPosture, TryItRequest, TryItResult, VisualEmitRequest,
-    VisualParseRequest, VisualResponse, WhatIfForecast, WhatIfRequest, WorkspaceRadarResponse,
+    SessionSummary, SessionTurn, StepEvidence, StudioDefaults, StudioMemory, SyncClaimResponse,
+    SyncCode, SyncStateRequest, TelemetryErrorReport, TelemetryWriteResponse, TrustPosture,
+    TryItRequest, TryItResult, VisualEmitRequest, VisualParseRequest, VisualResponse,
+    WhatIfForecast, WhatIfRequest, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{AgentProfile, ProviderProfile};
 use loom_types::mcp::McpToolDescriptor;
@@ -51,6 +55,12 @@ use loom_types::session::SessionSnapshot;
 
 const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
 const MAX_UPLOAD_REQUEST_BYTES: usize = MAX_UPLOAD_BYTES + 64 * 1024;
+const TELEMETRY_DIR: &str = ".loom";
+const SESSION_SUMMARY_FILE: &str = "session-summary.jsonl";
+const ERROR_RING_FILE: &str = "error-ring.jsonl";
+const ERROR_RING_LIMIT: usize = 100;
+const MAX_TELEMETRY_STRING_BYTES: usize = 4 * 1024;
+const MAX_FRICTION_NOTES: usize = 12;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -62,6 +72,12 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/health/snapshot", get(health_snapshot))
         .route("/v1/health/migrate", post(apply_migrate))
+        .route("/v1/metrics", get(metrics))
+        .route(
+            "/v1/telemetry/session-summary",
+            post(submit_session_summary),
+        )
+        .route("/v1/telemetry/error", post(submit_telemetry_error))
         .route("/v1/workspace/radar", get(workspace_radar))
         .route("/v1/bindings", get(bindings))
         .route("/v1/sessions", get(list_sessions).post(create_session))
@@ -309,7 +325,7 @@ fn runtime_components(root: &Utf8Path) -> Vec<RuntimeComponentStatus> {
             "x07",
             "x07 CLI",
             "x07",
-            Some("X07_STUDIO_X07_EXE"),
+            &["X07_STUDIO_X07_EXE"],
             true,
             &[
                 "components/x07",
@@ -323,7 +339,7 @@ fn runtime_components(root: &Utf8Path) -> Vec<RuntimeComponentStatus> {
             "x07-wasm",
             "x07-wasm",
             "x07-wasm",
-            Some("X07_STUDIO_X07_WASM_EXE"),
+            &["X07_STUDIO_X07_WASM_EXE"],
             true,
             &[
                 "components/x07-wasm",
@@ -337,21 +353,21 @@ fn runtime_components(root: &Utf8Path) -> Vec<RuntimeComponentStatus> {
             "x07lp",
             "x07 platform",
             "x07lp",
-            Some("X07_STUDIO_X07LP_EXE"),
+            &["X07LP_BINARY", "X07_STUDIO_X07LP_EXE"],
             true,
             &[
                 "components/x07lp",
                 "components/x07lp-driver",
                 "x07-platform/scripts/x07lp-driver",
             ],
-            "Install x07lp, use a bundle with components/x07lp, place x07-platform beside Studio, or set X07_STUDIO_X07LP_EXE.",
+            "Install x07lp, use a bundle with components/x07lp, place x07-platform beside Studio, or set X07LP_BINARY / X07_STUDIO_X07LP_EXE.",
         ),
         component_status(
             root,
             "codex",
             "OpenAI Codex",
             "codex",
-            None,
+            &[],
             false,
             &[],
             "Install Codex CLI when supervised Codex handoffs should execute locally.",
@@ -361,7 +377,7 @@ fn runtime_components(root: &Utf8Path) -> Vec<RuntimeComponentStatus> {
             "claude-code",
             "Claude Code",
             "claude",
-            None,
+            &[],
             false,
             &[],
             "Install Claude Code when supervised Claude handoffs should execute locally.",
@@ -375,13 +391,14 @@ fn component_status(
     id: &str,
     label: &str,
     command: &str,
-    env_var: Option<&str>,
+    env_vars: &[&str],
     required: bool,
     sibling_candidates: &[&str],
     install_hint: &str,
 ) -> RuntimeComponentStatus {
-    let source = env_var
-        .and_then(env_component_source)
+    let source = env_vars
+        .iter()
+        .find_map(|env_var| env_component_source(env_var))
         .or_else(|| sibling_component_source(root, sibling_candidates))
         .or_else(|| path_component_source(command));
     let status = if source.is_some() {
@@ -487,6 +504,115 @@ async fn health(State(state): State<ApiState>) -> Json<HealthResponse> {
         subscriber_count,
         active_sessions,
     })
+}
+
+async fn metrics(State(state): State<ApiState>) -> impl IntoResponse {
+    let kernel = state.kernel.lock().await;
+    let root = kernel.workspace_root().to_owned();
+    let (active_sessions, subscriber_count) = health_counts(&kernel);
+    drop(kernel);
+
+    let summary_count = count_jsonl_lines(&telemetry_path(root.as_path(), SESSION_SUMMARY_FILE));
+    let error_count = count_jsonl_lines(&telemetry_path(root.as_path(), ERROR_RING_FILE));
+    let body = format!(
+        "# HELP loom_daemon_active_sessions Active Studio sessions held by the daemon.\n\
+         # TYPE loom_daemon_active_sessions gauge\n\
+         loom_daemon_active_sessions {active_sessions}\n\
+         # HELP loom_daemon_sse_subscribers Active session-event subscribers.\n\
+         # TYPE loom_daemon_sse_subscribers gauge\n\
+         loom_daemon_sse_subscribers {subscriber_count}\n\
+         # HELP loom_telemetry_session_summaries_total Opt-in session summaries retained on disk.\n\
+         # TYPE loom_telemetry_session_summaries_total counter\n\
+         loom_telemetry_session_summaries_total {summary_count}\n\
+         # HELP loom_telemetry_error_ring_entries Opt-in client error reports retained in the local ring.\n\
+         # TYPE loom_telemetry_error_ring_entries gauge\n\
+         loom_telemetry_error_ring_entries {error_count}\n"
+    );
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        body,
+    )
+}
+
+async fn submit_session_summary(
+    State(state): State<ApiState>,
+    Json(mut summary): Json<SessionSummary>,
+) -> Result<Json<TelemetryWriteResponse>, (StatusCode, String)> {
+    let root = {
+        let kernel = state.kernel.lock().await;
+        kernel.workspace_root().to_owned()
+    };
+    let path = telemetry_path(root.as_path(), SESSION_SUMMARY_FILE);
+    if !summary.consent {
+        return Ok(Json(telemetry_response(
+            false,
+            None,
+            count_jsonl_lines(&path),
+        )));
+    }
+    summary.archetype = sanitize_telemetry_string(&summary.archetype);
+    summary.friction_notes = summary
+        .friction_notes
+        .into_iter()
+        .map(|note| sanitize_telemetry_string(&note))
+        .filter(|note| !note.is_empty())
+        .take(MAX_FRICTION_NOTES)
+        .collect();
+    summary.submitted_at = Some(now_utc_string());
+    let retained = append_jsonl(&path, &summary).map_err(internal_error)?;
+    Ok(Json(telemetry_response(
+        true,
+        Some(path.to_string()),
+        retained,
+    )))
+}
+
+async fn submit_telemetry_error(
+    State(state): State<ApiState>,
+    Json(mut report): Json<TelemetryErrorReport>,
+) -> Result<Json<TelemetryWriteResponse>, (StatusCode, String)> {
+    let root = {
+        let kernel = state.kernel.lock().await;
+        kernel.workspace_root().to_owned()
+    };
+    let path = telemetry_path(root.as_path(), ERROR_RING_FILE);
+    if !report.consent {
+        return Ok(Json(telemetry_response(
+            false,
+            None,
+            count_jsonl_lines(&path),
+        )));
+    }
+    report.source = sanitize_telemetry_string(&non_empty_or(report.source, "web"));
+    report.severity = sanitize_telemetry_string(&non_empty_or(report.severity, "error"));
+    report.message = sanitize_telemetry_string(&report.message);
+    report.stack = report
+        .stack
+        .map(|stack| sanitize_telemetry_string(&stack))
+        .filter(|stack| !stack.is_empty());
+    report.route = report
+        .route
+        .map(|route| sanitize_telemetry_string(&route))
+        .filter(|route| !route.is_empty());
+    report.user_agent = report
+        .user_agent
+        .map(|agent| sanitize_telemetry_string(&agent))
+        .filter(|agent| !agent.is_empty());
+    report.context = report.context.map(sanitize_telemetry_value);
+    report.occurred_at = Some(
+        report
+            .occurred_at
+            .map(|at| sanitize_telemetry_string(&at))
+            .filter(|at| !at.is_empty())
+            .unwrap_or_else(now_utc_string),
+    );
+    let retained = write_ring_jsonl(&path, &report, ERROR_RING_LIMIT).map_err(internal_error)?;
+    Ok(Json(telemetry_response(
+        true,
+        Some(path.to_string()),
+        retained,
+    )))
 }
 
 async fn health_snapshot(
@@ -1980,6 +2106,118 @@ async fn close_mcp(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn telemetry_path(root: &Utf8Path, file_name: &str) -> Utf8PathBuf {
+    root.join(TELEMETRY_DIR).join(file_name)
+}
+
+fn append_jsonl<T: serde::Serialize>(path: &Utf8Path, payload: &T) -> anyhow::Result<usize> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let line = serde_json::to_string(payload)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(file, "{line}")?;
+    Ok(count_jsonl_lines(path))
+}
+
+fn write_ring_jsonl<T: serde::Serialize>(
+    path: &Utf8Path,
+    payload: &T,
+    limit: usize,
+) -> anyhow::Result<usize> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut lines = std::fs::read_to_string(path)
+        .ok()
+        .map(|raw| {
+            raw.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    lines.push(serde_json::to_string(payload)?);
+    if lines.len() > limit {
+        lines = lines.split_off(lines.len() - limit);
+    }
+    std::fs::write(path, format!("{}\n", lines.join("\n")))?;
+    Ok(lines.len())
+}
+
+fn count_jsonl_lines(path: &Utf8Path) -> usize {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|raw| raw.lines().filter(|line| !line.trim().is_empty()).count())
+        .unwrap_or(0)
+}
+
+fn telemetry_response(
+    accepted: bool,
+    path: Option<String>,
+    retained: usize,
+) -> TelemetryWriteResponse {
+    TelemetryWriteResponse {
+        schema_version: "x07.studio.telemetry_write@0.1.0".to_string(),
+        accepted,
+        path,
+        retained,
+    }
+}
+
+fn sanitize_telemetry_string(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.trim().chars() {
+        if out.len() + ch.len_utf8() > MAX_TELEMETRY_STRING_BYTES {
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn sanitize_telemetry_value(value: Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(sanitize_telemetry_string(&text)),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .take(32)
+                .map(sanitize_telemetry_value)
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .take(32)
+                .map(|(key, value)| {
+                    (
+                        sanitize_telemetry_string(&key),
+                        sanitize_telemetry_value(value),
+                    )
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn non_empty_or(value: String, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn now_utc_string() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("unix_ms:{millis}")
+}
+
 fn internal_error(error: impl ToString) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
 }
@@ -1994,7 +2232,12 @@ fn not_found() -> (StatusCode, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{env_setting, is_allowed_image_mime, runtime_components, sibling_component_source};
+    use super::{
+        append_jsonl, env_setting, is_allowed_image_mime, runtime_components,
+        sanitize_telemetry_string, sibling_component_source, telemetry_path, write_ring_jsonl,
+        ERROR_RING_FILE, ERROR_RING_LIMIT, MAX_TELEMETRY_STRING_BYTES, SESSION_SUMMARY_FILE,
+    };
+    use loom_types::api::{SessionSummary, TelemetryErrorReport};
 
     #[test]
     fn runtime_components_include_required_x07_wasm_and_platform_tools() {
@@ -2078,6 +2321,71 @@ mod tests {
         assert!(!is_allowed_image_mime("text/html"));
         assert!(!is_allowed_image_mime("image/svg+xml"));
         assert!(!is_allowed_image_mime("application/x-sh"));
+    }
+
+    #[test]
+    fn telemetry_summary_appends_jsonl() {
+        let root = temp_root();
+        let path = telemetry_path(root.as_path(), SESSION_SUMMARY_FILE);
+        let summary = SessionSummary {
+            schema_version: "x07.studio.session_summary@0.1.0".to_string(),
+            session_id: uuid::Uuid::new_v4(),
+            consent: true,
+            archetype: "parser".to_string(),
+            time_to_verified_ms: Some(1000),
+            repair_rounds: 1,
+            agent_minutes: 2.5,
+            success: true,
+            friction_notes: vec!["clear".to_string()],
+            submitted_at: Some("unix_ms:1".to_string()),
+        };
+
+        let retained = append_jsonl(&path, &summary).expect("append summary");
+
+        assert_eq!(retained, 1);
+        assert!(std::fs::read_to_string(&path)
+            .expect("summary file")
+            .contains("\"archetype\":\"parser\""));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn telemetry_error_ring_keeps_last_100_entries() {
+        let root = temp_root();
+        let path = telemetry_path(root.as_path(), ERROR_RING_FILE);
+        for index in 0..(ERROR_RING_LIMIT + 7) {
+            let report = TelemetryErrorReport {
+                schema_version: "x07.studio.telemetry_error@0.1.0".to_string(),
+                consent: true,
+                session_id: None,
+                source: "test".to_string(),
+                severity: "error".to_string(),
+                message: format!("error-{index}"),
+                stack: None,
+                route: None,
+                user_agent: None,
+                context: None,
+                occurred_at: Some(format!("unix_ms:{index}")),
+            };
+            write_ring_jsonl(&path, &report, ERROR_RING_LIMIT).expect("write error");
+        }
+
+        let raw = std::fs::read_to_string(&path).expect("ring file");
+        let lines = raw.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), ERROR_RING_LIMIT);
+        assert!(!raw.contains("error-0"));
+        assert!(raw.contains("error-106"));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn telemetry_string_sanitizer_trims_and_caps_bytes() {
+        let raw = format!("  {}  ", "a".repeat(MAX_TELEMETRY_STRING_BYTES + 100));
+        let sanitized = sanitize_telemetry_string(&raw);
+
+        assert_eq!(sanitized.len(), MAX_TELEMETRY_STRING_BYTES);
+        assert!(!sanitized.starts_with(' '));
+        assert!(!sanitized.ends_with(' '));
     }
 
     fn temp_root() -> camino::Utf8PathBuf {

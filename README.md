@@ -47,6 +47,9 @@ x07-studio/
 │   ├── AGENT_GUIDE.md
 │   ├── TROUBLESHOOTING.md
 │   ├── ACCESSIBILITY.md
+│   ├── TELEMETRY.md
+│   ├── PERFORMANCE.md
+│   ├── OBSERVABILITY.md
 │   ├── SECURITY_REVIEW.md
 │   ├── PRODUCTION_READINESS.md
 │   ├── API.md
@@ -160,7 +163,7 @@ paths when release automation includes them.
 2. Make sure the canonical CLIs are on `PATH`, or set overrides:
    - `X07_STUDIO_X07_EXE`
    - `X07_STUDIO_X07_WASM_EXE`
-   - `X07_STUDIO_X07LP_EXE`
+   - `X07LP_BINARY` or `X07_STUDIO_X07LP_EXE`
 3. Run `python3 scripts/bootstrap_components.py --install-missing --write-env .x07/studio/defaults.env` to detect available tools and build sibling source checkouts when possible.
 4. Copy `config/providers.example.json` for provider setup and `config/mcp-http.example.json` or `config/mcp-stdio.example.json` for MCP connection payloads.
 
@@ -177,6 +180,7 @@ optional until supervised handoffs need to execute locally.
 - Use `docs/TROUBLESHOOTING.md` for daemon, upload, AGENT.md, and trust-posture issues.
 - Use `docs/PRODUCTION_READINESS.md` for public-beta and GA gates.
 - Use `docs/SECURITY_REVIEW.md` for the latest pre-production security pass.
+- Use `docs/TELEMETRY.md`, `docs/PERFORMANCE.md`, and `docs/OBSERVABILITY.md` for GA evidence collection and operator checks.
 
 ## Validation
 
@@ -201,6 +205,10 @@ Additional pre-production harnesses:
 ```bash
 python3 scripts/cross_browser_smoke.py
 python3 scripts/stability_soak.py
+python3 scripts/a11y_audit.py
+python3 scripts/perf_budget.py
+python3 scripts/slo_dashboard.py --root /path/to/workspace --addr http://127.0.0.1:7719
+./scripts/test_linux.sh
 python3 scripts/stress_pass.py init --scenario scenario-2-csv-repair
 ```
 

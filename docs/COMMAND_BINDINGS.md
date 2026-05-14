@@ -138,8 +138,10 @@ policy as catalog bindings.
 
 - `X07_STUDIO_X07_EXE`
 - `X07_STUDIO_X07_WASM_EXE`
+- `X07LP_BINARY`
 - `X07_STUDIO_X07LP_EXE`
 
-If `X07_STUDIO_X07LP_EXE` is unset, Studio looks for a sibling
+For x07lp, `X07LP_BINARY` wins over `X07_STUDIO_X07LP_EXE`. If both are unset,
+Studio looks for a sibling
 `x07-platform/scripts/x07lp-driver` checkout before falling back to `x07lp` on
 `PATH`.

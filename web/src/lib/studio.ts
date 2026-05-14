@@ -423,6 +423,7 @@ export interface ProofSupportNote {
 	target: string;
 	severity: string;
 	message: string;
+	report_path?: string | null;
 }
 
 export interface TrustPosture {
@@ -633,6 +634,11 @@ export interface CertificateSummary {
 	trust_report: unknown;
 	html_summary_path: string;
 	signature: string;
+	certificate_path?: string | null;
+	signer_key_fingerprint?: string | null;
+	sigchain_attestation?: unknown;
+	revocation_pointer?: string | null;
+	locally_verified?: boolean;
 }
 
 export interface Recipe {
@@ -900,6 +906,40 @@ export interface RuntimeComponentStatus {
 	install_hint: string;
 }
 
+export interface SessionSummary {
+	schema_version?: 'x07.studio.session_summary@0.1.0';
+	session_id: string;
+	consent: boolean;
+	archetype: string;
+	time_to_verified_ms?: number | null;
+	repair_rounds: number;
+	agent_minutes: number;
+	success: boolean;
+	friction_notes: string[];
+	submitted_at?: string | null;
+}
+
+export interface TelemetryErrorReport {
+	schema_version?: 'x07.studio.telemetry_error@0.1.0';
+	consent: boolean;
+	session_id?: string | null;
+	source?: string;
+	severity?: string;
+	message: string;
+	stack?: string | null;
+	route?: string | null;
+	user_agent?: string | null;
+	context?: unknown;
+	occurred_at?: string | null;
+}
+
+export interface TelemetryWriteResponse {
+	schema_version: 'x07.studio.telemetry_write@0.1.0';
+	accepted: boolean;
+	path?: string | null;
+	retained: number;
+}
+
 export type OnboardingStepState = 'ready' | 'required' | 'optional';
 
 export interface OnboardingStep {
@@ -1117,7 +1157,7 @@ export interface CertBundlePreview {
 	totals: Array<{ label: string; value: string; detail: string }>;
 }
 
-export type VerifyProofPolicy = 'balanced' | 'strict';
+export type VerifyProofPolicy = 'balanced' | 'strict' | 'patient';
 
 export interface VerifyRunOptions {
 	proofPolicy: VerifyProofPolicy;
@@ -2607,7 +2647,9 @@ export function defaultVerifyRunOptions(): VerifyRunOptions {
 export function normalizeVerifyRunOptions(options?: Partial<VerifyRunOptions>): VerifyRunOptions {
 	const defaults = defaultVerifyRunOptions();
 	return {
-		proofPolicy: options?.proofPolicy === 'strict' ? 'strict' : defaults.proofPolicy,
+		proofPolicy: ['strict', 'patient'].includes(options?.proofPolicy ?? '')
+			? (options?.proofPolicy as VerifyProofPolicy)
+			: defaults.proofPolicy,
 		allowOsWorld: Boolean(options?.allowOsWorld),
 		unwind: normalizePositiveIntegerText(options?.unwind),
 		maxBytesLen: normalizePositiveIntegerText(options?.maxBytesLen),
