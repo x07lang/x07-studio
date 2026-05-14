@@ -272,7 +272,7 @@ Output protocol (kept narrow on purpose):
 {"schema_version":"x07.studio.agent_event@0.1.0","kind":"spec_enrichment","doc":"…","examples":["…"]}
 ```
 
-Only `doc` is currently merged into the spec; `examples` are stored on the op-record for a future cycle that pipes them into `IntentPacket.examples`. Predicates (`requires`/`ensures`) are still off-limits to both tiers — the strict `spec.check` gate makes them risky to synthesize without a verification harness.
+Only `doc` is merged into the spec. `examples` are merged into `IntentPacket.examples` as architect-sourced entries so downstream prompts and UI previews can distinguish them from user-provided examples. Predicates (`requires`/`ensures`) are still off-limits to both tiers — the strict `spec.check` gate makes them risky to synthesize without a verification harness.
 
 **Cost gate:** Tier-2 fires at most once per session per role-pipeline turn, only when (a) an architect agent is configured and command-available, and (b) the spec's operation `doc` is still empty after Tier-1. Subscription-only contract preserved (`build_realize_subscription_command` reused — never `--bare`/`--oss`).
 
@@ -398,9 +398,9 @@ Both files on disk carry the same predicate:
 
 ### Examples pipe — Tier-2 agent examples → IntentPacket
 
-Tier-2's `spec_enrichment` event carries an `examples[]` array alongside `doc`. Previously dropped on the floor. `ingest_architect_enrichment` now merges those into `IntentPacket.examples` (deduped against existing entries; capped at 5 per round to bound a pathological agent output). The realize prompt and the UI's plain-English summary now both pick up the architect's worked input → output illustrations.
+Tier-2's `spec_enrichment` event carries an `examples[]` array alongside `doc`. `ingest_architect_enrichment` now merges those into `IntentPacket.examples` as `{ text, source: "architect" }` entries (deduped against existing entries; capped at 5 per round to bound a pathological agent output). The realize prompt and the UI's plain-English summary now both pick up the architect's worked input -> output illustrations, and the result preview renders architect-sourced examples with an `Architect` badge.
 
-Test coverage: `ingest_architect_enrichment_writes_doc_from_recorded_event` extended to assert the example landed on the intent.
+Test coverage: `ingest_architect_enrichment_writes_doc_from_recorded_event` asserts the example landed on the intent with `source: architect`.
 
 ### F4 — proof-support warnings in TrustCard (FIXED)
 

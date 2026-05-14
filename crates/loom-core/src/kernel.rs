@@ -38,8 +38,9 @@ use loom_types::api::{
     VisualResponse, VoiceTranscript, WhatIfForecast, WorkspacePathState, WorkspaceRadarResponse,
 };
 use loom_types::artifacts::{
-    AgentHandoff, AgentProfile, AgentStatus, IntentPacket, IntentSource, IntentTarget, OpRecord,
-    OperationStatus, ProviderProbeReport, ProviderProfile, TaskType, Witness, WitnessKind,
+    AgentHandoff, AgentProfile, AgentStatus, IntentExample, IntentPacket, IntentSource,
+    IntentTarget, OpRecord, OperationStatus, ProviderProbeReport, ProviderProfile, TaskType,
+    Witness, WitnessKind,
 };
 use loom_types::mcp::{McpConnectionInfo, McpEndpoint, McpToolCallResult, McpToolDescriptor};
 use loom_types::ops::SessionEvent;
@@ -4731,9 +4732,8 @@ impl WorkspaceKernel {
         )?;
         let doc_added = report.doc_added;
         self.append_op(session_id, architect_enrich_op(session_id, &report))?;
-        // Pipe the agent's `examples` array into the IntentPacket so
-        // the realize prompt (and the UI's plain-English summary) can
-        // pick up the architect's worked input → output illustrations.
+        // Preserve the source of architect examples so prompts and previews
+        // can distinguish them from examples the user supplied directly.
         // De-dup against existing entries; cap the merge so a pathological
         // agent output can't balloon the packet.
         if !enrichment.examples.is_empty() {
@@ -4749,10 +4749,10 @@ impl WorkspaceKernel {
                         break;
                     }
                     let trimmed = example.trim();
-                    if trimmed.is_empty() || intent.examples.iter().any(|e| e == trimmed) {
+                    if trimmed.is_empty() || intent.examples.iter().any(|e| e.text == trimmed) {
                         continue;
                     }
-                    intent.examples.push(trimmed.to_string());
+                    intent.examples.push(IntentExample::architect(trimmed));
                     appended += 1;
                 }
                 if appended > 0 {
@@ -5187,10 +5187,14 @@ fn answer_project_question(
             path: spec_path.clone(),
             locator: "/examples".to_string(),
         });
-        let example = intent.examples.first().cloned().unwrap_or_default();
+        let example = intent
+            .examples
+            .first()
+            .map(|example| example.text.clone())
+            .unwrap_or_default();
         format!(
             "I don't have a witness that addresses that exactly, but here's a \
-             representative example from {target}: {example}"
+            representative example from {target}: {example}"
         )
     } else {
         format!(
@@ -6788,8 +6792,8 @@ fn intent_packet_from_raw(
             entry: Some(entry.clone()),
         }],
         examples: vec![
-            "Input examples become spec examples before implementation.".to_string(),
-            "Generated tests must be reviewable before verify.".to_string(),
+            IntentExample::user("Input examples become spec examples before implementation."),
+            IntentExample::user("Generated tests must be reviewable before verify."),
         ],
         constraints,
         policy_implications,
@@ -6882,7 +6886,11 @@ async fn apply_provider_intent_polish(
 }
 
 fn merge_provider_intent_polish(intent: &mut IntentPacket, polish: &serde_json::Value) {
-    append_string_array(&mut intent.examples, polish.get("examples"));
+    append_example_array(
+        &mut intent.examples,
+        polish.get("examples"),
+        IntentExample::user,
+    );
     append_string_array(&mut intent.constraints, polish.get("constraints"));
     append_string_array(
         &mut intent.policy_implications,
@@ -6891,6 +6899,34 @@ fn merge_provider_intent_polish(intent: &mut IntentPacket, polish: &serde_json::
     append_string_array(&mut intent.ambiguities, polish.get("ambiguities"));
     append_string_array(&mut intent.assumptions, polish.get("assumptions"));
     append_witnesses(&mut intent.witnesses, polish.get("witnesses"));
+}
+
+fn append_example_array(
+    target: &mut Vec<IntentExample>,
+    value: Option<&serde_json::Value>,
+    source: impl Fn(String) -> IntentExample,
+) {
+    let Some(items) = value.and_then(serde_json::Value::as_array) else {
+        return;
+    };
+    for item in items.iter().filter_map(serde_json::Value::as_str).take(16) {
+        append_unique_example(target, item, &source);
+    }
+}
+
+fn append_unique_example(
+    target: &mut Vec<IntentExample>,
+    item: &str,
+    source: &impl Fn(String) -> IntentExample,
+) {
+    let trimmed = item.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let bounded = trimmed.chars().take(512).collect::<String>();
+    if !target.iter().any(|existing| existing.text == bounded) {
+        target.push(source(bounded));
+    }
 }
 
 fn append_string_array(target: &mut Vec<String>, value: Option<&serde_json::Value>) {
@@ -9266,11 +9302,11 @@ Verified turn with the summary.\n\n",
         if !intent.examples.is_empty() {
             out.push_str("\n### Examples\n");
             for example in &intent.examples {
-                let text = example.trim();
+                let text = example.text.trim();
                 if text.is_empty() {
                     continue;
                 }
-                out.push_str(&format!("- {text}\n"));
+                out.push_str(&format!("- [{:?}] {text}\n", example.source));
             }
         }
         if !intent.constraints.is_empty() {
@@ -9656,7 +9692,7 @@ fn handoff_haystack(session: &SessionSnapshot) -> String {
                 parts.push(entry.clone());
             }
         }
-        parts.extend(intent.examples.iter().cloned());
+        parts.extend(intent.examples.iter().map(|example| example.text.clone()));
         parts.extend(intent.constraints.iter().cloned());
         parts.extend(intent.policy_implications.iter().cloned());
         parts.extend(intent.ambiguities.iter().cloned());
@@ -11460,7 +11496,8 @@ mod tests {
             intent_after
                 .examples
                 .iter()
-                .any(|e| e == "[10,20,30]->[ewma per-byte]"),
+                .any(|e| e.text == "[10,20,30]->[ewma per-byte]"
+                    && matches!(e.source, loom_types::artifacts::ExampleSource::Architect)),
             "expected agent example merged into intent, got {:?}",
             intent_after.examples
         );
@@ -11932,7 +11969,8 @@ mod tests {
         assert!(intent
             .examples
             .iter()
-            .any(|item| item == "Provider example: [1] -> [1]"));
+            .any(|item| item.text == "Provider example: [1] -> [1]"
+                && matches!(item.source, loom_types::artifacts::ExampleSource::User)));
         assert!(intent
             .constraints
             .iter()

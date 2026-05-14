@@ -103,7 +103,7 @@ fn intent_haystack(intent: &IntentPacket) -> String {
             parts.push(entry);
         }
     }
-    parts.extend(intent.examples.iter().map(String::as_str));
+    parts.extend(intent.examples.iter().map(|example| example.text.as_str()));
     parts.extend(intent.constraints.iter().map(String::as_str));
     parts.extend(intent.policy_implications.iter().map(String::as_str));
     parts.extend(intent.ambiguities.iter().map(String::as_str));

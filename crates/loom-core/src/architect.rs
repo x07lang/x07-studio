@@ -194,8 +194,8 @@ impl EnrichmentReport {
 
 /// Structured payload the architect agent emits as one
 /// `kind: "spec_enrichment"` agent_event line. Only `doc` is currently
-/// applied to the spec; `examples` are surfaced through the op-record
-/// for future use (Cycle-8 will pipe them into `IntentPacket.examples`).
+/// applied to the spec; `examples` stay on the enrichment payload so the
+/// session intent can keep them separate from user-provided examples.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentEnrichment {
     pub doc: String,

@@ -61,13 +61,42 @@ pub struct ClarificationTurn {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExampleSource {
+    User,
+    Architect,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IntentExample {
+    pub text: String,
+    pub source: ExampleSource,
+}
+
+impl IntentExample {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            source: ExampleSource::User,
+        }
+    }
+
+    pub fn architect(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            source: ExampleSource::Architect,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IntentPacket {
     pub schema_version: String,
     pub session_id: Uuid,
     pub workspace_root: String,
     pub task_type: TaskType,
     pub targets: Vec<IntentTarget>,
-    pub examples: Vec<String>,
+    pub examples: Vec<IntentExample>,
     pub constraints: Vec<String>,
     pub policy_implications: Vec<String>,
     pub ambiguities: Vec<String>,
@@ -90,8 +119,8 @@ impl IntentPacket {
                 entry: Some("sort_ascending".to_string()),
             }],
             examples: vec![
-                "[3,1,2] -> [1,2,3]".to_string(),
-                "[2,2,1] -> [1,2,2]".to_string(),
+                IntentExample::user("[3,1,2] -> [1,2,3]"),
+                IntentExample::user("[2,2,1] -> [1,2,2]"),
             ],
             constraints: vec!["reject empty input".to_string()],
             policy_implications: vec![],

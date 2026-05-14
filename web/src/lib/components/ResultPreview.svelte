@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { PbtRound, PlainEnglishSummary, TryItRequest, TryItResult } from '$lib/studio';
+	import type { IntentExample, PbtRound, PlainEnglishSummary, TryItRequest, TryItResult } from '$lib/studio';
 	import { implementationActionLabel, implementationReadyForSummary } from './resultPreviewState';
 	import PbtPanel from './PbtPanel.svelte';
 
@@ -11,6 +11,7 @@
 	export let invokeBusy = false;
 	export let implementationInPlace = false;
 	export let pbtRound: PbtRound | null = null;
+	export let examples: IntentExample[] = [];
 
 	let copied = false;
 	let showDetails = false;
@@ -142,6 +143,22 @@
 			<ul>
 				{#each summary.evidence as item}
 					<li>{item}</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
+
+	{#if examples.length}
+		<div class="result-block">
+			<h3>Examples</h3>
+			<ul class="example-list">
+				{#each examples as example}
+					<li>
+						{#if example.source === 'architect'}
+							<span class="example-source">Architect</span>
+						{/if}
+						<span>{example.text}</span>
+					</li>
 				{/each}
 			</ul>
 		</div>
@@ -301,6 +318,27 @@
 		padding-left: 0;
 		display: grid;
 		gap: 6px;
+	}
+	.example-list li {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		padding: 7px 9px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: rgba(255, 255, 255, 0.025);
+		font-size: 12px;
+		line-height: 1.45;
+	}
+	.example-source {
+		flex: 0 0 auto;
+		border: 1px solid rgba(85, 214, 231, 0.42);
+		border-radius: 999px;
+		padding: 1px 7px;
+		color: var(--cyan);
+		font-family: var(--font-mono);
+		font-size: 10px;
+		text-transform: uppercase;
 	}
 	:global(.result-preview .followups div) {
 		display: flex;

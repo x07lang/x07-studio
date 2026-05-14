@@ -117,7 +117,7 @@ test('connected no-write realize failure exposes recovery actions', async ({ pag
 	await page
 		.getByTestId('composer-input')
 		.fill(
-			'Build a no-write realize regression CLI calculator. It receives one-shot CLI arguments and supports integer add, subtract, multiply, and divide.'
+			'Build a no-write realize regression byte shifter. It receives one-shot CLI arguments and returns a deterministic byte report.'
 		);
 	await page.getByTestId('composer-submit').click();
 	await expect(page.getByTestId('turn-user_intent')).toBeVisible({ timeout: 15_000 });

@@ -96,14 +96,16 @@ def target_module_body(module_id: str, entry: str, stub: bool, agent: str = "age
     }
 
 
-def lint_diagnostics(cwd: Path) -> list[object]:
+def lint_diagnostics(cwd: Path, input_path: str) -> list[object]:
     if (cwd / ".x07/studio/lint-fixed").exists():
+        return []
+    if input_path != "src/main.x07.json" and not input_path.endswith("/main.x07.json"):
         return []
     return [
         {
             "code": "X07-LINT-0042",
             "severity": "warning",
-            "file": "src/main.x07.json",
+            "file": input_path,
             "line": 1,
             "column": 1,
             "message": "connected-e2e lint quickfix fixture",
@@ -200,11 +202,12 @@ def run_x07(args: list[str]) -> None:
         return
 
     if args[:1] == ["lint"]:
+        input_path = option(args, "--input", "src/main.x07.json")
         print(
             json.dumps(
                 {
                     "schema_version": "x07diag.report@0.1.0",
-                    "diagnostics": lint_diagnostics(cwd),
+                    "diagnostics": lint_diagnostics(cwd, input_path),
                 }
             )
         )

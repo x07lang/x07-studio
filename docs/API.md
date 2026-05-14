@@ -177,7 +177,7 @@ Dispatch event request:
       "workspace_root": ".",
       "task_type": "bug_fix",
       "targets": [{"module_id": "app.sorter", "entry": "sort_ascending"}],
-      "examples": ["[3,1,2] -> [1,2,3]"],
+      "examples": [{"text": "[3,1,2] -> [1,2,3]", "source": "user"}],
       "constraints": ["reject empty input"],
       "policy_implications": [],
       "ambiguities": [],
@@ -204,6 +204,9 @@ The daemon compiles written plans, voice transcripts, existing `x07.x07spec`
 JSON, and incident notes into a `x07.studio.intent_packet@0.1.0`, applies the
 legal `formalize_intent` lifecycle transition, and appends a visible
 `intent.formalize` operation record with the generated packet in `report_json`.
+Intent packet examples are objects with `text` plus a `source` of `user` or
+`architect`; browser result previews use that source to distinguish examples
+entered by the user from examples supplied by the Architect role.
 When `provider_profile_id` names a configured OpenAI-compatible provider,
 Studio asks that model for concise intent-polish suggestions and merges only
 review metadata such as examples, constraints, ambiguities, assumptions, policy

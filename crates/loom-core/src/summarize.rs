@@ -358,7 +358,7 @@ fn behavior_promises_for(intent: &IntentPacket) -> Vec<String> {
     }
     if out.is_empty() {
         for example in intent.examples.iter().take(3) {
-            let text = example.trim();
+            let text = example.text.trim();
             if text.is_empty() || is_doctrine(text) {
                 continue;
             }
@@ -459,7 +459,7 @@ fn run_invocation_for(intent: &IntentPacket) -> Option<String> {
     let example = intent
         .examples
         .iter()
-        .find_map(|example| invocation_input_from_example(example))
+        .find_map(|example| invocation_input_from_example(&example.text))
         .unwrap_or_else(|| kind_aware_placeholder(intent));
     let escaped = example.replace('\\', "\\\\").replace('"', "\\\"");
     Some(format!(

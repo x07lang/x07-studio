@@ -45,6 +45,11 @@ export type IntentWitness = {
 	kind: IntentWitnessKind;
 	text: string;
 };
+export type ExampleSource = 'user' | 'architect';
+export type IntentExample = {
+	text: string;
+	source: ExampleSource;
+};
 export type ProjectDifficulty =
 	| 'simple'
 	| 'intermediate'
@@ -71,7 +76,7 @@ export interface IntentPacket {
 	workspace_root: string;
 	task_type: TaskType;
 	targets: Array<{ module_id: string; entry?: string | null }>;
-	examples: string[];
+	examples: IntentExample[];
 	constraints: string[];
 	policy_implications: string[];
 	ambiguities: string[];
@@ -3920,8 +3925,8 @@ export function createIntentPacket(
 		task_type: session.task_type,
 		targets: [{ module_id: moduleId, entry }],
 		examples: [
-			'Input examples become spec examples before implementation.',
-			'Generated tests must be reviewable before verify.'
+			userExample('Input examples become spec examples before implementation.'),
+			userExample('Generated tests must be reviewable before verify.')
 		],
 		constraints: [
 			'Use spec-first XTAL flow.',
@@ -3960,6 +3965,10 @@ export function createIntentPacket(
 					? { kind: 'incident', path: `.x07/studio/incidents/${session.session_id}` }
 					: { kind: 'text', raw: normalized }
 	};
+}
+
+function userExample(text: string): IntentExample {
+	return { text, source: 'user' };
 }
 
 export function previewSpecSource(raw: string): SpecSourcePreview {

@@ -175,6 +175,7 @@
 						{invokeBusy}
 						implementationInPlace={implementationDone()}
 						{pbtRound}
+						examples={session?.intent?.examples ?? []}
 						on:followup={(event) => dispatch('followup', event.detail)}
 						on:invoke={(event) => dispatch('invoke', event.detail)}
 						on:realize={() => dispatch('realize')}

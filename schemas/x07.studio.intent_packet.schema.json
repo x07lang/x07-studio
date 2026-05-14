@@ -20,7 +20,25 @@
       "type": "array"
     },
     "examples": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "user",
+              "architect"
+            ]
+          }
+        },
+        "required": [
+          "text",
+          "source"
+        ]
+      }
     },
     "constraints": {
       "type": "array"
